@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 
 from .config import Config
+from .importer import Importer
 from .poster import Poster
 
 # Configure logging
@@ -141,6 +142,101 @@ def check_notion(ctx):
             click.echo(f"  - {name} ({prop['type']})")
     except Exception as e:
         click.echo(f"Error connecting to Notion: {e}", err=True)
+        sys.exit(1)
+
+
+# ============================================================================
+# Import commands for photo grouping
+# ============================================================================
+
+
+@main.command()
+@click.argument("folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--threshold", "-t", default=10, help="Time gap threshold in minutes (default: 10)")
+@click.option("--max-per-group", "-m", default=10, help="Max photos per group (default: 10)")
+@click.pass_context
+def preview_groups(ctx, folder: Path, threshold: int, max_per_group: int):
+    """Preview photo grouping without importing."""
+    config = Config.load(ctx.obj.get("env_file"))
+    importer = Importer(config)
+    importer.preview_groups(folder, threshold, max_per_group)
+
+
+@main.command()
+@click.argument("folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("output", type=click.Path(path_type=Path))
+@click.option("--threshold", "-t", default=10, help="Time gap threshold in minutes (default: 10)")
+@click.option("--max-per-group", "-m", default=10, help="Max photos per group (default: 10)")
+@click.pass_context
+def export_groups(ctx, folder: Path, output: Path, threshold: int, max_per_group: int):
+    """Export photo grouping to JSON for manual editing."""
+    config = Config.load(ctx.obj.get("env_file"))
+    importer = Importer(config)
+    importer.export_preview(folder, output, threshold, max_per_group)
+    click.echo(f"\nGrouping exported to: {output}")
+    click.echo("Edit this file to adjust work names, groupings, or student names.")
+    click.echo("Then use 'import-groups' to import from this file.")
+
+
+@main.command()
+@click.argument("grouping_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--student", "-s", help="Student name for all imported works")
+@click.option(
+    "--start-date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    help="Start date for scheduling (increments by 1 day per group)",
+)
+@click.option("--dry-run", is_flag=True, help="Preview import without making changes")
+@click.pass_context
+def import_groups(ctx, grouping_file: Path, student: str | None, start_date: datetime | None, dry_run: bool):
+    """Import photos using an edited grouping file."""
+    config = Config.load(ctx.obj.get("env_file"))
+    importer = Importer(config)
+
+    stats = importer.import_from_file(
+        grouping_file,
+        student_name=student,
+        start_date=start_date,
+        dry_run=dry_run,
+    )
+
+    if stats["errors"] > 0:
+        sys.exit(1)
+
+
+@main.command()
+@click.argument("folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--threshold", "-t", default=10, help="Time gap threshold in minutes (default: 10)")
+@click.option("--max-per-group", "-m", default=10, help="Max photos per group (default: 10)")
+@click.option("--student", "-s", help="Student name for all imported works")
+@click.option(
+    "--start-date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    help="Start date for scheduling (increments by 1 day per group)",
+)
+@click.option("--dry-run", is_flag=True, help="Preview import without making changes")
+@click.pass_context
+def import_direct(ctx, folder: Path, threshold: int, max_per_group: int, student: str | None, start_date: datetime | None, dry_run: bool):
+    """Import photos directly from folder without manual review."""
+    config = Config.load(ctx.obj.get("env_file"))
+    importer = Importer(config)
+
+    if not dry_run:
+        click.confirm(
+            f"This will import photos from {folder} and create Notion entries. Continue?",
+            abort=True,
+        )
+
+    stats = importer.import_direct(
+        folder,
+        threshold_minutes=threshold,
+        max_per_group=max_per_group,
+        student_name=student,
+        start_date=start_date,
+        dry_run=dry_run,
+    )
+
+    if stats["errors"] > 0:
         sys.exit(1)
 
 

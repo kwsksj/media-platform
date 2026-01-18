@@ -241,6 +241,80 @@ auto-post --debug post
 
 ---
 
+## Step 8: 写真のインポート（グループ化機能）
+
+Google Takeout からエクスポートした写真を、撮影時刻に基づいて自動的に作品ごとにグループ化してインポートできます。
+
+### 8.1 グループ化のプレビュー
+
+まずはどのようにグループ化されるか確認:
+
+```bash
+# 10分の間隔でグループ化（デフォルト）
+auto-post preview-groups ./takeout-photos
+
+# 5分の間隔でより細かくグループ化
+auto-post preview-groups ./takeout-photos --threshold 5
+
+# 15分の間隔でより大きくグループ化
+auto-post preview-groups ./takeout-photos --threshold 15
+```
+
+### 8.2 手動調整用にエクスポート
+
+グループ化結果をJSONファイルに出力して手動編集:
+
+```bash
+auto-post export-groups ./takeout-photos grouping.json --threshold 10
+```
+
+`grouping.json` を編集して以下を調整できます:
+- `work_name`: 作品名を編集
+- `student_name`: 生徒名を追加
+- `photos`: 写真をグループ間で移動
+
+### 8.3 編集したグループ化ファイルからインポート
+
+```bash
+# ドライラン（確認のみ）
+auto-post import-groups grouping.json --dry-run
+
+# 実際にインポート
+auto-post import-groups grouping.json --student "山田太郎" --start-date 2025-02-01
+
+# --start-date を指定すると、グループごとに1日ずつ増加してスケジュール
+```
+
+### 8.4 直接インポート（手動調整なし）
+
+時間がない場合は、手動調整なしで直接インポートも可能:
+
+```bash
+# ドライラン
+auto-post import-direct ./takeout-photos --dry-run
+
+# 実際にインポート
+auto-post import-direct ./takeout-photos --student "山田太郎" --start-date 2025-02-01
+```
+
+### インポートコマンド一覧
+
+```bash
+# グループ化プレビュー
+auto-post preview-groups FOLDER [--threshold 10] [--max-per-group 10]
+
+# JSONにエクスポート（手動編集用）
+auto-post export-groups FOLDER OUTPUT.json [--threshold 10]
+
+# JSONからインポート
+auto-post import-groups FILE.json [--student NAME] [--start-date DATE] [--dry-run]
+
+# 直接インポート
+auto-post import-direct FOLDER [--threshold 10] [--student NAME] [--start-date DATE] [--dry-run]
+```
+
+---
+
 ## 運用フロー
 
 1. **写真撮影** → ローカルに保存
