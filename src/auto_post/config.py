@@ -78,12 +78,14 @@ class NotionConfig:
 
     token: str
     database_id: str
+    tags_database_id: str | None = None
 
     @classmethod
     def from_env(cls) -> "NotionConfig":
         return cls(
             token=os.environ["NOTION_TOKEN"],
             database_id=os.environ["NOTION_DATABASE_ID"],
+            tags_database_id=os.environ.get("TAGS_DATABASE_ID"),
         )
 
 

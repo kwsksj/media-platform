@@ -240,5 +240,88 @@ def import_direct(ctx, folder: Path, threshold: int, max_per_group: int, student
         sys.exit(1)
 
 
+@main.command()
+@click.argument("folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--threshold", "-t", default=10, help="Time gap threshold in minutes (default: 10)")
+@click.option("--dry-run", is_flag=True, help="Preview organization without moving files")
+@click.option("--copy", "-c", is_flag=True, help="Copy files instead of moving them (safer)")
+@click.option("--output", "-o", type=click.Path(file_okay=False, path_type=Path), help="Output folder (separate from source)")
+@click.pass_context
+def organize(ctx, folder: Path, threshold: int, dry_run: bool, copy: bool, output: Path | None):
+    """Organize a flat folder of photos into timestamped subfolders."""
+    config = Config.load(ctx.obj.get("env_file"))
+    importer = Importer(config)
+
+    if not dry_run:
+        action = "COPY" if copy else "MOVE"
+        dest = output if output else folder
+        click.confirm(
+            f"This will {action} photos in {folder} into subfolders in {dest}. Continue?",
+            abort=True,
+        )
+
+    stats = importer.organize_folder(folder, threshold_minutes=threshold, dry_run=dry_run, copy=copy, output_folder=output)
+
+    if not dry_run:
+        click.echo(f"\nOrganization Complete:")
+        click.echo(f"  Folders created: {stats['folders_created']}")
+        click.echo(f"  Photos processed: {stats['processed']}")
+
+
+@main.command()
+@click.argument("folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--student", "-s", help="Student name for all imported works")
+@click.option(
+    "--start-date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    help="Start date for scheduling (increments by 1 day per work)",
+)
+@click.option("--dry-run", is_flag=True, help="Preview import without making changes")
+@click.pass_context
+def import_folders(ctx, folder: Path, student: str | None, start_date: datetime | None, dry_run: bool):
+    """Import each subfolder as a separate work (Work Name = Folder Name)."""
+    config = Config.load(ctx.obj.get("env_file"))
+    importer = Importer(config)
+
+    if not dry_run:
+        click.confirm(
+            f"This will import all subfolders in {folder} as separate works. Continue?",
+            abort=True,
+        )
+
+    stats = importer.import_from_subfolders(
+        folder,
+        student_name=student,
+        start_date=start_date,
+        dry_run=dry_run,
+    )
+
+    if stats["errors"] > 0:
+        sys.exit(1)
+
+
+
+@main.command()
+@click.argument("folder", type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option("--dry-run", is_flag=True, help="Preview updates without making changes")
+@click.pass_context
+def update_locations(ctx, folder: Path, dry_run: bool):
+    """
+    Update Notion entries with location data from local photos.
+    Does NOT creating new pages, only updates existing ones based on matching Work Name.
+    Useful when location data was missing during invalid initial import.
+    """
+    config = Config.load(ctx.obj.get("env_file"))
+    importer = Importer(config)
+
+    # 1. Scan and Group photos (using new JSON logic)
+    folder_path = Path(folder)
+    groups = importer.import_from_subfolders_grouping(folder_path) # We need to reuse grouping logic
+
+    # Actually importer doesn't expose grouping logic easily from CLI without import.
+    # Let's call a new method on importer: update_existing_locations
+    importer.update_existing_locations(folder_path, dry_run=dry_run)
+
+
 if __name__ == "__main__":
     main()

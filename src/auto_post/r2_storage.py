@@ -11,6 +11,8 @@ from botocore.config import Config as BotoConfig
 from .config import R2Config
 
 logger = logging.getLogger(__name__)
+print(f"DEBUG: Loaded r2_storage from {__file__}")
+
 
 
 class R2Storage:
@@ -23,21 +25,27 @@ class R2Storage:
     @property
     def client(self):
         if self._client is None:
-            self._client = boto3.client(
-                "s3",
-                endpoint_url=self.config.endpoint_url,
-                aws_access_key_id=self.config.access_key_id,
-                aws_secret_access_key=self.config.secret_access_key,
-                config=BotoConfig(
-                    signature_version="s3v4",
-                    retries={"max_attempts": 3, "mode": "adaptive"},
-                ),
-            )
+            self._client = self._create_client()
         return self._client
+
+    def _create_client(self):
+        return boto3.client(
+            "s3",
+            endpoint_url=self.config.endpoint_url,
+            aws_access_key_id=self.config.access_key_id,
+            aws_secret_access_key=self.config.secret_access_key,
+            config=BotoConfig(
+                signature_version="s3v4",
+                retries={"max_attempts": 3, "mode": "adaptive"},
+            ),
+        )
 
     def upload(self, content: bytes, key: str, content_type: str) -> str:
         """Upload content to R2 and return the key."""
-        self.client.upload_fileobj(
+        # Create fresh client for every request to avoid session issues
+        client = self._create_client()
+
+        client.upload_fileobj(
             io.BytesIO(content),
             self.config.bucket_name,
             key,

@@ -33,20 +33,20 @@ Notion で新しいページを作成し、「データベース - フルペー�
 
 以下のプロパティを追加:
 
-| プロパティ名 | 種類 | 説明 |
-|-------------|------|------|
-| 作品名 | タイトル | 作品の名前（必須） |
-| 画像 | ファイル&メディア | R2の画像URL |
-| 生徒名 | セレクト | フィルタ用 |
-| 投稿予定日 | 日付 | 投稿スケジュール |
-| スキップ | チェックボックス | 投稿をスキップ |
-| キャプション | テキスト | カスタムキャプション |
-| タグ | テキスト | ハッシュタグ |
-| Instagram投稿済 | チェックボックス | 投稿状態 |
-| Instagram投稿ID | テキスト | 投稿後のID |
-| X投稿済 | チェックボックス | 投稿状態 |
-| X投稿ID | テキスト | 投稿後のID |
-| エラーログ | テキスト | エラー記録 |
+| プロパティ名    | 種類              | 説明                 |
+| --------------- | ----------------- | -------------------- |
+| 作品名          | タイトル          | 作品の名前（必須）   |
+| 画像            | ファイル&メディア | R2の画像URL          |
+| 生徒名          | セレクト          | フィルタ用           |
+| 投稿予定日      | 日付              | 投稿スケジュール     |
+| スキップ        | チェックボックス  | 投稿をスキップ       |
+| キャプション    | テキスト          | カスタムキャプション |
+| タグ            | テキスト          | ハッシュタグ         |
+| Instagram投稿済 | チェックボックス  | 投稿状態             |
+| Instagram投稿ID | テキスト          | 投稿後のID           |
+| X投稿済         | チェックボックス  | 投稿状態             |
+| X投稿ID         | テキスト          | 投稿後のID           |
+| エラーログ      | テキスト          | エラー記録           |
 
 ### 1.3 Notion Integration を作成
 
@@ -59,6 +59,7 @@ Notion で新しいページを作成し、「データベース - フルペー�
 ### 1.4 データベースIDを取得
 
 データベースのURLから取得:
+
 ```
 https://www.notion.so/xxxxxxxx?v=yyyyyyyy
                     ^^^^^^^^
@@ -133,7 +134,7 @@ https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token
 ```bash
 git clone https://github.com/kwsksj/auto-post.git
 cd auto-post
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -e ".[dev]"
 ```
@@ -187,23 +188,23 @@ rclone copy ./photos r2:woodcarving-photos/
 
 GitHub リポジトリ → Settings → Secrets and variables → Actions
 
-| Secret名 | 値 |
-|---------|---|
-| `INSTAGRAM_APP_ID` | Facebook App ID |
-| `INSTAGRAM_APP_SECRET` | Facebook App Secret |
-| `INSTAGRAM_ACCESS_TOKEN` | 長期アクセストークン |
+| Secret名                        | 値                            |
+| ------------------------------- | ----------------------------- |
+| `INSTAGRAM_APP_ID`              | Facebook App ID               |
+| `INSTAGRAM_APP_SECRET`          | Facebook App Secret           |
+| `INSTAGRAM_ACCESS_TOKEN`        | 長期アクセストークン          |
 | `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram Business Account ID |
-| `X_API_KEY` | X API Key |
-| `X_API_KEY_SECRET` | X API Key Secret |
-| `X_ACCESS_TOKEN` | X Access Token |
-| `X_ACCESS_TOKEN_SECRET` | X Access Token Secret |
-| `R2_ACCOUNT_ID` | Cloudflare Account ID |
-| `R2_ACCESS_KEY_ID` | R2 Access Key ID |
-| `R2_SECRET_ACCESS_KEY` | R2 Secret Access Key |
-| `R2_BUCKET_NAME` | バケット名 |
-| `R2_PUBLIC_URL` | パブリックURL |
-| `NOTION_TOKEN` | Notion Integration Token |
-| `NOTION_DATABASE_ID` | データベースID |
+| `X_API_KEY`                     | X API Key                     |
+| `X_API_KEY_SECRET`              | X API Key Secret              |
+| `X_ACCESS_TOKEN`                | X Access Token                |
+| `X_ACCESS_TOKEN_SECRET`         | X Access Token Secret         |
+| `R2_ACCOUNT_ID`                 | Cloudflare Account ID         |
+| `R2_ACCESS_KEY_ID`              | R2 Access Key ID              |
+| `R2_SECRET_ACCESS_KEY`          | R2 Secret Access Key          |
+| `R2_BUCKET_NAME`                | バケット名                    |
+| `R2_PUBLIC_URL`                 | パブリックURL                 |
+| `NOTION_TOKEN`                  | Notion Integration Token      |
+| `NOTION_DATABASE_ID`            | データベースID                |
 
 ### 7.2 自動実行
 
@@ -269,6 +270,7 @@ auto-post export-groups ./takeout-photos grouping.json --threshold 10
 ```
 
 `grouping.json` を編集して以下を調整できます:
+
 - `work_name`: 作品名を編集
 - `student_name`: 生徒名を追加
 - `photos`: 写真をグループ間で移動

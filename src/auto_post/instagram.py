@@ -130,12 +130,16 @@ class InstagramClient:
 
     def _publish_media(self, container_id: str) -> str:
         """Publish a media container."""
+        logger.info(f"Publishing media container: {container_id}")
         result = self._request(
             "POST",
             f"{self.config.business_account_id}/media_publish",
             data={"creation_id": container_id},
         )
-        post_id = result["id"]
+        post_id = result.get("id")
+        if not post_id:
+             raise InstagramAPIError(f"Failed to publish media: {result}")
+
         logger.info(f"Published media: {post_id}")
         return post_id
 

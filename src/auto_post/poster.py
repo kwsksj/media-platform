@@ -22,7 +22,7 @@ def generate_caption(work_name: str, custom_caption: str | None, tags: str | Non
     if custom_caption and custom_caption.strip():
         caption = custom_caption.strip()
     elif work_name and work_name.strip():
-        caption = f"{work_name.strip()}の木彫りです！"
+        caption = f"{work_name.strip()} の木彫りです！"
 
     final_tags = tags.strip() if tags and tags.strip() else default_tags
 
@@ -58,6 +58,10 @@ class Poster:
         """
         Run the daily posting job.
 
+        Priority:
+        1. Posts scheduled for today (投稿予定日 = target_date)
+        2. If none, oldest unposted work by 完成日 (1 per day)
+
         Returns:
             dict with 'processed', 'ig_success', 'x_success', 'errors' counts
         """
@@ -66,9 +70,24 @@ class Poster:
 
         logger.info(f"Starting daily post for {target_date.strftime('%Y-%m-%d')}")
 
-        # Get posts scheduled for today
+        target_count = 3  # Target number of posts per day (User requested 3)
+
+        # Priority 1: Get posts scheduled for today
         posts = self.notion.get_posts_for_date(target_date)
-        logger.info(f"Found {len(posts)} posts scheduled for today")
+        logger.info(f"Found {len(posts)} posts scheduled for {target_date.strftime('%Y-%m-%d')}")
+
+        # Priority 2: Fill remaining slots with unscheduled works
+        remaining_slots = target_count - len(posts)
+        if remaining_slots > 0:
+            logger.info(f"Filling {remaining_slots} slots with unscheduled works...")
+            unscheduled_works = self.notion.get_unscheduled_works(limit=remaining_slots)
+            if unscheduled_works:
+                posts.extend(unscheduled_works)
+                logger.info(f"Added {len(unscheduled_works)} unscheduled works")
+            else:
+                logger.info("No more unscheduled works available")
+        else:
+            logger.info("Daily target met with scheduled posts")
 
         stats = {"processed": 0, "ig_success": 0, "x_success": 0, "errors": 0}
 
@@ -121,7 +140,12 @@ class Poster:
         if not post.ig_posted:
             try:
                 ig_post_id = self._post_to_instagram(images_data, caption)
-                self.notion.update_post_status(post.page_id, ig_posted=True, ig_post_id=ig_post_id)
+                self.notion.update_post_status(
+                    post.page_id,
+                    ig_posted=True,
+                    ig_post_id=ig_post_id,
+                    posted_date=datetime.now()
+                )
                 stats["ig_success"] += 1
                 logger.info(f"Instagram posted: {ig_post_id}")
             except InstagramAPIError as e:
@@ -133,7 +157,12 @@ class Poster:
         if not post.x_posted:
             try:
                 x_post_id = self._post_to_x(images_data, caption)
-                self.notion.update_post_status(post.page_id, x_posted=True, x_post_id=x_post_id)
+                self.notion.update_post_status(
+                    post.page_id,
+                    x_posted=True,
+                    x_post_id=x_post_id,
+                    posted_date=datetime.now()
+                )
                 stats["x_success"] += 1
                 logger.info(f"X posted: {x_post_id}")
             except XAPIError as e:

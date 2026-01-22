@@ -3,9 +3,12 @@
 import json
 import logging
 import re
+import glob
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+
+from .gps_utils import LocationTag, get_location_for_file
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,8 @@ class PhotoInfo:
     path: Path
     timestamp: datetime
     title: str | None = None
+    location: LocationTag | None = None
+    has_json: bool = False
 
     def __lt__(self, other: "PhotoInfo") -> bool:
         return self.timestamp < other.timestamp
@@ -33,6 +38,7 @@ class PhotoGroup:
     photos: list[PhotoInfo] = field(default_factory=list)
     work_name: str = ""
     student_name: str | None = None
+    location: LocationTag | None = None
 
     @property
     def timestamp(self) -> datetime | None:
@@ -46,94 +52,196 @@ class PhotoGroup:
         return len(self.photos)
 
 
-def parse_takeout_timestamp(json_path: Path) -> datetime | None:
-    """Parse timestamp from Google Takeout JSON metadata file."""
+def parse_takeout_metadata(json_path: Path) -> tuple[datetime | None, LocationTag | None]:
+    """
+    Parse timestamp and location from Google Takeout JSON sidecar.
+    Returns: (timestamp, location_tag)
+    """
     try:
-        with open(json_path, encoding="utf-8") as f:
+        with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # Google Takeout uses photoTakenTime.timestamp (Unix timestamp)
-        if "photoTakenTime" in data and "timestamp" in data["photoTakenTime"]:
-            ts = int(data["photoTakenTime"]["timestamp"])
-            return datetime.fromtimestamp(ts)
+        # 1. Parse Timestamp
+        timestamp = None
+        # Prioritize photoTakenTime (Shooting Date) over creationTime (Upload/Edit Date)
+        timestamp_data = data.get("photoTakenTime")
+        if not timestamp_data:
+            timestamp_data = data.get("creationTime")
 
-        # Fallback: creationTime
-        if "creationTime" in data and "timestamp" in data["creationTime"]:
-            ts = int(data["creationTime"]["timestamp"])
-            return datetime.fromtimestamp(ts)
+        if timestamp_data and isinstance(timestamp_data, dict):
+             ts_str = timestamp_data.get("timestamp")
+             if ts_str:
+                 # Google Photos JSON timestamps are UTC. Convert to JST (UTC+9)
+                 timestamp = datetime.utcfromtimestamp(int(ts_str)) + timedelta(hours=9)
 
-    except (json.JSONDecodeError, KeyError, ValueError) as e:
-        logger.debug(f"Failed to parse JSON {json_path}: {e}")
+        # 2. Parse Location
+        location = None
+        geo_data = data.get("geoDataExif") or data.get("geoData")
+        if geo_data:
+            lat = geo_data.get("latitude")
+            lon = geo_data.get("longitude")
+            # Google Takeout sometimes returns 0.0 for missing data
+            if lat and lon and (lat != 0.0 or lon != 0.0):
+                location = identify_location(lat, lon)
 
-    return None
+        return timestamp, location
+
+    except Exception as e:
+        logger.debug(f"Failed to parse JSON metadata from {json_path}: {e}")
+        return None, None
 
 
 def parse_filename_timestamp(filename: str) -> datetime | None:
-    """Try to extract timestamp from filename patterns."""
-    # Pattern: IMG_20230415_123456.jpg or 20230415_123456.jpg
+    """
+    Parse timestamp from filename patterns.
+    """
     patterns = [
-        r"(\d{8})_(\d{6})",  # YYYYMMDD_HHMMSS
-        r"(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})",  # YYYY-MM-DD_HH-MM-SS
-        r"(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})",  # YYYYMMDDHHMMSS
+        r"PXL_(\d{8})_(\d{6})",  # Pixel: PXL_YYYYMMDD_HHMMSS
+        r"IMG_(\d{8})_(\d{6})",  # Android: IMG_YYYYMMDD_HHMMSS
+        r"(\d{4})[-_](\d{2})[-_](\d{2})[-_\s](\d{2})[-_.](\d{2})[-_.](\d{2})", # Generic
     ]
 
     for pattern in patterns:
         match = re.search(pattern, filename)
         if match:
-            groups = match.groups()
             try:
-                if len(groups) == 2:
-                    # YYYYMMDD_HHMMSS format
-                    date_str, time_str = groups
+                groups = match.groups()
+                if len(groups) == 6:
+                     return datetime(
+                         int(groups[0]), int(groups[1]), int(groups[2]),
+                         int(groups[3]), int(groups[4]), int(groups[5])
+                     )
+                elif len(groups) == 2:
+                    # PXL/IMG style
+                    date_str = groups[0] # YYYYMMDD
+                    time_str = groups[1] # HHMMSS
                     return datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S")
-                elif len(groups) == 6:
-                    return datetime(
-                        int(groups[0]),
-                        int(groups[1]),
-                        int(groups[2]),
-                        int(groups[3]),
-                        int(groups[4]),
-                        int(groups[5]),
-                    )
             except ValueError:
                 continue
 
     return None
 
 
-def get_photo_timestamp(photo_path: Path) -> datetime | None:
-    """Get timestamp for a photo, trying JSON metadata first, then filename."""
-    # Try Google Takeout JSON metadata
-    json_path = Path(str(photo_path) + ".json")
-    if json_path.exists():
-        ts = parse_takeout_timestamp(json_path)
-        if ts:
-            return ts
+def get_photo_metadata(photo_path: Path) -> tuple[datetime | None, LocationTag | None, bool]:
+    """
+    Get timestamp and location for a photo from JSON or file attributes.
+    Returns: (timestamp, location, has_json)
+    """
+    # 1. Direct match: photo.jpg*.json
+    candidate_jsons = list(photo_path.parent.glob(f"{glob.escape(photo_path.name)}*.json"))
 
-    # Try filename parsing
+    # 2. If no direct match, check if it's an edited file
+    stem = photo_path.stem
+    suffixes_to_strip = ["-edited", "-編集済み"]
+    original_stem = stem
+    is_edited = False
+
+    for s in suffixes_to_strip:
+        if stem.endswith(s):
+            original_stem = stem[:-len(s)]
+            is_edited = True
+            break
+
+    if is_edited:
+        original_candidates = list(photo_path.parent.glob(f"{glob.escape(original_stem)}*.json"))
+        candidate_jsons.extend(original_candidates)
+
+    for json_path in candidate_jsons:
+        if json_path.exists():
+            ts, loc = parse_takeout_metadata(json_path)
+            if ts:
+                return ts, loc, True
+
+    # Also check base stem json (photo.json)
+    json_path_no_ext = photo_path.with_suffix(".json")
+    if json_path_no_ext.exists() and json_path_no_ext != photo_path:
+        if json_path_no_ext not in candidate_jsons:
+            ts, loc = parse_takeout_metadata(json_path_no_ext)
+            if ts:
+                return ts, loc, True
+
+    # 3. Truncated Match (Google Takeout limits filenames to ~46 chars)
+    if len(photo_path.stem) > 40:
+        # Match first 40 chars
+        truncated_candidates = list(photo_path.parent.glob(f"{glob.escape(photo_path.stem[:40])}*.json"))
+        for json_path in truncated_candidates:
+            # Logic: json_path.stem must be a prefix of photo_path.stem (truncated case)
+            if photo_path.stem.startswith(json_path.stem):
+                 if json_path not in candidate_jsons:
+                    ts, loc = parse_takeout_metadata(json_path)
+                    if ts:
+                        return ts, loc, True
+
+    # Try filename parsing for timestamp
     ts = parse_filename_timestamp(photo_path.name)
+
+    # Try EXIF for location if not found in JSON
+    # This is expensive so we do it last or if needed
+    loc = get_location_for_file(photo_path)
+
     if ts:
-        return ts
+        return ts, loc, False
 
     # Fallback to file modification time
-    return datetime.fromtimestamp(photo_path.stat().st_mtime)
+    try:
+        stat = photo_path.stat()
+        return datetime.fromtimestamp(stat.st_mtime), loc, False
+    except FileNotFoundError:
+        return None, None, False
 
 
 def scan_photos(folder: Path) -> list[PhotoInfo]:
-    """Scan a folder for photos and extract their timestamps."""
-    photos = []
+    """
+    Scan folder for images and extract metadata.
+    Handles duplicate filtering (preferring edited versions).
+    """
+    if not folder.exists():
+        logger.error(f"Folder not found: {folder}")
+        return []
+
+    all_files = {}  # Map path -> PhotoInfo
+    edited_stems = set()
+    edited_keywords = ["-edited", "編集済み"]
 
     for path in folder.rglob("*"):
         if path.suffix.lower() in IMAGE_EXTENSIONS:
-            timestamp = get_photo_timestamp(path)
+            # Skip hidden files
+            if path.name.startswith("."):
+                continue
+
+            timestamp, location, has_json = get_photo_metadata(path)
+
             if timestamp:
-                photos.append(PhotoInfo(path=path, timestamp=timestamp, title=path.stem))
+                info = PhotoInfo(path=path, timestamp=timestamp, location=location, has_json=has_json)
+                all_files[path] = info
+
+                # Identify edited files
+                for keyword in edited_keywords:
+                    if keyword in path.stem:
+                        base_stem = path.stem.replace(f"-{keyword}", "").replace(f" {keyword}", "").replace(keyword, "")
+                        edited_stems.add(base_stem.strip(" -_"))
+                        break
             else:
                 logger.warning(f"Could not determine timestamp for: {path}")
 
+    # Second pass: build final list, filtering out originals if edited exists
+    photos = []
+
+    for path, info in all_files.items():
+        stem = path.stem
+
+        is_original_of_edited = False
+        if stem in edited_stems:
+             has_keyword = any(k in stem for k in edited_keywords)
+             if not has_keyword:
+                 logger.info(f"Skipping original {path.name} in favor of edited version")
+                 continue
+
+        photos.append(info)
+
     # Sort by timestamp
     photos.sort()
-    logger.info(f"Found {len(photos)} photos in {folder}")
+    logger.info(f"Found {len(photos)} photos in {folder} (after filtering duplicates)")
     return photos
 
 
@@ -167,109 +275,75 @@ def group_by_time(
         if time_diff > threshold_minutes:
             groups.append(current_group)
             current_group = PhotoGroup(id=len(groups) + 1, photos=[photo])
+        elif len(current_group.photos) >= max_per_group:
+             # Or if max size reached? (Optional for organize/import-folders, but strict for Import)
+             # Let's respect max_per_group
+            groups.append(current_group)
+            current_group = PhotoGroup(id=len(groups) + 1, photos=[photo])
         else:
             current_group.photos.append(photo)
 
-    # Add the last group
     groups.append(current_group)
 
-    # Split groups that exceed max_per_group
-    final_groups: list[PhotoGroup] = []
-    group_id = 1
-
+    # Assign names and locations
     for group in groups:
-        if group.photo_count <= max_per_group:
-            group.id = group_id
-            final_groups.append(group)
-            group_id += 1
-        else:
-            # Split into multiple groups
-            for i in range(0, group.photo_count, max_per_group):
-                subset = group.photos[i : i + max_per_group]
-                new_group = PhotoGroup(id=group_id, photos=subset)
-                final_groups.append(new_group)
-                group_id += 1
-                logger.info(
-                    f"Split large group: created group {group_id - 1} with {len(subset)} photos"
-                )
+        if group.timestamp:
+            group.work_name = group.timestamp.strftime("%Y-%m-%d %H:%M Work")
 
-    return final_groups
+        # Find first location in the group
+        for p in group.photos:
+            if p.location:
+                group.location = p.location
+                break
 
+    return groups
 
-def export_grouping(groups: list[PhotoGroup], output_path: Path) -> None:
-    """Export grouping data to a JSON file for manual review/editing."""
-    data = {
-        "version": 1,
-        "generated_at": datetime.now().isoformat(),
-        "groups": [],
-    }
-
+def print_grouping_summary(groups: list[PhotoGroup]):
+    """Print summary of groups for preview."""
+    print(f"\nGrouping Summary: {len(groups)} groups found")
     for group in groups:
-        group_data = {
-            "id": group.id,
-            "work_name": group.work_name or f"Work_{group.id:03d}",
-            "student_name": group.student_name,
-            "photo_count": group.photo_count,
-            "first_timestamp": group.timestamp.isoformat() if group.timestamp else None,
-            "photos": [
-                {
-                    "path": str(photo.path),
-                    "timestamp": photo.timestamp.isoformat(),
-                    "title": photo.title,
-                }
-                for photo in group.photos
-            ],
+        ts_str = group.timestamp.strftime("%Y-%m-%d %H:%M") if group.timestamp else "N/A"
+        print(f"  Group {group.id}: {ts_str} ({group.photo_count} photos)")
+        for p in group.photos:
+            print(f"    - {p.path.name} ({p.timestamp.strftime('%H:%M:%S')})")
+
+def export_grouping(groups: list[PhotoGroup], output_path: Path):
+    """Export grouping to JSON."""
+    data = []
+    for g in groups:
+        g_data = {
+            "id": g.id,
+            "work_name": g.work_name,
+            "student_name": g.student_name,
+            "photos": [str(p.path) for p in g.photos]
         }
-        data["groups"].append(group_data)
+        data.append(g_data)
 
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-    logger.info(f"Exported grouping to {output_path}")
-
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 def import_grouping(input_path: Path) -> list[PhotoGroup]:
-    """Import grouping data from a JSON file."""
-    with open(input_path, encoding="utf-8") as f:
+    """Import grouping from JSON."""
+    with open(input_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     groups = []
-    for group_data in data["groups"]:
-        photos = [
-            PhotoInfo(
-                path=Path(p["path"]),
-                timestamp=datetime.fromisoformat(p["timestamp"]),
-                title=p.get("title"),
+    for g_data in data:
+        photos = []
+        for p_path_str in g_data["photos"]:
+            p_path = Path(p_path_str)
+            timestamp, has_json = get_photo_timestamp(p_path)
+            if timestamp:
+                photos.append(PhotoInfo(path=p_path, timestamp=timestamp, has_json=has_json))
+
+        if photos:
+            photos.sort()
+            group = PhotoGroup(
+                id=g_data["id"],
+                photos=photos,
+                work_name=g_data.get("work_name", ""),
+                student_name=g_data.get("student_name")
             )
-            for p in group_data["photos"]
-        ]
-        group = PhotoGroup(
-            id=group_data["id"],
-            photos=photos,
-            work_name=group_data.get("work_name", ""),
-            student_name=group_data.get("student_name"),
-        )
-        groups.append(group)
+            groups.append(group)
 
-    logger.info(f"Imported {len(groups)} groups from {input_path}")
     return groups
-
-
-def print_grouping_summary(groups: list[PhotoGroup]) -> None:
-    """Print a summary of the grouping for review."""
-    total_photos = sum(g.photo_count for g in groups)
-    print(f"\nGrouping Summary: {len(groups)} groups, {total_photos} photos\n")
-    print("-" * 70)
-
-    for group in groups:
-        ts = group.timestamp.strftime("%Y-%m-%d %H:%M") if group.timestamp else "N/A"
-        name = group.work_name or f"Work_{group.id:03d}"
-        student = f" ({group.student_name})" if group.student_name else ""
-        print(f"Group {group.id:3d}: {group.photo_count:2d} photos | {ts} | {name}{student}")
-
-        # Show first few photo filenames
-        for i, photo in enumerate(group.photos[:3]):
-            print(f"           - {photo.path.name}")
-        if group.photo_count > 3:
-            print(f"           ... and {group.photo_count - 3} more")
-        print()
