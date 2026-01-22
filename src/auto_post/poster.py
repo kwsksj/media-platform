@@ -24,11 +24,30 @@ def generate_caption(work_name: str, custom_caption: str | None, tags: str | Non
     elif work_name and work_name.strip():
         caption = f"{work_name.strip()} の木彫りです！"
 
-    final_tags = tags.strip() if tags and tags.strip() else default_tags
+    custom_tags = []
+    if tags:
+        # Split by Space (or ideographic space) to handle multiple tags in string
+        for t in tags.replace("　", " ").split():
+            t = t.strip()
+            if t:
+                # Add # if missing
+                if not t.startswith("#"):
+                    t = f"#{t}"
+                custom_tags.append(t)
+
+    # Combine Custom Tags + Default Tags
+    # Use a set to avoid duplicates if needed, but ordered list is better for display
+    combined_tags_str = " ".join(custom_tags)
+
+    if default_tags:
+        if combined_tags_str:
+            combined_tags_str += f"\n\n{default_tags}"
+        else:
+            combined_tags_str = default_tags
 
     if caption:
-        return f"{caption}\n\n{final_tags}"
-    return final_tags
+        return f"{caption}\n\n{combined_tags_str}"
+    return combined_tags_str
 
 
 def download_image_from_url(url: str) -> tuple[bytes, str]:

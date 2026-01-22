@@ -225,6 +225,20 @@ class NotionDB:
 
         return [self._parse_page(page) for page in response["results"]]
 
+    def _fetch_page_title(self, page_id: str) -> str:
+        """Fetch a page and return its title."""
+        try:
+            page = self.client.pages.retrieve(page_id)
+            # Inspect properties to find title
+            # Title property key is variable, but type is 'title'
+            for prop in page["properties"].values():
+                if prop["type"] == "title":
+                    return prop["title"][0]["plain_text"] if prop["title"] else ""
+            return ""
+        except Exception as e:
+            logger.warning(f"Failed to fetch title for page {page_id}: {e}")
+            return ""
+
     def _parse_page(self, page: dict) -> WorkItem:
         """Parse a Notion page into a WorkItem."""
         props = page["properties"]
@@ -262,7 +276,24 @@ class NotionDB:
 
         # Extract rich text fields
         caption = self._get_rich_text(props, "キャプション")
-        tags = self._get_rich_text(props, "タグ")
+
+        # Extract tags (support Multi-select, Relation, or Rich Text)
+        tags = None
+        if props.get("タグ"):
+            t_prop = props["タグ"]
+            if t_prop["type"] == "multi_select":
+                tags = " ".join([opt["name"] for opt in t_prop["multi_select"]])
+            elif t_prop["type"] == "rich_text":
+                tags = self._get_rich_text(props, "タグ")
+            elif t_prop["type"] == "relation":
+                # Fetch related pages to get their titles
+                # Note: This causes N+1 API calls, use sparingly or for small batches
+                relation_ids = [r["id"] for r in t_prop["relation"]]
+                if relation_ids:
+                    # Limit to first 5 tags to avoid excessive calls
+                    names = [self._fetch_page_title(rid) for rid in relation_ids[:5]]
+                    tags = " ".join(filter(None, names))
+
         ig_post_id = self._get_rich_text(props, "Instagram投稿ID")
         x_post_id = self._get_rich_text(props, "X投稿ID")
 
