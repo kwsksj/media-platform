@@ -55,10 +55,6 @@ Thumbs.db
 # Logs
 *.log
 
-# Temporary Debug Scripts
-debug_*.py
-test_daily_dry_run.py
-test_instagram_post.py
-test_x_post.py
-verify_*.py
+# Archived debug/test scripts
+scripts/archive/
 
