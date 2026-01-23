@@ -25,16 +25,20 @@ def generate_caption(
     creation_date: datetime | None = None
 ) -> str:
     """Generate caption from work name and tags."""
-    caption = ""
+    # Build caption: {作品名} の木彫りです！\n{キャプション}\n\n完成日: ...
+    lines = []
+
+    if work_name and work_name.strip():
+        lines.append(f"{work_name.strip()} の木彫りです！")
 
     if custom_caption and custom_caption.strip():
-        caption = custom_caption.strip()
-    elif work_name and work_name.strip():
-        caption = f"{work_name.strip()} の木彫りです！"
+        lines.append(custom_caption.strip())
 
     if creation_date:
         date_str = creation_date.strftime("%Y年%m月%d日")
-        caption += f"\n\n完成日: {date_str}"
+        lines.append(f"完成日: {date_str}")
+
+    caption = "\n".join(lines)
 
     custom_tags = []
     if tags:

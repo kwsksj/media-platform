@@ -179,7 +179,7 @@ auto-post import-groups output.json
 
 ```
 {作品名} の木彫りです！
-
+{キャプション}
 完成日: {YYYY年MM月DD日}
 
 {デフォルトタグ}
