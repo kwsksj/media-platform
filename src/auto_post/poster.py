@@ -352,13 +352,13 @@ class Poster:
         """List work items from Notion."""
         return self.notion.list_works(filter_student=student, only_unposted=only_unposted)
 
-    def test_post(self, page_id: str, platform: str = "both") -> dict:
+    def test_post(self, page_id: str, platform: str = "all") -> dict:
         """
         Test post a specific work item.
 
         Args:
             page_id: Notion page ID
-            platform: 'instagram', 'x', or 'both'
+            platform: 'instagram', 'x', 'threads', or 'all'
 
         Returns:
             dict with post IDs
@@ -392,17 +392,17 @@ class Poster:
 
         result = {}
 
-        if platform in ("instagram", "both"):
+        if platform in ("instagram", "all"):
             ig_post_id = self._post_to_instagram(images_data, caption)
             result["instagram_post_id"] = ig_post_id
             self.notion.update_post_status(page_id, ig_posted=True, ig_post_id=ig_post_id)
 
-        if platform in ("x", "both"):
+        if platform in ("x", "all"):
             x_post_id = self._post_to_x(images_data, caption)
             result["x_post_id"] = x_post_id
             self.notion.update_post_status(page_id, x_posted=True, x_post_id=x_post_id)
 
-        if platform in ("threads", "both"):
+        if platform in ("threads", "all"):
             threads_post_id = self._post_to_threads(images_data, caption)
             result["threads_post_id"] = threads_post_id
             self.notion.update_post_status(page_id, threads_posted=True, threads_post_id=threads_post_id)

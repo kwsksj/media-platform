@@ -76,9 +76,9 @@ def post(ctx, date: datetime | None, dry_run: bool, platform: str):
 @click.argument("page_id")
 @click.option(
     "--platform",
-    type=click.Choice(["instagram", "x", "threads", "both"]),
-    default="both",
-    help="Platform to post to",
+    type=click.Choice(["instagram", "x", "threads", "all"]),
+    default="all",
+    help="Platform to post to (default: all)",
 )
 @click.pass_context
 def test_post(ctx, page_id: str, platform: str):
@@ -92,6 +92,8 @@ def test_post(ctx, page_id: str, platform: str):
         click.echo(f"Instagram post ID: {result['instagram_post_id']}")
     if "x_post_id" in result:
         click.echo(f"X post ID: {result['x_post_id']}")
+    if "threads_post_id" in result:
+        click.echo(f"Threads post ID: {result['threads_post_id']}")
 
 
 @main.command()

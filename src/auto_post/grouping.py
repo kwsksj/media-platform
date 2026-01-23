@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .gps_utils import LocationTag, get_location_for_file
+from .gps_utils import LocationTag, get_location_for_file, identify_location
 
 logger = logging.getLogger(__name__)
 
@@ -332,9 +332,9 @@ def import_grouping(input_path: Path) -> list[PhotoGroup]:
         photos = []
         for p_path_str in g_data["photos"]:
             p_path = Path(p_path_str)
-            timestamp, has_json = get_photo_timestamp(p_path)
+            timestamp, location, has_json = get_photo_metadata(p_path)
             if timestamp:
-                photos.append(PhotoInfo(path=p_path, timestamp=timestamp, has_json=has_json))
+                photos.append(PhotoInfo(path=p_path, timestamp=timestamp, location=location, has_json=has_json))
 
         if photos:
             photos.sort()

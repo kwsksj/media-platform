@@ -11,7 +11,6 @@ from botocore.config import Config as BotoConfig
 from .config import R2Config
 
 logger = logging.getLogger(__name__)
-print(f"DEBUG: Loaded r2_storage from {__file__}")
 
 
 

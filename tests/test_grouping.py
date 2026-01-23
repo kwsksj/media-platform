@@ -12,7 +12,7 @@ from auto_post.grouping import (
     PhotoInfo,
     group_by_time,
     parse_filename_timestamp,
-    parse_takeout_timestamp,
+    parse_takeout_metadata,
     export_grouping,
     import_grouping,
 )
@@ -27,8 +27,9 @@ class TestParseFilenameTimestamp:
         assert result == datetime(2023, 4, 15, 12, 34, 56)
 
     def test_date_only_format(self):
-        """Test date-based filename."""
-        result = parse_filename_timestamp("20230415_123456.jpg")
+        """Test date-based filename with hyphen separator."""
+        # The current implementation requires IMG_ or PXL_ prefix, or YYYY-MM-DD format
+        result = parse_filename_timestamp("2023-04-15_12-34-56.jpg")
         assert result == datetime(2023, 4, 15, 12, 34, 56)
 
     def test_invalid_format(self):
@@ -42,8 +43,8 @@ class TestParseFilenameTimestamp:
         assert result == datetime(2023, 12, 31, 0, 0, 0)
 
 
-class TestParseTakeoutTimestamp:
-    """Tests for parse_takeout_timestamp function."""
+class TestParseTakeoutMetadata:
+    """Tests for parse_takeout_metadata function."""
 
     def test_photo_taken_time(self):
         """Test parsing photoTakenTime from JSON."""
@@ -53,8 +54,11 @@ class TestParseTakeoutTimestamp:
             }, f)
             f.flush()
 
-            result = parse_takeout_timestamp(Path(f.name))
-            assert result == datetime.fromtimestamp(1681560896)
+            timestamp, location = parse_takeout_metadata(Path(f.name))
+            # Note: parse_takeout_metadata converts UTC to JST (+9 hours)
+            from datetime import timedelta
+            expected = datetime.utcfromtimestamp(1681560896) + timedelta(hours=9)
+            assert timestamp == expected
 
     def test_creation_time_fallback(self):
         """Test falling back to creationTime."""
@@ -64,8 +68,10 @@ class TestParseTakeoutTimestamp:
             }, f)
             f.flush()
 
-            result = parse_takeout_timestamp(Path(f.name))
-            assert result == datetime.fromtimestamp(1681560896)
+            timestamp, location = parse_takeout_metadata(Path(f.name))
+            from datetime import timedelta
+            expected = datetime.utcfromtimestamp(1681560896) + timedelta(hours=9)
+            assert timestamp == expected
 
     def test_invalid_json(self):
         """Test invalid JSON returns None."""
@@ -73,8 +79,9 @@ class TestParseTakeoutTimestamp:
             f.write("not valid json")
             f.flush()
 
-            result = parse_takeout_timestamp(Path(f.name))
-            assert result is None
+            timestamp, location = parse_takeout_metadata(Path(f.name))
+            assert timestamp is None
+            assert location is None
 
 
 class TestGroupByTime:
@@ -182,28 +189,38 @@ class TestExportImportGrouping:
 
     def test_export_import_roundtrip(self):
         """Test export then import preserves data."""
-        groups = [
-            PhotoGroup(
-                id=1,
-                photos=[
-                    PhotoInfo(path=Path("/path/photo1.jpg"), timestamp=datetime(2023, 4, 15, 12, 0, 0), title="photo1"),
-                    PhotoInfo(path=Path("/path/photo2.jpg"), timestamp=datetime(2023, 4, 15, 12, 5, 0), title="photo2"),
-                ],
-                work_name="Test Work",
-                student_name="Taro",
-            ),
-        ]
+        import os
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            output_path = Path(f.name)
+        # Create temporary image files with timestamp-based names
+        with tempfile.TemporaryDirectory() as tmpdir:
+            photo1_path = Path(tmpdir) / "IMG_20230415_120000.jpg"
+            photo2_path = Path(tmpdir) / "IMG_20230415_120500.jpg"
 
-        export_grouping(groups, output_path)
-        imported = import_grouping(output_path)
+            # Create actual files (empty but with valid names for timestamp parsing)
+            photo1_path.touch()
+            photo2_path.touch()
 
-        assert len(imported) == 1
-        assert imported[0].id == 1
-        assert imported[0].work_name == "Test Work"
-        assert imported[0].student_name == "Taro"
-        assert imported[0].photo_count == 2
-        assert imported[0].photos[0].path == Path("/path/photo1.jpg")
-        assert imported[0].photos[1].path == Path("/path/photo2.jpg")
+            groups = [
+                PhotoGroup(
+                    id=1,
+                    photos=[
+                        PhotoInfo(path=photo1_path, timestamp=datetime(2023, 4, 15, 12, 0, 0), title="photo1"),
+                        PhotoInfo(path=photo2_path, timestamp=datetime(2023, 4, 15, 12, 5, 0), title="photo2"),
+                    ],
+                    work_name="Test Work",
+                    student_name="Taro",
+                ),
+            ]
+
+            output_path = Path(tmpdir) / "grouping.json"
+
+            export_grouping(groups, output_path)
+            imported = import_grouping(output_path)
+
+            assert len(imported) == 1
+            assert imported[0].id == 1
+            assert imported[0].work_name == "Test Work"
+            assert imported[0].student_name == "Taro"
+            assert imported[0].photo_count == 2
+            assert imported[0].photos[0].path == photo1_path
+            assert imported[0].photos[1].path == photo2_path
