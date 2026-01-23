@@ -1,9 +1,10 @@
-# Instagram/X 自動投稿システム セットアップ手順書
+# Instagram/X/Threads 自動投稿システム セットアップ手順書
 
 ## 前提条件
 
 - Python 3.10以上
 - Instagram Business または Creator アカウント（Facebookページと連携済み）
+- Threads アカウント（Instagram アカウントと連携）
 - X（Twitter）アカウント
 - Cloudflare アカウント
 - Notion アカウント
@@ -14,7 +15,7 @@
 ## システム構成
 
 ```
-ローカル写真 → R2（パブリック読み取り）→ Instagram / X
+ローカル写真 → R2（パブリック読み取り）→ Instagram / X / Threads
                     ↓
               Notion DB（管理台帳 + 画像プレビュー）
 ```
@@ -46,6 +47,8 @@ Notion で新しいページを作成し、「データベース - フルペー�
 | Instagram投稿ID | テキスト          | 投稿後のID           |
 | X投稿済         | チェックボックス  | 投稿状態             |
 | X投稿ID         | テキスト          | 投稿後のID           |
+| Threads投稿済   | チェックボックス  | 投稿状態             |
+| Threads投稿ID   | テキスト          | 投稿後のID           |
 | エラーログ      | テキスト          | エラー記録           |
 
 ### 1.3 Notion Integration を作成
@@ -127,6 +130,36 @@ https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token
 
 ---
 
+## Step 4.5: Threads API
+
+### 4.5.1 Threads Developer 設定
+
+1. [Meta for Developers](https://developers.facebook.com/) → Step 3 で作成したアプリを使用
+2. 「Threads API」を追加
+3. 控える: **App ID**, **App Secret**（Instagram と共通）
+
+### 4.5.2 アクセストークン取得
+
+1. [Threads API Explorer](https://developers.facebook.com/tools/explorer/) または Graph API Explorer を使用
+2. 権限を追加: `threads_basic`, `threads_content_publish`
+3. 「Generate Access Token」→ 短期トークンを取得
+
+### 4.5.3 長期トークンに変換
+
+```text
+https://graph.threads.net/access_token?grant_type=th_exchange_token&client_id={APP_ID}&client_secret={APP_SECRET}&access_token={短期トークン}
+```
+
+### 4.5.4 User ID を取得
+
+```bash
+curl "https://graph.threads.net/v1.0/me?access_token={ACCESS_TOKEN}"
+```
+
+レスポンスの `id` を控える。
+
+---
+
 ## Step 5: ローカル環境セットアップ
 
 ### 5.1 クローン & インストール
@@ -188,23 +221,29 @@ rclone copy ./photos r2:woodcarving-photos/
 
 GitHub リポジトリ → Settings → Secrets and variables → Actions
 
-| Secret名                        | 値                            |
-| ------------------------------- | ----------------------------- |
-| `INSTAGRAM_APP_ID`              | Facebook App ID               |
-| `INSTAGRAM_APP_SECRET`          | Facebook App Secret           |
-| `INSTAGRAM_ACCESS_TOKEN`        | 長期アクセストークン          |
-| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram Business Account ID |
-| `X_API_KEY`                     | X API Key                     |
-| `X_API_KEY_SECRET`              | X API Key Secret              |
-| `X_ACCESS_TOKEN`                | X Access Token                |
-| `X_ACCESS_TOKEN_SECRET`         | X Access Token Secret         |
-| `R2_ACCOUNT_ID`                 | Cloudflare Account ID         |
-| `R2_ACCESS_KEY_ID`              | R2 Access Key ID              |
-| `R2_SECRET_ACCESS_KEY`          | R2 Secret Access Key          |
-| `R2_BUCKET_NAME`                | バケット名                    |
-| `R2_PUBLIC_URL`                 | パブリックURL                 |
-| `NOTION_TOKEN`                  | Notion Integration Token      |
-| `NOTION_DATABASE_ID`            | データベースID                |
+| Secret名                        | 値                              |
+| ------------------------------- | ------------------------------- |
+| `INSTAGRAM_APP_ID`              | Facebook App ID                 |
+| `INSTAGRAM_APP_SECRET`          | Facebook App Secret             |
+| `INSTAGRAM_ACCESS_TOKEN`        | 長期アクセストークン            |
+| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram Business Account ID   |
+| `THREADS_APP_ID`                | Threads App ID（※）            |
+| `THREADS_APP_SECRET`            | Threads App Secret（※）        |
+| `THREADS_ACCESS_TOKEN`          | Threads 長期アクセストークン    |
+| `THREADS_USER_ID`               | Threads User ID                 |
+| `X_API_KEY`                     | X API Key                       |
+| `X_API_KEY_SECRET`              | X API Key Secret                |
+| `X_ACCESS_TOKEN`                | X Access Token                  |
+| `X_ACCESS_TOKEN_SECRET`         | X Access Token Secret           |
+| `R2_ACCOUNT_ID`                 | Cloudflare Account ID           |
+| `R2_ACCESS_KEY_ID`              | R2 Access Key ID                |
+| `R2_SECRET_ACCESS_KEY`          | R2 Secret Access Key            |
+| `R2_BUCKET_NAME`                | バケット名                      |
+| `R2_PUBLIC_URL`                 | パブリックURL                   |
+| `NOTION_TOKEN`                  | Notion Integration Token        |
+| `NOTION_DATABASE_ID`            | データベースID                  |
+
+※ Threads App ID/Secret は Instagram と同じ Meta アプリを使用する場合、`INSTAGRAM_APP_ID`/`INSTAGRAM_APP_SECRET` と同じ値になります。
 
 ### 7.2 自動実行
 

@@ -167,6 +167,8 @@ def list_works(ctx, student: str | None, unposted: bool):
             status.append("IG")
         if work.x_posted:
             status.append("X")
+        if hasattr(work, 'threads_posted') and work.threads_posted:
+            status.append("Threads")
         status_str = f" [{','.join(status)}]" if status else ""
 
         click.echo(f"  {work.work_name}{status_str}")
@@ -363,18 +365,13 @@ def import_folders(ctx, folder: Path, student: str | None, start_date: datetime 
 def update_locations(ctx, folder: Path, dry_run: bool):
     """
     Update Notion entries with location data from local photos.
-    Does NOT creating new pages, only updates existing ones based on matching Work Name.
-    Useful when location data was missing during invalid initial import.
+    Does NOT create new pages, only updates existing ones based on matching Work Name.
+    Useful when location data was missing during initial import.
     """
     config = Config.load(ctx.obj.get("env_file"))
     importer = Importer(config)
 
-    # 1. Scan and Group photos (using new JSON logic)
     folder_path = Path(folder)
-    groups = importer.import_from_subfolders_grouping(folder_path) # We need to reuse grouping logic
-
-    # Actually importer doesn't expose grouping logic easily from CLI without import.
-    # Let's call a new method on importer: update_existing_locations
     importer.update_existing_locations(folder_path, dry_run=dry_run)
 
 
