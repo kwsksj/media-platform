@@ -12,11 +12,18 @@ from .notion_db import NotionDB, WorkItem
 from .r2_storage import R2Storage
 from .token_manager import TokenManager
 from .x_twitter import XAPIError, XClient
+from .threads import ThreadsClient, ThreadsAPIError
 
 logger = logging.getLogger(__name__)
 
 
-def generate_caption(work_name: str, custom_caption: str | None, tags: str | None, default_tags: str) -> str:
+def generate_caption(
+    work_name: str,
+    custom_caption: str | None,
+    tags: str | None,
+    default_tags: str,
+    creation_date: datetime | None = None
+) -> str:
     """Generate caption from work name and tags."""
     caption = ""
 
@@ -24,6 +31,10 @@ def generate_caption(work_name: str, custom_caption: str | None, tags: str | Non
         caption = custom_caption.strip()
     elif work_name and work_name.strip():
         caption = f"{work_name.strip()} の木彫りです！"
+
+    if creation_date:
+        date_str = creation_date.strftime("%Y年%m月%d日")
+        caption += f"\n\n完成日: {date_str}"
 
     custom_tags = []
     if tags:
@@ -40,11 +51,23 @@ def generate_caption(work_name: str, custom_caption: str | None, tags: str | Non
     # Use a set to avoid duplicates if needed, but ordered list is better for display
     combined_tags_str = " ".join(custom_tags)
 
+    # Normalize Default Tags (ensure # prefix)
+    norm_dest_tags = []
     if default_tags:
+         for t in default_tags.replace("　", " ").split():
+            t = t.strip()
+            if t:
+                if not t.startswith("#"):
+                    t = f"#{t}"
+                norm_dest_tags.append(t)
+    default_tags_str = " ".join(norm_dest_tags)
+
+    if default_tags_str:
         if combined_tags_str:
-            combined_tags_str += f"\n\n{default_tags}"
+            # Default Tags FIRST, then Custom Tags
+            combined_tags_str = f"{default_tags_str}\n\n{combined_tags_str}"
         else:
-            combined_tags_str = default_tags
+            combined_tags_str = default_tags_str
 
     if caption:
         return f"{caption}\n\n{combined_tags_str}"
@@ -80,9 +103,33 @@ class Poster:
         config.instagram.access_token = valid_token
 
         self.instagram = InstagramClient(config.instagram)
+
+        # Threads Token Management
+        # We need a compatible config object for TokenManager if using generic approach.
+        # But TokenManager expects InstagramConfig typed hints (though duck typing works).
+        # We also need a different key for R2 storage.
+        self.threads_token_manager = TokenManager(
+            self.r2,
+            config.threads, # Duck typing: ThreadsConfig has same fields
+            token_file_key="config/threads_token.json",
+            base_url="https://graph.threads.net",
+            api_version=None,
+            grant_type="th_refresh_token",
+            exchange_param="access_token",
+            token_endpoint="refresh_access_token",
+            include_client_credentials=False,
+            fallback_grant_type="th_exchange_token",
+            fallback_exchange_param="access_token",
+            fallback_token_endpoint="oauth/access_token",
+            fallback_include_client_credentials=True,
+        )
+        valid_threads_token = self.threads_token_manager.get_valid_token()
+        config.threads.access_token = valid_threads_token
+        self.threads = ThreadsClient(config.threads)
+
         self.x = XClient(config.x)
 
-    def run_daily_post(self, target_date: datetime | None = None) -> dict:
+    def run_daily_post(self, target_date: datetime | None = None, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
         """
         Run the daily posting job.
 
@@ -108,7 +155,7 @@ class Poster:
         remaining_slots = target_count - len(posts)
         if remaining_slots > 0:
             logger.info(f"Filling {remaining_slots} slots with unscheduled works...")
-            unscheduled_works = self.notion.get_unscheduled_works(limit=remaining_slots)
+            unscheduled_works = self.notion.get_unscheduled_works(limit=remaining_slots, platforms=platforms)
             if unscheduled_works:
                 posts.extend(unscheduled_works)
                 logger.info(f"Added {len(unscheduled_works)} unscheduled works")
@@ -121,7 +168,7 @@ class Poster:
 
         for post in posts:
             try:
-                self._process_post(post, stats)
+                self._process_post(post, stats, dry_run=dry_run, platforms=platforms)
                 stats["processed"] += 1
                 time.sleep(2)  # Rate limit between posts
             except Exception as e:
@@ -131,14 +178,17 @@ class Poster:
 
         logger.info(
             f"Daily post complete: {stats['processed']} processed, "
-            f"{stats['ig_success']} IG, {stats['x_success']} X, {stats['errors']} errors"
+            f"{stats['ig_success']} IG, {stats.get('threads_success', 0)} Threads, {stats['x_success']} X, {stats['errors']} errors"
         )
 
         return stats
 
-    def _process_post(self, post: WorkItem, stats: dict):
+    def _process_post(self, post: WorkItem, stats: dict, dry_run: bool = False, platforms: list[str] | None = None):
         """Process a single post."""
-        logger.info(f"Processing: {post.work_name}")
+        if platforms is None:
+            platforms = ["instagram", "x", "threads"]
+
+        logger.info(f"Processing: {post.work_name} (Dry Run: {dry_run}, Platforms: {platforms})")
 
         if not post.image_urls:
             raise ValueError(f"No images for post: {post.work_name}")
@@ -149,6 +199,7 @@ class Poster:
             post.caption,
             post.tags,
             self.config.default_tags,
+            creation_date=post.creation_date,
         )
 
         # Download images from URLs
@@ -164,39 +215,70 @@ class Poster:
             images_data.append((content, filename, mime_type))
             logger.debug(f"Downloaded: {filename}")
 
-        # Post to Instagram (if not already posted)
-        if not post.ig_posted:
-            try:
-                ig_post_id = self._post_to_instagram(images_data, caption)
-                self.notion.update_post_status(
-                    post.page_id,
-                    ig_posted=True,
-                    ig_post_id=ig_post_id,
-                    posted_date=datetime.now()
-                )
+        # Post to Instagram (if not already posted AND platform is requested)
+        if "instagram" in platforms and not post.ig_posted:
+            if dry_run:
+                logger.info("Dry Run: Would post to Instagram")
                 stats["ig_success"] += 1
-                logger.info(f"Instagram posted: {ig_post_id}")
-            except InstagramAPIError as e:
-                logger.error(f"Instagram error: {e}")
-                self.notion.update_post_status(post.page_id, error_log=f"Instagram: {e}")
-                stats["errors"] += 1
+            else:
+                try:
+                    ig_post_id = self._post_to_instagram(images_data, caption)
+                    self.notion.update_post_status(
+                        post.page_id,
+                        ig_posted=True,
+                        ig_post_id=ig_post_id,
+                        posted_date=datetime.now()
+                    )
+                    stats["ig_success"] += 1
+                    logger.info(f"Instagram posted: {ig_post_id}")
+                except InstagramAPIError as e:
+                    logger.error(f"Instagram error: {e}")
+                    self.notion.update_post_status(post.page_id, error_log=f"Instagram: {e}")
+                    stats["errors"] += 1
 
-        # Post to X (if not already posted)
-        if not post.x_posted:
-            try:
-                x_post_id = self._post_to_x(images_data, caption)
-                self.notion.update_post_status(
-                    post.page_id,
-                    x_posted=True,
-                    x_post_id=x_post_id,
-                    posted_date=datetime.now()
-                )
+        # Post to X (if not already posted AND platform is requested)
+        if "x" in platforms and not post.x_posted:
+            if dry_run:
+                logger.info("Dry Run: Would post to X")
                 stats["x_success"] += 1
-                logger.info(f"X posted: {x_post_id}")
-            except XAPIError as e:
-                logger.error(f"X error: {e}")
-                self.notion.update_post_status(post.page_id, error_log=f"X: {e}")
-                stats["errors"] += 1
+            else:
+                try:
+                    x_post_id = self._post_to_x(images_data, caption)
+                    self.notion.update_post_status(
+                        post.page_id,
+                        x_posted=True,
+                        x_post_id=x_post_id,
+                        posted_date=datetime.now()
+                    )
+                    stats["x_success"] += 1
+                    logger.info(f"X posted: {x_post_id}")
+                except XAPIError as e:
+                    logger.error(f"X error: {e}")
+                    self.notion.update_post_status(post.page_id, error_log=f"X: {e}")
+                    stats["errors"] += 1
+
+        # Post to Threads (if not already posted AND platform is requested)
+        if "threads" in platforms and hasattr(post, 'threads_posted') and not post.threads_posted:
+            if dry_run:
+                logger.info("Dry Run: Would post to Threads")
+                stats.setdefault("threads_success", 0)
+                stats["threads_success"] += 1
+            else:
+                try:
+                    threads_post_id = self._post_to_threads(images_data, caption)
+                    self.notion.update_post_status(
+                        post.page_id,
+                        threads_posted=True,
+                        threads_post_id=threads_post_id,
+                        posted_date=datetime.now()
+                    )
+                    stats.setdefault("threads_success", 0)
+                    stats["threads_success"] += 1
+                    logger.info(f"Threads posted: {threads_post_id}")
+                except ThreadsAPIError as e:
+                    logger.error(f"Threads error: {e}")
+                    self.notion.update_post_status(post.page_id, error_log=f"Threads: {e}")
+                    stats["errors"] += 1
 
     def _post_to_instagram(self, images_data: list[tuple[bytes, str, str]], caption: str) -> str:
         """Post images to Instagram."""
@@ -215,6 +297,32 @@ class Poster:
                 return self.instagram.post_single_image(image_urls[0], caption)
             else:
                 return self.instagram.post_carousel(image_urls, caption)
+
+        finally:
+            # Clean up R2 files
+            for key in r2_keys:
+                try:
+                    self.r2.delete(key)
+                except Exception as e:
+                    logger.warning(f"Failed to delete R2 file {key}: {e}")
+
+    def _post_to_threads(self, images_data: list[tuple[bytes, str, str]], caption: str) -> str:
+        """Post images to Threads."""
+        # Upload images to R2 and get presigned URLs
+        r2_keys = []
+        image_urls = []
+
+        try:
+            for content, filename, mime_type in images_data:
+                key, url = self.r2.upload_and_get_url(content, filename, mime_type)
+                r2_keys.append(key)
+                image_urls.append(url)
+
+            # Post to Threads
+            if len(image_urls) == 1:
+                return self.threads.post_single_image(image_urls[0], caption)
+            else:
+                return self.threads.post_carousel(image_urls, caption)
 
         finally:
             # Clean up R2 files
@@ -264,7 +372,13 @@ class Poster:
                 mime_type = "image/png"
             images_data.append((content, filename, mime_type))
 
-        caption = generate_caption(work.work_name, work.caption, work.tags, self.config.default_tags)
+        caption = generate_caption(
+            work.work_name,
+            work.caption,
+            work.tags,
+            self.config.default_tags,
+            creation_date=work.creation_date,
+        )
 
         result = {}
 
@@ -277,5 +391,10 @@ class Poster:
             x_post_id = self._post_to_x(images_data, caption)
             result["x_post_id"] = x_post_id
             self.notion.update_post_status(page_id, x_posted=True, x_post_id=x_post_id)
+
+        if platform in ("threads", "both"):
+            threads_post_id = self._post_to_threads(images_data, caption)
+            result["threads_post_id"] = threads_post_id
+            self.notion.update_post_status(page_id, threads_posted=True, threads_post_id=threads_post_id)
 
         return result

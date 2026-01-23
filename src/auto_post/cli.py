@@ -39,18 +39,33 @@ def main(ctx, env_file: Path | None, debug: bool):
 
 @main.command()
 @click.option("--date", type=click.DateTime(formats=["%Y-%m-%d"]), help="Target date (default: today)")
+@click.option("--dry-run", is_flag=True, help="Preview posting without executing")
+@click.option(
+    "--platform",
+    type=click.Choice(["instagram", "x", "threads", "all"]),
+    default="all",
+    help="Platform to post to (default: all). When specified, only items unposted to that platform are selected."
+)
 @click.pass_context
-def post(ctx, date: datetime | None):
+def post(ctx, date: datetime | None, dry_run: bool, platform: str):
     """Run the daily posting job."""
     config = Config.load(ctx.obj.get("env_file"))
     poster = Poster(config)
 
     target_date = date or datetime.now()
-    stats = poster.run_daily_post(target_date)
+
+    # Convert platform arg to list
+    if platform == "all":
+        platforms = ["instagram", "x", "threads"]
+    else:
+        platforms = [platform]
+
+    stats = poster.run_daily_post(target_date, dry_run=dry_run, platforms=platforms)
 
     click.echo(f"Processed: {stats['processed']}")
     click.echo(f"Instagram success: {stats['ig_success']}")
     click.echo(f"X success: {stats['x_success']}")
+    click.echo(f"Threads success: {stats.get('threads_success', 0)}")
     click.echo(f"Errors: {stats['errors']}")
 
     if stats["errors"] > 0:
@@ -61,7 +76,7 @@ def post(ctx, date: datetime | None):
 @click.argument("page_id")
 @click.option(
     "--platform",
-    type=click.Choice(["instagram", "x", "both"]),
+    type=click.Choice(["instagram", "x", "threads", "both"]),
     default="both",
     help="Platform to post to",
 )
@@ -82,22 +97,53 @@ def test_post(ctx, page_id: str, platform: str):
 @main.command()
 @click.pass_context
 def refresh_token(ctx):
-    """Refresh the Instagram access token."""
+    """Refresh the Instagram/Threads access tokens."""
     config = Config.load(ctx.obj.get("env_file"))
     from .r2_storage import R2Storage
     from .token_manager import TokenManager
 
     r2 = R2Storage(config.r2)
-    tm = TokenManager(r2, config.instagram)
 
-    click.echo("Refeshing token...")
-    new_token = tm.force_refresh()
+    # 1. Instagram
+    tm_ig = TokenManager(r2, config.instagram) # Default key config/instagram_token.json
 
-    if new_token:
-        click.echo(f"Success! New token saved to R2/Context.")
-        click.echo(f"Token: {new_token[:20]}...")
+    click.echo("Refreshing Instagram token...")
+    new_token_ig = tm_ig.force_refresh()
+
+    success = True
+    if new_token_ig:
+        click.echo(f"  Instagram: Success! {new_token_ig[:15]}...")
     else:
-        click.echo("Failed to refresh token.", err=True)
+        click.echo("  Instagram: Failed.", err=True)
+        success = False
+
+    # 2. Threads
+    tm_threads = TokenManager(
+        r2,
+        config.threads,
+        token_file_key="config/threads_token.json",
+        base_url="https://graph.threads.net",
+        api_version=None,
+        grant_type="th_refresh_token",
+        exchange_param="access_token",
+        token_endpoint="refresh_access_token",
+        include_client_credentials=False,
+        fallback_grant_type="th_exchange_token",
+        fallback_exchange_param="access_token",
+        fallback_token_endpoint="oauth/access_token",
+        fallback_include_client_credentials=True,
+    )
+
+    click.echo("Refreshing Threads token...")
+    new_token_th = tm_threads.force_refresh()
+
+    if new_token_th:
+         click.echo(f"  Threads: Success! {new_token_th[:15]}...")
+    else:
+         click.echo("  Threads: Failed.", err=True)
+         success = False
+
+    if not success:
         sys.exit(1)
 
 

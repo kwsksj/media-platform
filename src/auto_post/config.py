@@ -45,7 +45,23 @@ class XConfig:
             access_token=os.environ["X_ACCESS_TOKEN"],
             access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
         )
+@dataclass
+class ThreadsConfig:
+    """Threads API configuration."""
 
+    app_id: str
+    app_secret: str
+    access_token: str
+    user_id: str | None
+
+    @classmethod
+    def from_env(cls) -> "ThreadsConfig":
+        return cls(
+            app_id=os.environ.get("THREADS_APP_ID", "").strip(),
+            app_secret=os.environ.get("THREADS_APP_SECRET", "").strip(),
+            access_token=os.environ.get("THREADS_ACCESS_TOKEN", "").strip(),
+            user_id=(os.environ.get("THREADS_USER_ID") or "").strip() or None,
+        )
 
 @dataclass
 class R2Config:
@@ -97,21 +113,23 @@ class Config:
     x: XConfig
     r2: R2Config
     notion: NotionConfig
+    threads: ThreadsConfig
     default_tags: str
 
     @classmethod
     def load(cls, env_file: Path | None = None) -> "Config":
         """Load configuration from environment variables."""
         if env_file:
-            load_dotenv(env_file)
+            load_dotenv(env_file, override=True)
         else:
-            load_dotenv()
+            load_dotenv(override=True)
 
         return cls(
             instagram=InstagramConfig.from_env(),
             x=XConfig.from_env(),
             r2=R2Config.from_env(),
             notion=NotionConfig.from_env(),
+            threads=ThreadsConfig.from_env(),
             default_tags=os.environ.get(
                 "DEFAULT_TAGS",
                 "#木彫り教室生徒作品 #木彫り #woodcarving #彫刻 #handcarved #woodart #ハンドメイド #手仕事",

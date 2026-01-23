@@ -17,6 +17,7 @@ class WorkItem:
     work_name: str
     student_name: str | None
     image_urls: list[str]
+    creation_date: datetime | None
     scheduled_date: datetime | None
     skip: bool
     caption: str | None
@@ -25,6 +26,8 @@ class WorkItem:
     ig_post_id: str | None
     x_posted: bool
     x_post_id: str | None
+    threads_posted: bool
+    threads_post_id: str | None
 
 
 class NotionDB:
@@ -121,8 +124,11 @@ class NotionDB:
             },
         }
 
-        if student_name and self._is_property_valid("生徒名"):
-            properties["生徒名"] = {"select": {"name": student_name}}
+        if student_name:
+            if self._is_property_valid("作者"):
+                properties["作者"] = {"select": {"name": student_name}}
+            elif self._is_property_valid("生徒名"):
+                properties["生徒名"] = {"select": {"name": student_name}}
         if scheduled_date and self._is_property_valid("投稿予定日"):
             properties["投稿予定日"] = {"date": {"start": scheduled_date.strftime("%Y-%m-%d")}}
         if creation_date and self._is_property_valid("完成日"):
@@ -210,14 +216,6 @@ class NotionDB:
                             "property": "スキップ",
                             "checkbox": {"equals": False}
                         },
-                        {
-                            "property": "Instagram投稿済",
-                            "checkbox": {"equals": False}
-                        },
-                        {
-                            "property": "X投稿済",
-                            "checkbox": {"equals": False}
-                        },
                     ]
                 }
             },
@@ -248,10 +246,12 @@ class NotionDB:
         if props.get("作品名", {}).get("title"):
             work_name = props["作品名"]["title"][0]["plain_text"] if props["作品名"]["title"] else ""
 
-        # Extract select (生徒名)
+        # Extract select (生徒名 / 作者)
         student_name = None
         if props.get("生徒名", {}).get("select"):
             student_name = props["生徒名"]["select"]["name"]
+        elif props.get("作者", {}).get("select"):
+            student_name = props["作者"]["select"]["name"]
 
         # Extract files (画像)
         image_urls = []
@@ -268,6 +268,13 @@ class NotionDB:
             date_obj = props["投稿予定日"]["date"]
             if date_obj and date_obj.get("start"):
                 scheduled_date = datetime.fromisoformat(date_obj["start"])
+
+        # Extract creation date (完成日)
+        creation_date = None
+        if props.get("完成日", {}).get("date"):
+            c_date_obj = props["完成日"]["date"]
+            if c_date_obj and c_date_obj.get("start"):
+                creation_date = datetime.fromisoformat(c_date_obj["start"])
 
         # Extract checkboxes
         skip = props.get("スキップ", {}).get("checkbox", False)
@@ -294,14 +301,28 @@ class NotionDB:
                     names = [self._fetch_page_title(rid) for rid in relation_ids[:5]]
                     tags = " ".join(filter(None, names))
 
+        # Extract classroom (教室) and append to tags if present
+        classroom = None
+        if props.get("教室", {}).get("select"):
+            classroom = props["教室"]["select"]["name"]
+            if classroom:
+                if tags:
+                    tags += f" {classroom}"
+                else:
+                    tags = classroom
+
         ig_post_id = self._get_rich_text(props, "Instagram投稿ID")
         x_post_id = self._get_rich_text(props, "X投稿ID")
+
+        threads_posted = props.get("Threads投稿済", {}).get("checkbox", False)
+        threads_post_id = self._get_rich_text(props, "Threads投稿ID")
 
         return WorkItem(
             page_id=page["id"],
             work_name=work_name,
             student_name=student_name,
             image_urls=image_urls,
+            creation_date=creation_date,
             scheduled_date=scheduled_date,
             skip=skip,
             caption=caption,
@@ -310,6 +331,8 @@ class NotionDB:
             ig_post_id=ig_post_id,
             x_posted=x_posted,
             x_post_id=x_post_id,
+            threads_posted=threads_posted,
+            threads_post_id=threads_post_id,
         )
 
     def _get_rich_text(self, props: dict, key: str) -> str | None:
@@ -327,6 +350,8 @@ class NotionDB:
         ig_post_id: str | None = None,
         x_posted: bool | None = None,
         x_post_id: str | None = None,
+        threads_posted: bool | None = None,
+        threads_post_id: str | None = None,
         error_log: str | None = None,
         posted_date: datetime | None = None,
     ):
@@ -336,11 +361,24 @@ class NotionDB:
         if ig_posted is not None:
             properties["Instagram投稿済"] = {"checkbox": ig_posted}
         if ig_post_id is not None:
-            properties["Instagram投稿ID"] = {"rich_text": [{"text": {"content": ig_post_id}}]}
+            # Check if property exists with exact name, otherwise try mismatch known from schema
+            # Schema says "Instagram投稿ID (1)"
+            key = "Instagram投稿ID (1)"
+            if self._is_property_valid("Instagram投稿ID"):
+                key = "Instagram投稿ID"
+            elif self._is_property_valid("Instagram投稿ID (1)"):
+                key = "Instagram投稿ID (1)"
+
+            properties[key] = {"rich_text": [{"text": {"content": ig_post_id}}]}
         if x_posted is not None:
             properties["X投稿済"] = {"checkbox": x_posted}
         if x_post_id is not None:
             properties["X投稿ID"] = {"rich_text": [{"text": {"content": x_post_id}}]}
+
+        if threads_posted is not None:
+            properties["Threads投稿済"] = {"checkbox": threads_posted}
+        if threads_post_id is not None:
+            properties["Threads投稿ID"] = {"rich_text": [{"text": {"content": threads_post_id}}]}
 
         if posted_date and self._is_property_valid("投稿日"):
             properties["投稿日"] = {"date": {"start": posted_date.strftime("%Y-%m-%d")}}
@@ -364,13 +402,18 @@ class NotionDB:
         filters = []
 
         if filter_student:
-            filters.append({"property": "生徒名", "select": {"equals": filter_student}})
+            # Try both potentially
+            # But filter must target existing property.
+            # We assume '作者' based on recent schema check.
+            prop_name = "作者" if self._is_property_valid("作者") else "生徒名"
+            filters.append({"property": prop_name, "select": {"equals": filter_student}})
 
         if only_unposted:
             filters.append({
                 "or": [
                     {"property": "Instagram投稿済", "checkbox": {"equals": False}},
                     {"property": "X投稿済", "checkbox": {"equals": False}},
+                    {"property": "Threads投稿済", "checkbox": {"equals": False}},
                 ]
             })
 
@@ -389,44 +432,62 @@ class NotionDB:
         """Get database schema information."""
         return self.client.databases.retrieve(self.database_id)
 
-    def get_unscheduled_works(self, limit: int = 1) -> list[WorkItem]:
+    def get_unscheduled_works(self, limit: int = 1, platforms: list[str] | None = None) -> list[WorkItem]:
         """
         Get the oldest unposted works (by 完成日) that have no scheduled date.
         Used as fallback when no works are scheduled for today.
 
         Args:
             limit: Maximum number of works to return
+            platforms: List of platforms to check for unposted status.
+                       If None or empty, checks all platforms.
+                       Valid values: "instagram", "x", "threads"
         """
+        # Build platform-specific filters
+        if platforms is None or len(platforms) == 0:
+            platforms = ["instagram", "x", "threads"]
+
+        platform_filters = []
+        platform_prop_map = {
+            "instagram": "Instagram投稿済",
+            "x": "X投稿済",
+            "threads": "Threads投稿済",
+        }
+        for p in platforms:
+            prop_name = platform_prop_map.get(p)
+            if prop_name:
+                platform_filters.append({
+                    "property": prop_name,
+                    "checkbox": {"equals": False}
+                })
+
+        # Build full filter
+        base_filters = [
+            # No scheduled date
+            {
+                "property": "投稿予定日",
+                "date": {"is_empty": True},
+            },
+            # Not skipped
+            {
+                "property": "スキップ",
+                "checkbox": {"equals": False}
+            },
+        ]
+        # Add platform filters
+        base_filters.extend(platform_filters)
+
         response = self.client.request(
             path=f"databases/{self.database_id}/query",
             method="POST",
             body={
                 "filter": {
-                    "and": [
-                        # No scheduled date
-                        {
-                            "property": "投稿予定日",
-                            "date": {"is_empty": True},
-                        },
-                        # Not skipped
-                        {
-                            "property": "スキップ",
-                            "checkbox": {"equals": False}
-                        },
-                        # Not yet posted
-                        {
-                            "property": "Instagram投稿済",
-                            "checkbox": {"equals": False}
-                        },
-                        {
-                            "property": "X投稿済",
-                            "checkbox": {"equals": False}
-                        },
-                    ]
+                    "and": base_filters
                 },
-                # Sort by 完成日 ascending (oldest first)
+                # Sort by 完成日 ascending (oldest first), then Created Time ascending (Oldest first for same day)
                 "sorts": [
-                    {"property": "完成日", "direction": "ascending"}
+                    {"property": "完成日", "direction": "ascending"},
+                    {"timestamp": "created_time", "direction": "ascending"}
                 ],
                 "page_size": limit,
             },
