@@ -4,11 +4,27 @@ on:
   schedule:
     # Runs at 03:00 UTC every day (12:00 JST)
     - cron: "0 3 * * *"
-  workflow_dispatch: # Allows manual triggering from GitHub UI
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Target date (YYYY-MM-DD, default: today)"
+        required: false
+        type: string
+      platform:
+        description: "Platform to post to"
+        required: false
+        type: choice
+        options:
+          - all
+          - instagram
+          - x
+          - threads
+        default: all
 
 jobs:
   post:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -23,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .
+          pip install -e .
 
       - name: Run Auto Post
         env:
@@ -32,20 +48,24 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
 
           # Instagram
-          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
-          INSTAGRAM_BUSINESS_ACCOUNT_ID: ${{ secrets.INSTAGRAM_BUSINESS_ACCOUNT_ID }}
-          # Note: APP_ID/SECRET are not strictly needed for posting if we have a valid long-lived token,
-          # but good to have if we implement refresh logic later.
           INSTAGRAM_APP_ID: ${{ secrets.INSTAGRAM_APP_ID }}
           INSTAGRAM_APP_SECRET: ${{ secrets.INSTAGRAM_APP_SECRET }}
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          INSTAGRAM_BUSINESS_ACCOUNT_ID: ${{ secrets.INSTAGRAM_BUSINESS_ACCOUNT_ID }}
 
-          # X (Twitter) - Currently paused, but ready for future
+          # Threads
+          THREADS_APP_ID: ${{ secrets.THREADS_APP_ID }}
+          THREADS_APP_SECRET: ${{ secrets.THREADS_APP_SECRET }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+
+          # X (Twitter)
           X_API_KEY: ${{ secrets.X_API_KEY }}
           X_API_KEY_SECRET: ${{ secrets.X_API_KEY_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
 
-          # R2 (Not strictly needed for posting if URLs are already valid, but good for config completeness)
+          # R2 Storage
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -56,4 +76,15 @@ jobs:
           DEFAULT_TAGS: ${{ secrets.DEFAULT_TAGS }}
 
         run: |
-          auto-post post
+          CMD="auto-post post"
+
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            CMD="$CMD --date ${{ github.event.inputs.date }}"
+          fi
+
+          if [ -n "${{ github.event.inputs.platform }}" ]; then
+            CMD="$CMD --platform ${{ github.event.inputs.platform }}"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
