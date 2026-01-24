@@ -48,6 +48,9 @@ def generate_caption(
 
     custom_tags = []
     if tags:
+        # Remove surrounding quotes if present
+        tags = tags.strip().strip("'\"")
+
         # Split by Space (or ideographic space) to handle multiple tags in string
         for t in tags.replace("　", " ").split():
             t = t.strip()
@@ -64,7 +67,10 @@ def generate_caption(
     # Normalize Default Tags (ensure # prefix)
     norm_dest_tags = []
     if default_tags:
-         for t in default_tags.replace("　", " ").split():
+        # Remove surrounding quotes if present (from environment variable)
+        default_tags = default_tags.strip().strip("'\"")
+
+        for t in default_tags.replace("　", " ").split():
             t = t.strip()
             if t:
                 if not t.startswith("#"):
