@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 # Wait time for Threads API to download images after publish
 # Threads downloads images asynchronously after container is published
-THREADS_IMAGE_DOWNLOAD_WAIT_SECONDS = 10
+# Increased to 20s to ensure reliable image downloads for multiple posts
+THREADS_IMAGE_DOWNLOAD_WAIT_SECONDS = 20
 
 
 def generate_caption(
@@ -47,6 +48,9 @@ def generate_caption(
 
     custom_tags = []
     if tags:
+        # Remove surrounding quotes if present
+        tags = tags.strip().strip("'\"")
+
         # Split by Space (or ideographic space) to handle multiple tags in string
         for t in tags.replace("　", " ").split():
             t = t.strip()
@@ -63,7 +67,10 @@ def generate_caption(
     # Normalize Default Tags (ensure # prefix)
     norm_dest_tags = []
     if default_tags:
-         for t in default_tags.replace("　", " ").split():
+        # Remove surrounding quotes if present (from environment variable)
+        default_tags = default_tags.strip().strip("'\"")
+
+        for t in default_tags.replace("　", " ").split():
             t = t.strip()
             if t:
                 if not t.startswith("#"):
@@ -179,7 +186,7 @@ class Poster:
             try:
                 self._process_post(post, stats, dry_run=dry_run, platforms=platforms)
                 stats["processed"] += 1
-                time.sleep(2)  # Rate limit between posts
+                time.sleep(5)  # Rate limit between posts (increased for Threads API)
             except Exception as e:
                 logger.error(f"Failed to process post {post.work_name}: {e}")
                 stats["errors"] += 1
