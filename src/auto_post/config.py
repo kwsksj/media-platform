@@ -40,10 +40,10 @@ class XConfig:
     @classmethod
     def from_env(cls) -> "XConfig":
         return cls(
-            api_key=os.environ["X_API_KEY"],
-            api_key_secret=os.environ["X_API_KEY_SECRET"],
-            access_token=os.environ["X_ACCESS_TOKEN"],
-            access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
+            api_key=os.environ.get("X_API_KEY", ""),
+            api_key_secret=os.environ.get("X_API_KEY_SECRET", ""),
+            access_token=os.environ.get("X_ACCESS_TOKEN", ""),
+            access_token_secret=os.environ.get("X_ACCESS_TOKEN_SECRET", ""),
         )
 @dataclass
 class ThreadsConfig:
