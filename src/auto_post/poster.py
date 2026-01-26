@@ -180,27 +180,47 @@ class Poster:
         else:
             logger.info("Daily target met with scheduled posts")
 
-        stats = {"processed": 0, "ig_success": 0, "x_success": 0, "errors": 0}
+        results = {
+            "processed": [],
+            "ig_success": [],
+            "x_success": [],
+            "threads_success": [],
+            "errors": []
+        }
 
         for post in posts:
             try:
-                self._process_post(post, stats, dry_run=dry_run, platforms=platforms)
-                stats["processed"] += 1
+                post_results = self._process_post(post, dry_run=dry_run, platforms=platforms)
+                results["processed"].append(post.work_name)
+
+                if post_results.get("instagram"):
+                    results["ig_success"].append(post.work_name)
+                if post_results.get("threads"):
+                    results["threads_success"].append(post.work_name)
+                if post_results.get("x"):
+                    results["x_success"].append(post.work_name)
+
                 time.sleep(5)  # Rate limit between posts (increased for Threads API)
             except Exception as e:
                 logger.error(f"Failed to process post {post.work_name}: {e}")
-                stats["errors"] += 1
+                results["errors"].append(f"{post.work_name} ({e})")
                 self.notion.update_post_status(post.page_id, error_log=f"Processing error: {e}")
 
-        logger.info(
-            f"Daily post complete: {stats['processed']} processed, "
-            f"{stats['ig_success']} IG, {stats.get('threads_success', 0)} Threads, {stats['x_success']} X, {stats['errors']} errors"
-        )
+        logger.info("-" * 30)
+        logger.info("Daily Post Summary")
+        logger.info(f"Processed: {len(results['processed'])}")
+        logger.info(f"Instagram ({len(results['ig_success'])}): {', '.join(results['ig_success'])}")
+        logger.info(f"Threads ({len(results['threads_success'])}): {', '.join(results['threads_success'])}")
+        logger.info(f"X ({len(results['x_success'])}): {', '.join(results['x_success'])}")
+        logger.info(f"Errors ({len(results['errors'])}): {'; '.join(results['errors'])}")
+        logger.info("-" * 30)
 
-        return stats
+        return results
 
-    def _process_post(self, post: WorkItem, stats: dict, dry_run: bool = False, platforms: list[str] | None = None):
-        """Process a single post."""
+    def _process_post(self, post: WorkItem, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
+        """Process a single post. Returns dict of success status by platform."""
+        status = {"instagram": False, "x": False, "threads": False}
+
         if platforms is None:
             platforms = ["instagram", "threads"]  # X is excluded by default
 
@@ -240,7 +260,7 @@ class Poster:
         if "instagram" in platforms and not post.ig_posted:
             if dry_run:
                 logger.info("Dry Run: Would post to Instagram")
-                stats["ig_success"] += 1
+                status["instagram"] = True
             else:
                 try:
                     ig_post_id = self._post_to_instagram(images_data, caption)
@@ -250,18 +270,18 @@ class Poster:
                         ig_post_id=ig_post_id,
                         posted_date=datetime.now()
                     )
-                    stats["ig_success"] += 1
+                    status["instagram"] = True
                     logger.info(f"Instagram posted: {ig_post_id}")
                 except InstagramAPIError as e:
                     logger.error(f"Instagram error: {e}")
                     self.notion.update_post_status(post.page_id, error_log=f"Instagram: {e}")
-                    stats["errors"] += 1
+                    # status["instagram"] stays False
 
         # Post to X (if not already posted AND platform is requested)
         if "x" in platforms and not post.x_posted:
             if dry_run:
                 logger.info("Dry Run: Would post to X")
-                stats["x_success"] += 1
+                status["x"] = True
             else:
                 try:
                     x_post_id = self._post_to_x(images_data, caption)
@@ -271,19 +291,17 @@ class Poster:
                         x_post_id=x_post_id,
                         posted_date=datetime.now()
                     )
-                    stats["x_success"] += 1
+                    status["x"] = True
                     logger.info(f"X posted: {x_post_id}")
                 except XAPIError as e:
                     logger.error(f"X error: {e}")
                     self.notion.update_post_status(post.page_id, error_log=f"X: {e}")
-                    stats["errors"] += 1
 
         # Post to Threads (if not already posted AND platform is requested)
         if "threads" in platforms and hasattr(post, 'threads_posted') and not post.threads_posted:
             if dry_run:
                 logger.info("Dry Run: Would post to Threads")
-                stats.setdefault("threads_success", 0)
-                stats["threads_success"] += 1
+                status["threads"] = True
             else:
                 try:
                     threads_post_id = self._post_to_threads(images_data, caption)
@@ -293,13 +311,13 @@ class Poster:
                         threads_post_id=threads_post_id,
                         posted_date=datetime.now()
                     )
-                    stats.setdefault("threads_success", 0)
-                    stats["threads_success"] += 1
+                    status["threads"] = True
                     logger.info(f"Threads posted: {threads_post_id}")
                 except ThreadsAPIError as e:
                     logger.error(f"Threads error: {e}")
                     self.notion.update_post_status(post.page_id, error_log=f"Threads: {e}")
-                    stats["errors"] += 1
+
+        return status
 
     def _post_to_instagram(self, images_data: list[tuple[bytes, str, str]], caption: str) -> str:
         """Post images to Instagram."""

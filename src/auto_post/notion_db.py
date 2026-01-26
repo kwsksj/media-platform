@@ -379,8 +379,16 @@ class NotionDB:
         if threads_post_id is not None:
             properties["Threads投稿ID"] = {"rich_text": [{"text": {"content": threads_post_id}}]}
 
-        if posted_date and self._is_property_valid("投稿日"):
-            properties["投稿日"] = {"date": {"start": posted_date.strftime("%Y-%m-%d")}}
+        if posted_date:
+            # Platform specific timestamps (including time)
+            if ig_posted and self._is_property_valid("Instagram投稿日時"):
+                properties["Instagram投稿日時"] = {"date": {"start": posted_date.isoformat()}}
+
+            if threads_posted and self._is_property_valid("Threads投稿日時"):
+                properties["Threads投稿日時"] = {"date": {"start": posted_date.isoformat()}}
+
+            if x_posted and self._is_property_valid("X投稿日時"):
+                properties["X投稿日時"] = {"date": {"start": posted_date.isoformat()}}
 
         if error_log is not None:
             # Append to existing error log
