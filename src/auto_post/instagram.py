@@ -130,18 +130,34 @@ class InstagramClient:
 
     def _publish_media(self, container_id: str) -> str:
         """Publish a media container."""
-        logger.info(f"Publishing media container: {container_id}")
-        result = self._request(
-            "POST",
-            f"{self.config.business_account_id}/media_publish",
-            data={"creation_id": container_id},
-        )
-        post_id = result.get("id")
-        if not post_id:
-             raise InstagramAPIError(f"Failed to publish media: {result}")
+        logging.info(f"Publishing media container: {container_id}")
 
-        logger.info(f"Published media: {post_id}")
-        return post_id
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                result = self._request(
+                    "POST",
+                    f"{self.config.business_account_id}/media_publish",
+                    data={"creation_id": container_id},
+                )
+                post_id = result.get("id")
+                if post_id:
+                    logger.info(f"Published media: {post_id}")
+                    return post_id
+
+            except InstagramAPIError as e:
+                logger.warning(f"Publish attempt {attempt + 1} failed: {e}")
+                last_error = e
+                # Wait before retry
+                time.sleep(5 * (attempt + 1))
+            except Exception as e:
+                logger.warning(f"Publish attempt {attempt + 1} failed with unexpected error: {e}")
+                last_error = e
+                time.sleep(5)
+
+        raise InstagramAPIError(f"Failed to publish media after {max_retries} attempts: {last_error}")
 
     def refresh_token(self) -> tuple[str, datetime]:
         """Refresh the access token. Returns (new_token, expiry_date)."""
