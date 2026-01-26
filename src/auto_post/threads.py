@@ -122,7 +122,7 @@ class ThreadsClient:
 
         data = {
             "media_type": "CAROUSEL",
-            "children": children_ids # Send as list, let requests/json handle serialization
+            "children": ",".join(children_ids) # Send as comma-separated string
         }
 
         if caption:
