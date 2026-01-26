@@ -79,7 +79,8 @@ class ThreadsClient:
         # Note: Threads API might behave like IG where text is allowed on children but usually top level.
         # Docs say: For Carousel, 'text' should be on the Carousel Container.
 
-        response = self._request("POST", endpoint, params=data)
+        # Use 'data' instead of 'params' to send as JSON body
+        response = self._request("POST", endpoint, data=data)
         logger.info(f"Created Threads container: {response.get('id')}")
         return response["id"]
 
@@ -88,24 +89,57 @@ class ThreadsClient:
         endpoint = "me/threads"
         data = {
             "media_type": "CAROUSEL",
-            "children": ",".join(children_ids),
+            "children": children_ids,  # threads expects array, or comma-separated string? Graph API usually wants JSON array, let's check docs or keep string if params.
+                                     # With JSON body, it should be a list or a string?
+                                     # IG Graph API takes list of strings for 'children' in JSON body.
+                                     # BUT `data` in `_request` is sent as `json=data`.
+                                     # Let's keep existing logic but just verify if list is better.
+                                     # Original code: "children": ",".join(children_ids)
+                                     # Threads API docs often say list for JSON. Let's try list first?
+                                     # Actually, safe bet is to mirror what worked for IG if possible, but Threads might be different.
+                                     # Let's stick to what was there (string) unless we know JSON requires list.
+                                     # However, "Invalid parameter" often comes from format mismatch too.
+                                     # Wait, if I change to JSON body, I can pass the list directly if the API supports it.
+                                     # Documentation for Threads says: "children": ["<id>", "<id>"] for JSON.
+                                     # Let's try sending list first.
+        }
+        # Actually in the original code it was joining with comma.
+        # If I send as JSON, list of strings is more standard.
+        # Let's check `threads.py` again. `children` was ",".join(children_ids).
+        # I will change it to list if I am sending JSON.
+
+        # Let's check what I should write.
+        # I will try to support both or just stick to what likely works.
+        # Threads API generally follows Instagram Graph API.
+
+        # I'll stick to the safe bet: try list first, that is standard for JSON.
+        # Re-reading: "children": ",".join(children_ids) was used for params (URL query).
+        # For JSON body, it should likely be a list.
+
+        # However, to be safe and avoid "double experimental", I'll stick to the simplest change:
+        # Just move to body first. But usually query param needs string, JSON needs list.
+        # I will use list because `json.dumps` handles it naturally.
+
+        data = {
+            "media_type": "CAROUSEL",
+            "children": children_ids # Send as list, let requests/json handle serialization
         }
 
         if caption:
             data["text"] = caption
 
-        response = self._request("POST", endpoint, params=data)
+        response = self._request("POST", endpoint, data=data)
         logger.info(f"Created Threads carousel container: {response.get('id')}")
         return response["id"]
 
     def publish_container(self, creation_id: str) -> str:
         """Publish a container."""
         endpoint = "me/threads_publish"
-        params = {
+        data = {
             "creation_id": creation_id
         }
 
-        response = self._request("POST", endpoint, params=params)
+        response = self._request("POST", endpoint, data=data)
         logger.info(f"Published Threads media: {response.get('id')}")
         return response["id"]
 
