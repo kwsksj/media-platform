@@ -3,7 +3,7 @@ name: Daily Auto Post
 on:
   schedule:
     # Runs at 03:00 UTC every day (12:00 JST)
-    - cron: "20 7 * * *"
+    - cron: "58 7 * * *"
   workflow_dispatch:
     inputs:
       date:
