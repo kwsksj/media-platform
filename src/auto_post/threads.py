@@ -199,7 +199,13 @@ class ThreadsClient:
         for url in image_urls:
             # We don't add caption to children
             child_id = self.create_image_container(url, caption="", is_carousel_item=True)
+
+            # Wait for child container to be ready (IMPORTANT)
+            self.wait_for_container_ready(child_id)
+
             children_ids.append(child_id)
+            import time
+            time.sleep(1.0) # Rate limit safety
 
         carousel_id = self.create_carousel_container(children_ids, caption)
 
