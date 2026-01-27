@@ -110,9 +110,9 @@ auto-post import-groups output.json
 | `THREADS_APP_SECRET`            | Threads用 App Secret             |
 | `THREADS_ACCESS_TOKEN`          | Threads長期トークン              |
 | `THREADS_USER_ID`               | Threads ユーザーID               |
-| `X_API_KEY`                     | X API Key                        |
-| `X_API_KEY_SECRET`              | X API Key Secret                 |
-| `X_ACCESS_TOKEN`                | X Access Token                   |
+| `X_API_KEY`                     | X API Key (Consumer Key)         |
+| `X_API_KEY_SECRET`              | X API Key Secret (Consumer Secret) |
+| `X_ACCESS_TOKEN`                | X Access Token (Read/Write)      |
 | `X_ACCESS_TOKEN_SECRET`         | X Access Token Secret            |
 | `R2_ACCOUNT_ID`                 | Cloudflare Account ID            |
 | `R2_ACCESS_KEY_ID`              | R2 Access Key                    |
@@ -172,6 +172,7 @@ auto-post import-groups output.json
 3. **Priority 3: 基本投稿**
     - 「当該SNSで未投稿」の作品（完成日順）
     - 1日最大 3件
+    - ※ X (Basic Tier) は1ツイートにつき画像1枚のみ（Notionの画像リストの先頭を使用）
 
 ※ 画像処理は全プラットフォームの選定作品をまとめて行うため効率的です。
 
@@ -211,6 +212,7 @@ auto-post import-groups output.json
 ### X (Twitter)
 
 - OAuth 1.0a トークン（無期限）
+- **Read and Write** 権限が必要
 - 更新不要
 
 ---

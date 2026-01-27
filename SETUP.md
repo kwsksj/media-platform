@@ -127,6 +127,9 @@ https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token
    - **API Key / API Key Secret**
    - **Access Token / Access Token Secret**
 4. 権限を **Read and write** に設定
+5. **重要**: 権限変更後、必ず **Regenerate Access Token and Secret** を実行して再生成したトークンを使用すること（古いトークンは権限が反映されないため）。
+
+※ Basic Tier の制限により自動投稿時の画像は **1枚のみ**（Notion画像欄の1枚目）となります。
 
 ---
 
