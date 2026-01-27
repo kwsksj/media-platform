@@ -213,7 +213,7 @@ class Poster:
         status = {"instagram": False, "x": False, "threads": False}
 
         if platforms is None:
-            platforms = ["instagram", "threads"]  # X is excluded by default
+            platforms = ["instagram", "threads", "x"]  # Default to all
 
         logger.info(f"Processing: {post.work_name} (Dry Run: {dry_run}, Platforms: {platforms})")
 

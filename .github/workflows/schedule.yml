@@ -17,8 +17,8 @@ on:
         options:
           - all
           - instagram
-
           - threads
+          - x
         default: all
       dry_run:
         description: "Dry run (preview only, no actual posting)"
@@ -63,6 +63,12 @@ jobs:
           THREADS_APP_SECRET: ${{ secrets.THREADS_APP_SECRET }}
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
           THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+
+          # X (Twitter)
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_KEY_SECRET: ${{ secrets.X_API_KEY_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
 
           # R2 Storage
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}

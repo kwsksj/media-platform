@@ -137,4 +137,4 @@ class Config:
 
 # Constants
 INSTAGRAM_MAX_CAROUSEL = 10
-X_MAX_IMAGES = 4
+X_MAX_IMAGES = 1
