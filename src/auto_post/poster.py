@@ -1,8 +1,10 @@
 """Main posting logic."""
 
 import logging
+import os
 import time
 from datetime import datetime
+from typing import Callable
 
 import requests
 
@@ -20,6 +22,32 @@ logger = logging.getLogger(__name__)
 # Threads downloads images asynchronously after container is published
 # Increased to 20s to ensure reliable image downloads for multiple posts
 THREADS_IMAGE_DOWNLOAD_WAIT_SECONDS = 20
+
+def _env_int(name: str, default: int) -> int:
+    """Read integer from env with fallback."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read float from env with fallback."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+POST_RETRY_MAX_ATTEMPTS = max(1, _env_int("POST_RETRY_MAX_ATTEMPTS", 3))
+POST_RETRY_BASE_DELAY_SECONDS = max(0, _env_int("POST_RETRY_BASE_DELAY_SECONDS", 5))
+POST_RETRY_BACKOFF_FACTOR = max(1.0, _env_float("POST_RETRY_BACKOFF_FACTOR", 2.0))
 
 
 def generate_caption(
@@ -144,6 +172,26 @@ class Poster:
         self.threads = ThreadsClient(config.threads)
 
         self.x = XClient(config.x)
+
+    def _post_with_retry(
+        self,
+        platform: str,
+        func: Callable[[], str],
+        retry_exceptions: tuple[type[Exception], ...],
+    ) -> str:
+        """Retry wrapper for platform posting."""
+        for attempt in range(1, POST_RETRY_MAX_ATTEMPTS + 1):
+            try:
+                return func()
+            except retry_exceptions as e:
+                if attempt >= POST_RETRY_MAX_ATTEMPTS:
+                    raise
+                wait_seconds = POST_RETRY_BASE_DELAY_SECONDS * (POST_RETRY_BACKOFF_FACTOR ** (attempt - 1))
+                logger.warning(
+                    f"{platform} post failed (attempt {attempt}/{POST_RETRY_MAX_ATTEMPTS}): {e}. "
+                    f"Retrying in {wait_seconds:.1f}s"
+                )
+                time.sleep(wait_seconds)
 
     def run_daily_post(self, target_date: datetime | None = None, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
         """
@@ -398,7 +446,11 @@ class Poster:
                 status["instagram"] = True
             else:
                 try:
-                    ig_post_id = self._post_to_instagram(images_data, caption)
+                    ig_post_id = self._post_with_retry(
+                        "Instagram",
+                        lambda: self._post_to_instagram(images_data, caption),
+                        (InstagramAPIError,),
+                    )
                     self.notion.update_post_status(
                         post.page_id,
                         ig_posted=True,
@@ -420,7 +472,11 @@ class Poster:
                 status["x"] = True
             else:
                 try:
-                    x_post_id = self._post_to_x(images_data, caption)
+                    x_post_id = self._post_with_retry(
+                        "X",
+                        lambda: self._post_to_x(images_data, caption),
+                        (XAPIError,),
+                    )
                     self.notion.update_post_status(
                         post.page_id,
                         x_posted=True,
@@ -441,7 +497,11 @@ class Poster:
                 status["threads"] = True
             else:
                 try:
-                    threads_post_id = self._post_to_threads(images_data, caption)
+                    threads_post_id = self._post_with_retry(
+                        "Threads",
+                        lambda: self._post_to_threads(images_data, caption),
+                        (ThreadsAPIError,),
+                    )
                     self.notion.update_post_status(
                         post.page_id,
                         threads_posted=True,
