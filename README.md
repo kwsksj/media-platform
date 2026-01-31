@@ -24,9 +24,10 @@ pip install -e .
 `.env` ファイルを作成し、以下を設定:
 
 ```bash
-# Notion
+# Notion（TAGS_DATABASE_ID は任意）
 NOTION_TOKEN=secret_xxx
 NOTION_DATABASE_ID=xxx
+TAGS_DATABASE_ID=xxx
 
 # Instagram
 INSTAGRAM_APP_ID=xxx
@@ -45,6 +46,7 @@ R2_ACCOUNT_ID=xxx
 R2_ACCESS_KEY_ID=xxx
 R2_SECRET_ACCESS_KEY=xxx
 R2_BUCKET_NAME=xxx
+R2_PUBLIC_URL=xxx
 
 # X (Twitter) - オプション
 X_API_KEY=xxx
@@ -79,6 +81,19 @@ auto-post post --dry-run
 auto-post catchup
 auto-post catchup --platform x --count 3
 ```
+
+### ギャラリー更新（gallery.json / thumbs）
+
+```bash
+# Notionからgallery.jsonとサムネを生成し、R2へアップロード
+auto-post export-gallery-json
+
+# サムネを作らない場合
+auto-post export-gallery-json --no-thumbs
+```
+
+> GitHub Actions で自動実行する場合は、`.github/workflows/gallery-export.yml` を有効化し、  
+> Secrets に `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `R2_*`, `R2_PUBLIC_URL` を設定してください。
 
 ### 確認・デバッグ
 
