@@ -65,6 +65,8 @@ class GalleryExporter:
         generate_light_images: bool = True,
         light_max_size: int = LIGHT_MAX_SIZE_DEFAULT,
         light_quality: int = LIGHT_QUALITY_DEFAULT,
+        overwrite_thumbs: bool = False,
+        overwrite_light_images: bool = False,
     ) -> tuple[dict, ExportStats]:
         db_info = self.notion.get_database_info()
         pages = self.notion.list_database_pages(self.notion.database_id)
@@ -90,6 +92,8 @@ class GalleryExporter:
                 generate_light_images=generate_light_images,
                 light_max_size=light_max_size,
                 light_quality=light_quality,
+                overwrite_thumbs=overwrite_thumbs,
+                overwrite_light_images=overwrite_light_images,
                 stats=stats,
             )
             if work:
@@ -141,6 +145,8 @@ class GalleryExporter:
         generate_light_images: bool,
         light_max_size: int,
         light_quality: int,
+        overwrite_thumbs: bool,
+        overwrite_light_images: bool,
         stats: ExportStats,
     ) -> dict | None:
         props = page.get("properties", {})
@@ -176,6 +182,7 @@ class GalleryExporter:
                 work_id=work_id,
                 image_url=images[0],
                 thumb_width=thumb_width,
+                overwrite=overwrite_thumbs,
                 stats=stats,
             )
 
@@ -191,6 +198,7 @@ class GalleryExporter:
                     image_url=image_url,
                     max_size=light_max_size,
                     quality=light_quality,
+                    overwrite=overwrite_light_images,
                     stats=stats,
                 )
                 if light_url:
@@ -288,10 +296,11 @@ class GalleryExporter:
         work_id: str,
         image_url: str,
         thumb_width: int,
+        overwrite: bool,
         stats: ExportStats,
     ) -> str | None:
         key = f"{THUMB_PREFIX}/{work_id}.jpg"
-        if self.r2.exists(key):
+        if not overwrite and self.r2.exists(key):
             stats.thumb_skipped_existing += 1
             return self._public_url(key)
 
@@ -325,6 +334,7 @@ class GalleryExporter:
         image_url: str,
         max_size: int,
         quality: int,
+        overwrite: bool,
         stats: ExportStats,
     ) -> str | None:
         key = self._build_light_key(image_url)
@@ -333,7 +343,7 @@ class GalleryExporter:
             logger.warning("Light image key build failed: %s", image_url)
             return None
 
-        if self.r2.exists(key):
+        if not overwrite and self.r2.exists(key):
             stats.light_skipped_existing += 1
             return self._public_url(key)
 

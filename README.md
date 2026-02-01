@@ -98,6 +98,9 @@ auto-post export-gallery-json --no-thumbs
 
 # 軽量画像を作らない場合
 auto-post export-gallery-json --no-light
+
+# 既存のサムネ/軽量画像を上書き再生成する場合
+auto-post export-gallery-json --overwrite-thumbs --overwrite-light
 ```
 
 > GitHub Actions で自動実行する場合は、`.github/workflows/gallery-export.yml` を有効化し、

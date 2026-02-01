@@ -252,6 +252,8 @@ def list_works(ctx, student: str | None, unposted: bool):
 @click.option("--no-light", is_flag=True, help="Skip generating light images")
 @click.option("--light-max-size", default=1600, show_default=True, help="Max size for light images in px")
 @click.option("--light-quality", default=75, show_default=True, help="JPEG quality for light images")
+@click.option("--overwrite-thumbs", is_flag=True, help="Regenerate thumbnails even if they exist")
+@click.option("--overwrite-light", is_flag=True, help="Regenerate light images even if they exist")
 @click.pass_context
 def export_gallery_json(
     ctx,
@@ -262,6 +264,8 @@ def export_gallery_json(
     no_light: bool,
     light_max_size: int,
     light_quality: int,
+    overwrite_thumbs: bool,
+    overwrite_light: bool,
 ):
     """Export gallery.json from Notion and upload to R2."""
     config = Config.load(ctx.obj.get("env_file"), allow_missing_instagram=True)
@@ -276,6 +280,8 @@ def export_gallery_json(
         generate_light_images=not no_light,
         light_max_size=light_max_size,
         light_quality=light_quality,
+        overwrite_thumbs=overwrite_thumbs,
+        overwrite_light_images=overwrite_light,
     )
 
     click.echo("\n" + "=" * 30)

@@ -11,11 +11,36 @@ on:
         required: false
         type: boolean
         default: false
+      no_light:
+        description: "Skip light image generation"
+        required: false
+        type: boolean
+        default: false
+      overwrite_thumbs:
+        description: "Overwrite existing thumbnails"
+        required: false
+        type: boolean
+        default: false
+      overwrite_light:
+        description: "Overwrite existing light images"
+        required: false
+        type: boolean
+        default: false
       thumb_width:
         description: "Thumbnail width in px (default: 600)"
         required: false
         type: string
         default: "600"
+      light_max_size:
+        description: "Max size for light images in px (default: 1600)"
+        required: false
+        type: string
+        default: "1600"
+      light_quality:
+        description: "JPEG quality for light images (default: 75)"
+        required: false
+        type: string
+        default: "75"
 
 jobs:
   export:
@@ -63,8 +88,28 @@ jobs:
             CMD="$CMD --no-thumbs"
           fi
 
+          if [ "${{ github.event.inputs.no_light }}" = "true" ]; then
+            CMD="$CMD --no-light"
+          fi
+
+          if [ "${{ github.event.inputs.overwrite_thumbs }}" = "true" ]; then
+            CMD="$CMD --overwrite-thumbs"
+          fi
+
+          if [ "${{ github.event.inputs.overwrite_light }}" = "true" ]; then
+            CMD="$CMD --overwrite-light"
+          fi
+
           if [ -n "${{ github.event.inputs.thumb_width }}" ]; then
             CMD="$CMD --thumb-width ${{ github.event.inputs.thumb_width }}"
+          fi
+
+          if [ -n "${{ github.event.inputs.light_max_size }}" ]; then
+            CMD="$CMD --light-max-size ${{ github.event.inputs.light_max_size }}"
+          fi
+
+          if [ -n "${{ github.event.inputs.light_quality }}" ]; then
+            CMD="$CMD --light-quality ${{ github.event.inputs.light_quality }}"
           fi
 
           echo "Running: $CMD"
