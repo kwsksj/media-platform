@@ -242,7 +242,7 @@ class GalleryExporter:
         parts = re.split(r"\s*[|｜]\s*", text, maxsplit=1)
         nickname = parts[0].strip()
         real_name = parts[1].strip() if len(parts) > 1 else ""
-        return self._normalize_nickname(nickname, real_name) or real_name or text
+        return self._normalize_nickname(nickname, real_name) or real_name
 
     def _build_author_name_map(self, author_db_id: str) -> dict[str, str]:
         author_db_info = self.notion.get_database_info(author_db_id)
@@ -305,7 +305,7 @@ class GalleryExporter:
             return ""
         if not real_name or nickname != real_name:
             return nickname
-        shortened = "".join(list(real_name)[:2]).strip()
+        shortened = real_name[:2].strip()
         return shortened or nickname
 
     def _get_title_from_props(self, props: dict, key: str) -> str:
