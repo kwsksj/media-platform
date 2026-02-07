@@ -506,9 +506,10 @@ class NotionDB:
         )
         return [self._parse_page(page) for page in response["results"]]
 
-    def get_database_info(self) -> dict:
+    def get_database_info(self, database_id: str | None = None) -> dict:
         """Get database schema information."""
-        return self.client.databases.retrieve(self.database_id)
+        target_database_id = database_id or self.database_id
+        return self.client.databases.retrieve(target_database_id)
 
     def list_database_pages(self, database_id: str) -> list[dict]:
         """List all pages in a Notion database with pagination."""
