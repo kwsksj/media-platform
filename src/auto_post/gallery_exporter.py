@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -226,12 +227,32 @@ class GalleryExporter:
 
     def _format_author(self, author_names: list[str], props: dict) -> str | None:
         if author_names:
-            return " / ".join([n for n in author_names if n]) or None
+            nicknames = [self._extract_author_nickname(n) for n in author_names]
+            return " / ".join([n for n in nicknames if n]) or None
         # Fallback if relation is not used
         select_val = self._get_select(props, "作者")
         if select_val:
-            return select_val
+            return self._extract_author_nickname(select_val)
         return None
+
+    def _extract_author_nickname(self, raw_name: str) -> str:
+        text = (raw_name or "").strip()
+        if not text:
+            return ""
+        parts = re.split(r"\s*[|｜]\s*", text, maxsplit=1)
+        nickname = parts[0].strip()
+        real_name = parts[1].strip() if len(parts) > 1 else ""
+        return self._normalize_nickname(nickname, real_name) or real_name or text
+
+    def _normalize_nickname(self, nickname: str, real_name: str) -> str:
+        nickname = (nickname or "").strip()
+        real_name = (real_name or "").strip()
+        if not nickname:
+            return ""
+        if not real_name or nickname != real_name:
+            return nickname
+        shortened = "".join(list(real_name)[:2]).strip()
+        return shortened or nickname
 
     def _get_title_from_props(self, props: dict, key: str) -> str:
         if props.get(key, {}).get("title"):
