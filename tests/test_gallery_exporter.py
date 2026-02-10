@@ -1,5 +1,7 @@
 """Tests for gallery exporter author ID handling."""
 
+import pytest
+
 from auto_post.gallery_exporter import GalleryExporter
 
 
@@ -124,3 +126,99 @@ def test_format_author_select_fallback_accepts_only_id_like_value():
 
     assert safe_author == "ST-001"
     assert unsafe_author is None
+
+
+def test_resolve_ready_property_name_prefers_env_override(monkeypatch):
+    exporter = _make_exporter()
+    monkeypatch.setenv("NOTION_WORKS_READY_PROP", "公開可")
+
+    prop = exporter._resolve_ready_property_name(
+        {
+            "properties": {
+                "整備済み": {"type": "checkbox"},
+                "公開可": {"type": "checkbox"},
+            }
+        }
+    )
+
+    assert prop == "公開可"
+
+
+def test_resolve_ready_property_name_falls_back_to_known_candidates(monkeypatch):
+    exporter = _make_exporter()
+    monkeypatch.delenv("NOTION_WORKS_READY_PROP", raising=False)
+
+    prop = exporter._resolve_ready_property_name(
+        {
+            "properties": {
+                "整備済": {"type": "checkbox"},
+            }
+        }
+    )
+
+    assert prop == "整備済"
+
+
+def test_resolve_ready_property_name_detects_ready_like_checkbox(monkeypatch):
+    exporter = _make_exporter()
+    monkeypatch.delenv("NOTION_WORKS_READY_PROP", raising=False)
+
+    prop = exporter._resolve_ready_property_name(
+        {
+            "properties": {
+                "公開Ready": {"type": "checkbox"},
+            }
+        }
+    )
+
+    assert prop == "公開Ready"
+
+
+def test_resolve_ready_property_name_raises_if_not_found(monkeypatch):
+    exporter = _make_exporter()
+    monkeypatch.delenv("NOTION_WORKS_READY_PROP", raising=False)
+
+    with pytest.raises(ValueError):
+        exporter._resolve_ready_property_name(
+            {
+                "properties": {
+                    "作品名": {"type": "title"},
+                    "公開状態": {"type": "select"},
+                }
+            }
+        )
+
+
+def test_is_page_ready_accepts_checkbox_true():
+    exporter = _make_exporter()
+    page = {
+        "properties": {
+            "整備済み": {"type": "checkbox", "checkbox": True},
+        }
+    }
+
+    assert exporter._is_page_ready(page, "整備済み") is True
+
+
+def test_is_page_ready_accepts_formula_boolean_true():
+    exporter = _make_exporter()
+    page = {
+        "properties": {
+            "整備済み": {"type": "formula", "formula": {"type": "boolean", "boolean": True}},
+        }
+    }
+
+    assert exporter._is_page_ready(page, "整備済み") is True
+
+
+def test_is_page_ready_rejects_false_or_missing():
+    exporter = _make_exporter()
+    false_page = {
+        "properties": {
+            "整備済み": {"type": "checkbox", "checkbox": False},
+        }
+    }
+    missing_page = {"properties": {}}
+
+    assert exporter._is_page_ready(false_page, "整備済み") is False
+    assert exporter._is_page_ready(missing_page, "整備済み") is False

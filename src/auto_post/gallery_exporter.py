@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -34,12 +35,18 @@ AUTHOR_STUDENT_ID_PROP_CANDIDATES = (
     "Student ID",
     "StudentId",
 )
+READY_PROP_ENV = "NOTION_WORKS_READY_PROP"
+READY_PROP_CANDIDATES = (
+    "整備済み",
+    "整備済",
+)
 
 
 @dataclass
 class ExportStats:
     total_pages: int = 0
     exported: int = 0
+    skipped_not_ready: int = 0
     skipped_no_images: int = 0
     skipped_no_completed_date: int = 0
     thumb_generated: int = 0
@@ -78,6 +85,7 @@ class GalleryExporter:
         overwrite_light_images: bool = False,
     ) -> tuple[dict, ExportStats]:
         db_info = self.notion.get_database_info()
+        ready_prop = self._resolve_ready_property_name(db_info)
         pages = self.notion.list_database_pages(self.notion.database_id)
 
         tag_db_id = self._get_relation_database_id(db_info, "タグ")
@@ -90,6 +98,10 @@ class GalleryExporter:
         works: list[dict] = []
 
         for page in pages:
+            if not self._is_page_ready(page, ready_prop):
+                stats.skipped_not_ready += 1
+                continue
+
             work = self._parse_work_page(
                 page=page,
                 tag_map=tag_map,
@@ -131,6 +143,43 @@ class GalleryExporter:
             )
 
         return payload, stats
+
+    def _resolve_ready_property_name(self, db_info: dict) -> str:
+        properties = db_info.get("properties", {})
+        preferred = (os.getenv(READY_PROP_ENV) or READY_PROP_CANDIDATES[0]).strip()
+
+        candidates = []
+        for name in (preferred, *READY_PROP_CANDIDATES):
+            if name and name not in candidates:
+                candidates.append(name)
+
+        for name in candidates:
+            schema = properties.get(name)
+            if schema and schema.get("type") == "checkbox":
+                return name
+
+        for name, schema in properties.items():
+            if schema.get("type") != "checkbox":
+                continue
+            normalized = str(name or "").strip().lower()
+            if "整備済" in normalized or "ready" in normalized:
+                return name
+
+        raise ValueError(
+            "Ready checkbox property not found. "
+            "Set NOTION_WORKS_READY_PROP to your ready checkbox property name."
+        )
+
+    def _is_page_ready(self, page: dict, ready_prop: str) -> bool:
+        prop = page.get("properties", {}).get(ready_prop, {})
+        prop_type = prop.get("type")
+        if prop_type == "checkbox":
+            return bool(prop.get("checkbox"))
+        if prop_type == "formula":
+            formula = prop.get("formula") or {}
+            if formula.get("type") == "boolean":
+                return bool(formula.get("boolean"))
+        return False
 
     def _get_relation_database_id(self, db_info: dict, prop_name: str) -> str | None:
         prop = db_info.get("properties", {}).get(prop_name)
