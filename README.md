@@ -103,6 +103,9 @@ auto-post export-gallery-json --no-light
 auto-post export-gallery-json --overwrite-thumbs --overwrite-light
 ```
 
+`export-gallery-json` は Notion の `整備済み`（checkbox または boolean を返す formula）が `true` の作品のみを書き出します。
+プロパティ名が異なる場合は `NOTION_WORKS_READY_PROP` で上書きできます（checkbox / formula 対応）。
+
 > GitHub Actions で自動実行する場合は、`.github/workflows/gallery-export.yml` を有効化し、
 > Secrets に `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `R2_*`, `R2_PUBLIC_URL` を設定してください。
 

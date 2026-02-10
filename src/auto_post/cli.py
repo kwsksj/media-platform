@@ -293,6 +293,7 @@ def export_gallery_json(
     click.echo("=" * 30)
     click.echo(f"Total pages: {stats.total_pages}")
     click.echo(f"Exported:    {stats.exported}")
+    click.echo(f"Skip (not ready): {stats.skipped_not_ready}")
     click.echo(f"Skip (no images): {stats.skipped_no_images}")
     click.echo(f"Skip (no completed_date): {stats.skipped_no_completed_date}")
     if not no_thumbs:
