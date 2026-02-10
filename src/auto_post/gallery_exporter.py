@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
 from PIL import Image, ImageOps
@@ -29,6 +29,16 @@ THUMB_HASH_LEN = 12
 LIGHT_MAX_SIZE_DEFAULT = 1600
 LIGHT_QUALITY_DEFAULT = 75
 LIGHT_PREFIX_SUFFIX = "-light"
+VOLATILE_QUERY_PARAM_KEYS = (
+    "x-amz-algorithm",
+    "x-amz-credential",
+    "x-amz-date",
+    "x-amz-expires",
+    "x-amz-security-token",
+    "x-amz-signature",
+    "x-amz-signedheaders",
+    "x-id",
+)
 AUTHOR_STUDENT_ID_PROP_CANDIDATES = (
     "生徒ID",
     "生徒 Id",
@@ -479,9 +489,38 @@ class GalleryExporter:
             return None
 
     def _build_thumbnail_key(self, work_id: str, image_url: str, thumb_width: int) -> str:
-        material = f"{image_url.strip()}|w={thumb_width}"
-        digest = hashlib.sha1(material.encode("utf-8")).hexdigest()[:THUMB_HASH_LEN]
+        normalized_url = self._normalize_thumbnail_source_url(image_url)
+        material = f"{normalized_url}|w={thumb_width}"
+        digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:THUMB_HASH_LEN]
         return f"{THUMB_PREFIX}/{work_id}-{digest}.jpg"
+
+    def _normalize_thumbnail_source_url(self, image_url: str) -> str:
+        raw = image_url.strip()
+        parsed = urlparse(raw)
+        if not parsed.scheme or not parsed.netloc:
+            return raw
+
+        query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        if any(k.lower().startswith("x-amz-") for k, _ in query_pairs):
+            query_pairs = []
+        else:
+            query_pairs = [
+                (k, v)
+                for (k, v) in query_pairs
+                if k.lower() not in VOLATILE_QUERY_PARAM_KEYS
+            ]
+
+        normalized_query = urlencode(sorted(query_pairs), doseq=True)
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                normalized_query,
+                "",
+            )
+        )
 
     def _ensure_light_image(
         self,

@@ -295,3 +295,37 @@ def test_build_thumbnail_key_changes_when_cover_or_width_changes():
 
     assert key_base != key_cover_changed
     assert key_base != key_width_changed
+
+
+def test_build_thumbnail_key_ignores_volatile_signed_query_params():
+    exporter = _make_exporter()
+
+    key1 = exporter._build_thumbnail_key(
+        "work-1",
+        "https://prod-files-secure.s3.us-west-2.amazonaws.com/abc/cover.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20260210T193000Z&X-Amz-Signature=aaa",
+        600,
+    )
+    key2 = exporter._build_thumbnail_key(
+        "work-1",
+        "https://prod-files-secure.s3.us-west-2.amazonaws.com/abc/cover.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20260210T194500Z&X-Amz-Signature=bbb",
+        600,
+    )
+
+    assert key1 == key2
+
+
+def test_build_thumbnail_key_keeps_non_volatile_query_params():
+    exporter = _make_exporter()
+
+    key1 = exporter._build_thumbnail_key(
+        "work-1",
+        "https://example.com/image?id=1&size=large",
+        600,
+    )
+    key2 = exporter._build_thumbnail_key(
+        "work-1",
+        "https://example.com/image?id=2&size=large",
+        600,
+    )
+
+    assert key1 != key2
