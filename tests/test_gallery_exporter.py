@@ -1,5 +1,7 @@
 """Tests for gallery exporter author ID handling."""
 
+import re
+
 import pytest
 
 from auto_post.gallery_exporter import GalleryExporter
@@ -252,3 +254,78 @@ def test_is_page_ready_rejects_false_or_missing():
 
     assert exporter._is_page_ready(false_page, "整備済み") is False
     assert exporter._is_page_ready(missing_page, "整備済み") is False
+
+
+def test_build_thumbnail_key_is_stable_for_same_input():
+    exporter = _make_exporter()
+
+    key1 = exporter._build_thumbnail_key(
+        "work-1",
+        "https://example.com/photos/cover.jpg",
+        600,
+    )
+    key2 = exporter._build_thumbnail_key(
+        "work-1",
+        "https://example.com/photos/cover.jpg",
+        600,
+    )
+
+    assert key1 == key2
+    assert re.match(r"^thumbs/work-1-[0-9a-f]{12}\.jpg$", key1)
+
+
+def test_build_thumbnail_key_changes_when_cover_or_width_changes():
+    exporter = _make_exporter()
+
+    key_base = exporter._build_thumbnail_key(
+        "work-1",
+        "https://example.com/photos/cover-a.jpg",
+        600,
+    )
+    key_cover_changed = exporter._build_thumbnail_key(
+        "work-1",
+        "https://example.com/photos/cover-b.jpg",
+        600,
+    )
+    key_width_changed = exporter._build_thumbnail_key(
+        "work-1",
+        "https://example.com/photos/cover-a.jpg",
+        720,
+    )
+
+    assert key_base != key_cover_changed
+    assert key_base != key_width_changed
+
+
+def test_build_thumbnail_key_ignores_volatile_signed_query_params():
+    exporter = _make_exporter()
+
+    key1 = exporter._build_thumbnail_key(
+        "work-1",
+        "https://prod-files-secure.s3.us-west-2.amazonaws.com/abc/cover.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20260210T193000Z&X-Amz-Signature=aaa",
+        600,
+    )
+    key2 = exporter._build_thumbnail_key(
+        "work-1",
+        "https://prod-files-secure.s3.us-west-2.amazonaws.com/abc/cover.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20260210T194500Z&X-Amz-Signature=bbb",
+        600,
+    )
+
+    assert key1 == key2
+
+
+def test_build_thumbnail_key_keeps_non_volatile_query_params():
+    exporter = _make_exporter()
+
+    key1 = exporter._build_thumbnail_key(
+        "work-1",
+        "https://example.com/image?id=1&size=large",
+        600,
+    )
+    key2 = exporter._build_thumbnail_key(
+        "work-1",
+        "https://example.com/image?id=2&size=large",
+        600,
+    )
+
+    assert key1 != key2
