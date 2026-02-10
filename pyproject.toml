@@ -39,7 +39,7 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
-ignore = ["E501"]
+per-file-ignores = {"src/*" = ["E501"], "tests/*" = ["E501"]}
 
 [tool.mypy]
 python_version = "3.10"

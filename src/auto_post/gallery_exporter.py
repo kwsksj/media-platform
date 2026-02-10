@@ -299,7 +299,8 @@ class GalleryExporter:
         # Reject values that likely include human names.
         if re.search(r"\s*[|｜]\s*", value):
             return ""
-        if re.search(r"[ぁ-んァ-ン一-龥]", value):
+        # Hiragana, full-width Katakana, half-width Katakana, CJK Unified Ideographs
+        if re.search(r"[ぁ-んァ-ヶｦ-ﾝ一-龥]", value):
             return ""
         if not re.search(r"\d", value):
             return ""
@@ -319,6 +320,8 @@ class GalleryExporter:
         prefix_text = (prefix or "").strip()
         if not prefix_text:
             return number_text
+        # Notion unique_id prefixes may or may not include a trailing "-".
+        # Avoid duplicating the separator when the prefix already ends with one.
         if prefix_text.endswith("-"):
             return f"{prefix_text}{number_text}"
         return f"{prefix_text}-{number_text}"

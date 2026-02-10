@@ -331,7 +331,7 @@ class Importer:
                             shutil.copy2(str(photo.path), str(dest_path))
                             stats["processed"] += 1
                         elif dest_path.stat().st_size == photo.path.stat().st_size:
-                            pass
+                            pass  # Already copied; skip silently
                     else:
                         if photo.path != dest_path:
                             shutil.move(str(photo.path), str(dest_path))
