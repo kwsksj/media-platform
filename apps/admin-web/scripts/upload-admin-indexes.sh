@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MONOREPO_ROOT="$(cd "$REPO_ROOT/../.." && pwd)"
+WRANGLER_CONFIG="${WRANGLER_CONFIG:-${MONOREPO_ROOT}/apps/worker-api/wrangler.toml}"
 
 BUCKET="${1:-woodcarving-photos}"
 ENV_FILE="${2:-$MONOREPO_ROOT/.env}"
@@ -23,6 +24,7 @@ node ./scripts/build-admin-indexes.mjs --env-file "$ENV_FILE" --out-dir "$OUT_DI
 
 echo "[2/3] Upload students_index.json to R2 ($BUCKET)"
 npx wrangler r2 object put "${BUCKET}/students_index.json" \
+  --config="${WRANGLER_CONFIG}" \
   --file="${OUT_DIR}/students_index.json" \
   --content-type="application/json; charset=utf-8" \
   --cache-control="max-age=300" \
@@ -30,6 +32,7 @@ npx wrangler r2 object put "${BUCKET}/students_index.json" \
 
 echo "[3/3] Upload tags_index.json to R2 ($BUCKET)"
 npx wrangler r2 object put "${BUCKET}/tags_index.json" \
+  --config="${WRANGLER_CONFIG}" \
   --file="${OUT_DIR}/tags_index.json" \
   --content-type="application/json; charset=utf-8" \
   --cache-control="max-age=300" \

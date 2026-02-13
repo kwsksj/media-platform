@@ -5,7 +5,8 @@
 ## Current Status
 
 - canonical repository: `media-platform` (`<repo-root>`)
-- gallery module: `<repo-root>/apps/gallery`
+- gallery module (at integration time): `<repo-root>/apps/gallery`
+- current layout: `<repo-root>/apps/gallery-web`, `<repo-root>/apps/admin-web`, `<repo-root>/apps/worker-api`
 - GitHub repository: `kwsksj/media-platform`（rename 済み）
 - local workspace path: `/Users/kawasakiseiji/development/media-platform`
 - split-repo (`gallery`) は legacy 扱い
@@ -30,7 +31,7 @@
 
 - `auto-post post --dry-run`
 - `auto-post export-gallery-json --no-upload --no-thumbs --no-light`
-- `cd apps/gallery && npx wrangler deploy`（本番 deploy 実行）
+- `cd apps/worker-api && npx wrangler deploy`（本番 deploy 実行）
 - Daily Gallery Export（schedule）成功
 - Daily Auto Post（schedule）成功
 - `workflow_dispatch`（手動実行）成功
@@ -40,10 +41,10 @@
 ## Current Operation Rule
 
 - 日常運用・改修は `media-platform/main` を正本として実施
-- gallery 関連の変更は `apps/gallery` に集約
+- gallery 関連の変更は `apps/gallery-web` / `apps/admin-web` / `apps/worker-api` に責務分離して実施
 - split-repo 側は履歴参照・緊急比較用途に限定
 
 ## Related Docs
 
-- `../../../MONOREPO_INTEGRATION.md`
+- `../monorepo-integration.md`
 - `../README.md`

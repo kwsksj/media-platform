@@ -1,14 +1,23 @@
-# auto-post システム 現状仕様書
+# media-platform 生徒作品画像運用システム 現状仕様書
 
 ## 概要
 
-木彫り教室の生徒作品写真を **Instagram / X / Threads** に自動投稿するシステム。
+木彫り教室の生徒作品画像を、取り込み・アップロード・公開ギャラリー生成・**Instagram / X / Threads** 投稿まで一貫運用するシステム。
+
+## データ正本（現時点）
+
+- 画像ファイル: `Cloudflare R2`（画像実体の正本）
+- 作品メタデータ・投稿状態: `Notion`（運用台帳）
+- 生徒名簿・予約状況: `Google スプレッドシート`（現行運用）
+
+将来的に、生徒名簿・予約系データの移行先として Notion 等を検討中。
 
 ### 当初仕様からの主な変更点
 
 | 項目                 | 当初仕様                | 現状                            |
 | -------------------- | ----------------------- | ------------------------------- |
-| 管理台帳             | Google スプレッドシート | **Notion データベース**         |
+| 作品管理台帳         | Google スプレッドシート | **Notion データベース**         |
+| 生徒名簿・予約状況   | Google スプレッドシート | **Google スプレッドシート（現行）** |
 | 画像ストレージ       | Google Drive            | **Cloudflare R2**               |
 | 対応プラットフォーム | Instagram, X            | **Instagram, X, Threads**       |
 | 実行方式             | GAS 定期実行            | **GitHub Actions + Python CLI** |
@@ -19,78 +28,36 @@
 ## システム構成
 
 ```
-Notion データベース（投稿管理）
-    ↓
-GitHub Actions (毎日 16:42 JST)
-    ↓
-auto-post CLI (Python)
-    ├→ Instagram Graph API
-    ├→ X (Twitter) API v2
-    └→ Threads API
-    ↓
-Notion 更新（投稿済みフラグ）
+media-platform (monorepo)
+├─ GitHub Actions
+│  ├─ schedule.yml       (毎日 16:42 JST)
+│  ├─ gallery-export.yml (毎日 16:10 JST)
+│  └─ catchup.yml        (手動実行)
+├─ auto-post CLI (src/auto_post)
+│  ├→ Instagram Graph API
+│  ├→ X (Twitter) API v2
+│  └→ Threads API
+└─ apps/
+   ├─ gallery-web (gallery.html)
+   ├─ admin-web (admin.html + admin/shared)
+   └─ worker-api (Cloudflare Workers)
 ```
 
 ---
 
-## CLI コマンド一覧
+## 運用導線
 
-### 投稿系
+- 日常運用 runbook: `operations.md`
+- 初期セットアップ: `setup.md`
+- 全体概要と責務マップ: `../README.md`
 
-```bash
-# 日次投稿（3件まで）
-auto-post post
+CLI は `auto-post` を中心に運用し、日常実行は `Makefile` を優先します。  
+主要カテゴリは以下です。
 
-# 特定プラットフォームのみ
-auto-post post --platform threads
-auto-post post --platform instagram
-auto-post post --platform x
-
-# ドライラン（実際には投稿しない）
-auto-post post --dry-run
-
-# 特定日付を対象
-auto-post post --date 2026-01-23
-
-# 組み合わせ
-auto-post post --platform threads --dry-run
-```
-
-### トークン管理
-
-```bash
-# トークン更新
-auto-post refresh-token
-```
-
-### 確認・デバッグ
-
-```bash
-# Notion接続・スキーマ確認
-auto-post check-notion
-
-# 作品一覧表示
-auto-post list-works
-auto-post list-works --student "生徒名"
-auto-post list-works --unposted
-```
-
-### インポート系
-
-```bash
-# フォルダから直接インポート
-auto-post import-direct <folder>
-
-# サブフォルダ単位でインポート
-auto-post import-folders <folder>
-
-# グルーピングプレビュー
-auto-post preview-groups <folder>
-
-# JSON編集後インポート
-auto-post export-groups <folder> output.json
-auto-post import-groups output.json
-```
+- 投稿系: `post`, `catchup`
+- 取り込み系: `preview-groups`, `import-direct`, `import-folders`, `export-groups`, `import-groups`
+- gallery build 系: `export-gallery-json`
+- 管理系: `check-notion`, `list-works`, `refresh-token`
 
 ---
 
@@ -128,6 +95,9 @@ auto-post import-groups output.json
 ---
 
 ## Notion データベース構造
+
+このセクションは「作品メタデータ・投稿状態」を管理する Notion DB の仕様です。  
+生徒名簿・予約状況の正本は現時点では Google スプレッドシート運用です。
 
 ### 必須プロパティ
 
@@ -176,7 +146,7 @@ auto-post import-groups output.json
     - 1日最大 1件
 3. **Priority 3: 基本投稿**
     - 「当該SNSで未投稿」の作品（完成日順）
-    - 1日最大 3件
+    - 1日最大 2件（既定値。`--basic-limit` で変更可能）
     - ※ X (Basic Tier) は1ツイートにつき画像1枚のみ（Notionの画像リストの先頭を使用）
 
 ※ 画像処理は全プラットフォームの選定作品をまとめて行うため効率的です。
@@ -222,12 +192,31 @@ auto-post import-groups output.json
 
 ## GitHub Actions
 
-### ワークフロー: `schedule.yml`
+### ワークフロー: `schedule.yml`（Daily Auto Post）
 
 - **スケジュール**: 毎日 16:42 JST (07:42 UTC)
 - **手動実行オプション**:
   - `date`: 対象日指定
   - `platform`: プラットフォーム選択 (all/instagram/x/threads)
+  - `basic_limit`: 基本投稿件数
+  - `catchup_limit`: キャッチアップ件数
+  - `dry_run`: dry-run 実行
+
+### ワークフロー: `gallery-export.yml`（Daily Gallery Export）
+
+- **スケジュール**: 毎日 16:10 JST (07:10 UTC)
+- **手動実行オプション**:
+  - `no_thumbs` / `no_light`
+  - `overwrite_thumbs` / `overwrite_light`
+  - `thumb_width` / `light_max_size` / `light_quality`
+
+### ワークフロー: `catchup.yml`（Catch-up Post）
+
+- **スケジュール**: なし（手動実行のみ）
+- **手動実行オプション**:
+  - `limit`: キャッチアップ件数
+  - `platform`: プラットフォーム選択 (all/instagram/x/threads)
+  - `dry_run`: dry-run 実行
 
 ### 必要な Secrets
 
@@ -239,9 +228,37 @@ GitHub リポジトリの Settings > Secrets に設定:
 
 ## ファイル構成
 
-```
-auto-post/
-├── .github/workflows/schedule.yml  # GitHub Actions
+```text
+media-platform/
+├── apps/gallery-web/
+│   ├── gallery.html        # 公開ギャラリーUI
+│   ├── gallery-ui-spec.md
+│   └── scripts/upload-gallery-html.sh
+├── apps/admin-web/
+│   ├── admin.html          # 先生専用UI
+│   ├── admin/              # 管理画面スクリプト/CSS
+│   ├── admin-upload-ui-spec.md
+│   ├── docs/               # 管理UI関連ドキュメント
+│   ├── shared/             # UI共通モジュール
+│   └── scripts/            # index生成・upload・smoke test
+├── apps/worker-api/
+│   ├── worker/src/index.js # Cloudflare Worker API
+│   └── wrangler.toml
+├── tools/ingest/          # ingest エントリーポイント
+├── tools/publish/         # publish エントリーポイント
+├── tools/gallery-build/   # gallery build エントリーポイント
+├── docs/
+│   ├── README.md
+│   ├── architecture.md
+│   ├── operations.md
+│   ├── setup.md
+│   ├── system-spec.md
+│   ├── monorepo-integration.md
+│   └── history/
+├── .github/workflows/
+│   ├── schedule.yml       # Daily Auto Post
+│   ├── catchup.yml        # Catch-up Post
+│   └── gallery-export.yml # Daily Gallery Export
 ├── src/auto_post/
 │   ├── cli.py           # CLIエントリーポイント
 │   ├── config.py        # 設定クラス
@@ -255,7 +272,9 @@ auto-post/
 │   ├── importer.py      # 写真インポート
 │   ├── grouping.py      # グルーピング処理
 │   └── gps_utils.py     # GPS/教室判定
+├── scripts/              # 補助運用スクリプト
+├── tests/
+├── Makefile
 ├── pyproject.toml
-├── .env                 # ローカル環境変数
 └── README.md
 ```

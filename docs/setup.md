@@ -1,4 +1,30 @@
-# Instagram/X/Threads 自動投稿システム セットアップ手順書
+# 生徒作品画像運用システム セットアップ手順書
+
+## この文書の位置づけ
+
+- この文書は「初期セットアップ」の詳細手順です
+- 日常運用コマンドは `../README.md` と `operations.md` を優先参照してください
+- ディレクトリ責務の全体像は `architecture.md` を参照してください
+
+## モノレポ責務マップ
+
+```text
+/apps/gallery-web      # 公開ギャラリーUI
+/apps/admin-web        # 管理UI
+/apps/worker-api       # Cloudflare Worker API
+/tools/ingest          # Takeout取込・Notion登録
+/tools/publish         # SNS自動投稿
+/tools/gallery-build   # gallery.json / thumbs / images_light 生成
+/docs                  # 全体構成・運用手順
+```
+
+## データ正本（現時点）
+
+- 画像ファイル: `Cloudflare R2`（画像実体の正本）
+- 作品メタデータ・投稿状態: `Notion`（運用台帳）
+- 生徒名簿・予約状況: `Google スプレッドシート`（現行運用）
+
+将来的に、生徒名簿・予約系データの移行先として Notion 等を検討中です。
 
 ## 前提条件
 
@@ -15,16 +41,18 @@
 ## システム構成
 
 ```
-ローカル写真 → R2（パブリック読み取り）→ Instagram / X / Threads
-                    ↓
-              Notion DB（管理台帳 + 画像プレビュー）
+ローカル写真 → R2（画像実体の保存先）
+                ├→ Notion DB（作品メタデータ / 投稿状態）
+                └→ 公開ギャラリー / Instagram / X / Threads
 ```
+
+※ 生徒名簿・予約状況は現時点で Google スプレッドシート運用です。
 
 **Google Cloud は不要です！**
 
 ---
 
-## Step 1: Notion データベースの作成
+## Step 1: Notion 作品データベースの作成
 
 ### 1.1 新規データベースを作成
 
@@ -53,6 +81,9 @@ Notion で新しいページを作成し、「データベース - フルペー�
 | X投稿日時         | 日付              | 投稿日時（JST）      |
 | Threads投稿日時   | 日付              | 投稿日時（JST）      |
 | エラーログ      | テキスト          | エラー記録           |
+
+※ 生徒名簿・予約状況の正本は現時点で Google スプレッドシートです。  
+必要に応じて、名簿情報を Notion 側へ同期または転記して運用してください。
 
 ### 1.3 Notion Integration を作成
 
@@ -188,11 +219,17 @@ cp .env.example .env
 ### 5.3 接続テスト
 
 ```bash
+# 構成チェック
+make check-monorepo
+
 # Notion 接続確認
 auto-post check-notion
 
 # 作品一覧表示
 auto-post list-works
+
+# 投稿 dry-run
+make publish-dry
 ```
 
 ---
@@ -251,39 +288,26 @@ GitHub リポジトリ → Settings → Secrets and variables → Actions
 
 ※ Threads App ID/Secret は Instagram と同じ Meta アプリを使用する場合、`INSTAGRAM_APP_ID`/`INSTAGRAM_APP_SECRET` と同じ値になります。
 
+ローカル `.env` のキー有無チェックは以下で実施できます:
+
+```bash
+make secrets-list ENV_FILE=./.env
+```
+
 ### 7.2 自動実行
 
-- 毎日 16:42 JST (07:42 UTC) に自動実行
-- 手動実行: Actions → Daily Post → Run workflow
+- `Daily Auto Post`（`.github/workflows/schedule.yml`）: 毎日 16:42 JST (07:42 UTC)
+- `Daily Gallery Export`（`.github/workflows/gallery-export.yml`）: 毎日 16:10 JST (07:10 UTC)
+- `Catch-up Post`（`.github/workflows/catchup.yml`）: 手動実行のみ
+- 手動実行: GitHub Actions の各ワークフローから `Run workflow`
 
 ---
 
-## CLI コマンド一覧
+## セットアップ後の運用導線
 
-```bash
-# 今日の投稿を実行
-auto-post post
-
-# 特定日の投稿を実行
-auto-post post --date 2025-01-20
-
-# 作品一覧表示
-auto-post list-works
-auto-post list-works --student "山田"
-auto-post list-works --unposted
-
-# Notion 接続確認
-auto-post check-notion
-
-# テスト投稿
-auto-post test-post PAGE_ID --platform instagram
-
-# トークン更新
-auto-post refresh-token
-
-# デバッグモード
-auto-post --debug post
-```
+- 日常運用コマンドは `operations.md` を参照
+- 全体概要と入口一覧は `../README.md` を参照
+- 詳細仕様（投稿ロジック・環境変数・Notionスキーマ）は `system-spec.md` を参照
 
 ---
 
@@ -367,7 +391,7 @@ auto-post import-direct FOLDER [--threshold 10] [--student NAME] [--start-date D
 1. **写真撮影** → ローカルに保存
 2. **R2 にアップロード** → パブリックURLを取得
 3. **Notion に登録** → 作品名、画像URL、投稿予定日を設定
-4. **自動投稿** → 毎日 12:00 に GitHub Actions が実行
+4. **定期実行** → GitHub Actions が毎日実行（投稿 16:42 JST / gallery export 16:10 JST）
 
 ---
 

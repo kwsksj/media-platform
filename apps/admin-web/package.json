@@ -1,12 +1,13 @@
 {
-  "name": "gallery",
+  "name": "admin-web",
   "private": true,
   "scripts": {
     "build:admin-indexes": "node ./scripts/build-admin-indexes.mjs",
     "test:upload-queue-smoke": "node ./scripts/test-upload-queue-smoke.mjs",
     "upload:admin-indexes": "bash ./scripts/upload-admin-indexes.sh",
     "upload:admin-html": "bash ./scripts/upload-admin-html.sh",
-    "upload:gallery-html": "bash ./scripts/upload-gallery-html.sh"
+    "tag-recalc:dry": "node ./scripts/tag-recalc.mjs --dry-run",
+    "tag-recalc:apply": "node ./scripts/tag-recalc.mjs --apply"
   },
   "devDependencies": {
     "playwright": "^1.58.2"
