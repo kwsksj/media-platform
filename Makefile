@@ -52,9 +52,10 @@ gallery-tag-recalc-apply:
 	@"$(GALLERY_BUILD_TOOL_DIR)/tag-recalc.sh" --apply
 
 admin-smoke:
-	@cd "$(ADMIN_WEB_DIR)" && if [ ! -d node_modules ]; then npm install --no-package-lock; fi
-	@cd "$(ADMIN_WEB_DIR)" && npx playwright install chromium >/dev/null
-	@cd "$(ADMIN_WEB_DIR)" && npm run test:upload-queue-smoke
+	@cd "$(ADMIN_WEB_DIR)" && \
+		if [ ! -d node_modules ]; then npm install --no-package-lock; fi && \
+		npx playwright install chromium >/dev/null && \
+		npm run test:upload-queue-smoke
 
 worker-dry:
 	@cd "$(WORKER_API_DIR)" && npx wrangler deploy --dry-run
