@@ -21,6 +21,15 @@ else
   fi
 fi
 
+ALREADY_IMPORTED=0
+if [[ -d "${AUTO_POST_DIR}/apps/gallery" ]]; then
+  IMPORTED_DIR_REAL="$(cd "${AUTO_POST_DIR}/apps/gallery" && pwd)"
+  GALLERY_DIR_REAL="$(cd "${GALLERY_DIR}" && pwd)"
+  if [[ "${IMPORTED_DIR_REAL}" == "${GALLERY_DIR_REAL}" ]]; then
+    ALREADY_IMPORTED=1
+  fi
+fi
+
 echo "[1/4] Checking gallery repo path"
 IS_GALLERY_GIT_REPO=0
 if [[ -d "${GALLERY_DIR}/.git" ]]; then
@@ -64,6 +73,25 @@ else
   else
     echo "OK: auto-post repo is clean (gallery is module directory)"
   fi
+fi
+
+if [[ "${ALREADY_IMPORTED}" -eq 1 ]]; then
+  cat <<EOF
+
+Gallery is already imported into canonical repo.
+No import action is needed.
+
+Recommended next checks:
+  cd "${AUTO_POST_DIR}"
+  auto-post post --dry-run --date \$(date +%Y-%m-%d)
+  auto-post export-gallery-json --no-upload --no-thumbs --no-light
+  cd "${AUTO_POST_DIR}/apps/gallery" && npx wrangler deploy --dry-run
+
+Docs:
+  - ${AUTO_POST_DIR}/MONOREPO_INTEGRATION.md
+  - ${AUTO_POST_DIR}/apps/gallery/docs/monorepo-migration-plan.md
+EOF
+  exit 0
 fi
 
 echo "[4/4] Checking subtree support"
