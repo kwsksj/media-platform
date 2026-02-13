@@ -37,6 +37,8 @@ gallery-export:
 	@"$(AUTO_POST_BIN)" export-gallery-json --no-upload --no-thumbs --no-light
 
 admin-smoke:
+	@cd "$(GALLERY_DIR)" && if [ ! -d node_modules ]; then npm install --no-package-lock; fi
+	@cd "$(GALLERY_DIR)" && npx playwright install chromium >/dev/null
 	@cd "$(GALLERY_DIR)" && npm run test:upload-queue-smoke
 
 worker-dry:
