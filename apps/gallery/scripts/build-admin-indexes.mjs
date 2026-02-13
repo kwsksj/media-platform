@@ -2,9 +2,12 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const NOTION_API_BASE = "https://api.notion.com/v1";
 const NOTION_VERSION = "2022-06-28";
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const MONOREPO_ROOT = path.resolve(SCRIPT_DIR, "..", "..", "..");
 
 function parseArgs(argv) {
 	const args = {
@@ -36,7 +39,7 @@ function printHelp() {
 	console.log(`Build students_index.json and tags_index.json from Notion.
 
 Usage:
-  node scripts/build-admin-indexes.mjs [--env-file ../auto-post/.env] [--out-dir /tmp/admin-indexes]
+  node scripts/build-admin-indexes.mjs [--env-file /path/to/auto-post/.env] [--out-dir /tmp/admin-indexes]
 
 Environment variables (required):
   NOTION_TOKEN
@@ -531,7 +534,7 @@ async function writeJson(filePath, value) {
 
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
-	const fallbackEnvFile = path.resolve("/Users/kawasakiseiji/development/auto-post/.env");
+	const fallbackEnvFile = path.join(MONOREPO_ROOT, ".env");
 	const envFile = args.envFile ? path.resolve(args.envFile) : fallbackEnvFile;
 
 	try {

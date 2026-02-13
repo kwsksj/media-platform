@@ -3,9 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+MONOREPO_ROOT="$(cd "$REPO_ROOT/../.." && pwd)"
 
 BUCKET="${1:-woodcarving-photos}"
-ENV_FILE="${2:-/Users/kawasakiseiji/development/auto-post/.env}"
+ENV_FILE="${2:-$MONOREPO_ROOT/.env}"
 OUT_DIR="${3:-$(mktemp -d)}"
 
 cleanup() {
@@ -37,4 +38,3 @@ npx wrangler r2 object put "${BUCKET}/tags_index.json" \
 echo "Done. Uploaded:"
 echo "  - students_index.json"
 echo "  - tags_index.json"
-

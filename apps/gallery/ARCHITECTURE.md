@@ -1,48 +1,27 @@
 # Architecture Overview
 
-## Goal
+## Current Architecture (as of 2026-02-13)
 
-This document clarifies repository boundaries and the target monorepo structure.
-
-Current pain point: related features are split across `gallery` and `auto-post`, which makes ownership and change impact harder to reason about.
-
-## Current State (as of 2026-02-13)
-
-- `gallery` repo
-  - Public gallery UI (`gallery.html`)
-  - Admin upload/curation UI (`admin.html`, `admin/`)
-  - Worker API for admin and stars (`worker/`, `wrangler.toml`)
-- `auto-post` repo
-  - Notion-driven social posting (Instagram/X/Threads)
-  - Google Takeout grouping/import
-  - `gallery.json` and thumbs export pipeline
-
-## Recommended Direction
-
-Use a single repository with directory-level boundaries.
-
-Given current operations (GitHub Actions + secrets already on `auto-post`), use `auto-post` as canonical and import `gallery` under `apps/gallery` first.
-
-Example target layout:
+`auto-post` が canonical repository であり、gallery 関連は `apps/gallery` に集約されています。
 
 ```text
-/apps/gallery
-/shared
-/docs
+auto-post/
+  apps/gallery/
+  shared/
+  docs/
 ```
 
 ## Responsibility Boundaries
 
 - `apps/gallery`
-  - public gallery UI, admin UI, worker API (imported as a module first)
-- canonical root (`auto-post`)
+  - public gallery UI (`gallery.html`)
+  - admin upload/curation UI (`admin.html`, `admin/`)
+  - worker API for admin + stars (`worker/`, `wrangler.toml`)
+- monorepo root (`auto-post`)
   - batch/automation tooling: ingest, publish, export
   - scheduled workflows and repository secrets
-- `shared`
-  - Shared assets/utilities across web apps
 
-## Migration Principle
+## Operation Rule
 
-- Keep runtime behavior unchanged first.
-- Import `gallery` into canonical repo before internal rearrangement.
-- Move paths in small batches with compatibility shims as needed.
+- gallery 機能の改修はこの `apps/gallery` 配下で行う
+- スケジュール運用・Secrets 管理は monorepo root 側で管理する

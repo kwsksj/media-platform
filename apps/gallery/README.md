@@ -1,20 +1,18 @@
-# gallery
+# apps/gallery
 
 Notion + Cloudflare R2 をソースにしたギャラリーを、Googleサイトへ iframe で埋め込むための一式です。
 
-## Repository Scope
+## Module Scope
 
-このリポジトリは現在、以下を担当します。
+このディレクトリは `auto-post` モノレポ内で、以下を担当します。
 
 - 公開ギャラリーUI
 - 先生専用アップロード/整備UI
 - Cloudflare Worker API
 
-`auto-post`（SNS投稿 / Takeout取り込み / gallery.json 生成）との統合を前提に、責務境界と移行計画を用意しています。
-
 - アーキテクチャ: `ARCHITECTURE.md`
-- モノレポ移行計画: `docs/monorepo-migration-plan.md`
-- 移行前チェック: `scripts/check-monorepo-migration-readiness.sh`
+- 移行実績（履歴）: `docs/monorepo-migration-plan.md`
+- モノレポ統合ノート（repo root）: `../../MONOREPO_INTEGRATION.md`
 
 ## 主要ファイル
 
@@ -89,7 +87,7 @@ node scripts/tag-recalc.mjs --apply
 `students_index.json` / `tags_index.json` は Notion から生成して R2 に配置できます。
 
 ```bash
-# 生成のみ（既定: ../auto-post/.env を読み込む）
+# 生成のみ（既定: リポジトリ直下の .env を読み込む）
 npm run build:admin-indexes
 
 # 生成 + R2アップロード（既定bucket: woodcarving-photos）

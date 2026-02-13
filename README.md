@@ -172,8 +172,9 @@ auto-post import-folders <folder>
 
 ## ドキュメント
 
-- [詳細仕様書](./CURRENT_SYSTEM.md) - Notionスキーマ、API詳細、トークン管理など
+- [詳細仕様書](./CURRENT_SYSTEM_v1.1.2.md) - Notionスキーマ、API詳細、トークン管理など
 - [モノレポ統合ノート](./MONOREPO_INTEGRATION.md)
+- [gallery モジュール](./apps/gallery/README.md)
 
 ### 補助スクリプト
 
