@@ -1,0 +1,7 @@
+{
+  "name": "gallery-web",
+  "private": true,
+  "scripts": {
+    "upload:gallery-html": "bash ./scripts/upload-gallery-html.sh"
+  }
+}
