@@ -977,6 +977,7 @@ async function handleNotionCreateTag(request, env) {
     return jsonResponse({ ok: false, error: "failed to create notion tag", detail: res.data }, 500);
   }
 
+  const tagsIndex = await refreshTagsIndexAfterTagMutation(env);
   return okResponse(
     {
       id: asString(res.data?.id),
@@ -987,6 +988,7 @@ async function handleNotionCreateTag(request, env) {
       aliases: [],
       merge_to: "",
       usage_count: 0,
+      tags_index: tagsIndex,
     },
     201,
   );
@@ -1008,6 +1010,10 @@ async function handleNotionUpdateTag(request, env) {
   const titleProp = pickPropertyName(tagsDb, [tagsProps.title, "タグ"], "title");
   const parentsProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_PARENTS_PROP", "親タグ"), "親タグ"], "");
   const childrenProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_CHILDREN_PROP", "子タグ"), "子タグ"], "");
+  const withTagsIndex = async (body) => {
+    const tagsIndex = await refreshTagsIndexAfterTagMutation(env);
+    return { ...body, tags_index: tagsIndex };
+  };
 
   const loadTagPage = async (id) => {
     const res = await notionFetch(env, `/pages/${id}`, { method: "GET" });
@@ -1089,7 +1095,7 @@ async function handleNotionUpdateTag(request, env) {
         500,
       );
     }
-    return okResponse(updated.tag);
+    return okResponse(await withTagsIndex(updated.tag));
   }
 
   const parentId = asString(payload.parentId).trim();
@@ -1117,10 +1123,12 @@ async function handleNotionUpdateTag(request, env) {
     parentUpdated = result.tag;
   }
 
-  return okResponse({
-    parent: parentUpdated || { id: parentId, children: [] },
-    child: childUpdated.tag,
-  });
+  return okResponse(
+    await withTagsIndex({
+      parent: parentUpdated || { id: parentId, children: [] },
+      child: childUpdated.tag,
+    }),
+  );
 }
 
 async function handleR2Upload(request, env) {
@@ -1651,19 +1659,19 @@ async function handleTriggerGalleryUpdate(request, env) {
   return jsonResponse({ ok: false, error: `GitHub API error: ${text}` }, 500);
 }
 
-async function handleTriggerTagsIndexUpdate(request, env) {
+async function regenerateTagsIndex(env) {
   const tagsDbId = getEnvString(env, "NOTION_TAGS_DB_ID");
-  if (!env.GALLERY_R2) return serverError("R2 binding not configured (GALLERY_R2)");
-  if (!tagsDbId) return serverError("NOTION_TAGS_DB_ID not configured");
+  if (!env.GALLERY_R2) return { ok: false, error: "R2 binding not configured (GALLERY_R2)" };
+  if (!tagsDbId) return { ok: false, error: "NOTION_TAGS_DB_ID not configured" };
 
   const tagsDbRes = await notionFetch(env, `/databases/${tagsDbId}`, { method: "GET" });
   if (!tagsDbRes.ok) {
-    return jsonResponse({ ok: false, error: "failed to fetch tags database", detail: tagsDbRes.data }, 500);
+    return { ok: false, error: "failed to fetch tags database", detail: tagsDbRes.data };
   }
 
   const queryRes = await queryAllDatabasePages(env, tagsDbId);
   if (!queryRes.ok) {
-    return jsonResponse({ ok: false, error: "failed to query tags database", detail: queryRes.data }, 500);
+    return { ok: false, error: "failed to query tags database", detail: queryRes.data };
   }
 
   const index = buildTagsIndexFromNotion(env, tagsDbId, tagsDbRes.data, queryRes.pages);
@@ -1676,11 +1684,53 @@ async function handleTriggerTagsIndexUpdate(request, env) {
     },
   });
 
-  return okResponse({
-    message: "tags index regenerated",
+  return {
+    ok: true,
     key,
     count: index.tags.length,
     generated_at: index.generated_at,
+  };
+}
+
+async function refreshTagsIndexAfterTagMutation(env) {
+  const result = await regenerateTagsIndex(env);
+  if (result.ok) {
+    return {
+      regenerated: true,
+      key: result.key,
+      count: result.count,
+      generated_at: result.generated_at,
+    };
+  }
+
+  console.error("failed to regenerate tags index after tag mutation", {
+    error: result.error,
+    detail: result.detail || null,
+  });
+  return {
+    regenerated: false,
+    error: result.error,
+  };
+}
+
+async function handleTriggerTagsIndexUpdate(request, env) {
+  const result = await regenerateTagsIndex(env);
+  if (!result.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: result.error,
+        detail: result.detail || null,
+      },
+      500,
+    );
+  }
+
+  return okResponse({
+    message: "tags index regenerated",
+    key: result.key,
+    count: result.count,
+    generated_at: result.generated_at,
   });
 }
 
