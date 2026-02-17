@@ -114,3 +114,20 @@ jobs:
 
           echo "Running: $CMD"
           $CMD
+
+      - name: Notify students after gallery update
+        env:
+          WORKER_ADMIN_BASE_URL: ${{ secrets.WORKER_ADMIN_BASE_URL }}
+          WORKER_ADMIN_API_TOKEN: ${{ secrets.ADMIN_API_TOKEN }}
+        run: |
+          if [ -z "$WORKER_ADMIN_BASE_URL" ] || [ -z "$WORKER_ADMIN_API_TOKEN" ]; then
+            echo "Skip notification: WORKER_ADMIN_BASE_URL or ADMIN_API_TOKEN is not set"
+            exit 0
+          fi
+
+          URL="${WORKER_ADMIN_BASE_URL%/}/admin/notify/students-after-gallery-update"
+          echo "POST $URL"
+          curl -sS -f -X POST "$URL" \
+            -H "Authorization: Bearer $WORKER_ADMIN_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{}' || echo "Warning: failed to trigger post-gallery notifications"

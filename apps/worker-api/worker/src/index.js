@@ -4,6 +4,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
   "Access-Control-Max-Age": "86400",
 };
+const UPLOAD_NOTIFY_PENDING_WORK_PREFIX = "upload_notify:pending:work:";
 
 function withCors(headers = {}) {
   return { ...CORS_HEADERS, ...headers };
@@ -199,6 +200,9 @@ function extractPropertyText(prop) {
   if (type === "rich_text") return extractPlainTextItems(prop.rich_text);
   if (type === "select") return asString(prop.select?.name).trim();
   if (type === "status") return asString(prop.status?.name).trim();
+  if (type === "email") return asString(prop.email).trim();
+  if (type === "phone_number") return asString(prop.phone_number).trim();
+  if (type === "url") return asString(prop.url).trim();
   if (type === "number") return Number.isFinite(prop.number) ? String(prop.number) : "";
   if (type === "formula") {
     const formula = prop.formula;
@@ -476,6 +480,97 @@ function normalizeYmd(value) {
   if (!raw) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   return "";
+}
+
+function isTruthyString(value) {
+  const v = asString(value).trim().toLowerCase();
+  if (!v) return false;
+  return ["1", "true", "yes", "y", "on", "enabled"].includes(v);
+}
+
+function isFalsyString(value) {
+  const v = asString(value).trim().toLowerCase();
+  if (!v) return false;
+  return ["0", "false", "no", "n", "off", "disabled"].includes(v);
+}
+
+function isLikelyEmail(value) {
+  const email = asString(value).trim();
+  if (!email) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email);
+}
+
+function extractEmailCandidate(value) {
+  const raw = asString(value).trim();
+  if (!raw) return "";
+  const match = raw.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/iu);
+  return match ? asString(match[0]).trim() : "";
+}
+
+function parseEmailList(value) {
+  const raw = asString(value).trim();
+  if (!raw) return [];
+  const out = [];
+  const seen = new Set();
+  for (const part of raw.split(/[,\s;、，；]+/u)) {
+    const email = asString(part).trim();
+    if (!isLikelyEmail(email)) continue;
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(email);
+  }
+  return out;
+}
+
+function extractPropertyEmail(prop) {
+  if (!prop || typeof prop !== "object") return "";
+  if (prop.type === "email") {
+    const email = asString(prop.email).trim();
+    return isLikelyEmail(email) ? email : "";
+  }
+  if (prop.type === "rich_text") {
+    const email = extractEmailCandidate(extractPlainTextItems(prop.rich_text));
+    return isLikelyEmail(email) ? email : "";
+  }
+  if (prop.type === "formula") {
+    const formula = prop.formula;
+    if (formula?.type === "string") {
+      const email = extractEmailCandidate(formula.string);
+      return isLikelyEmail(email) ? email : "";
+    }
+  }
+  const fallback = extractEmailCandidate(extractPropertyText(prop));
+  return isLikelyEmail(fallback) ? fallback : "";
+}
+
+function extractBooleanLikeProperty(prop) {
+  if (!prop || typeof prop !== "object") return null;
+  if (prop.type === "checkbox") return Boolean(prop.checkbox);
+  if (prop.type === "formula" && prop.formula?.type === "boolean") {
+    return Boolean(prop.formula.boolean);
+  }
+
+  const text = extractPropertyText(prop).trim().toLowerCase();
+  if (!text) return null;
+  if (isTruthyString(text)) return true;
+  if (isFalsyString(text)) return false;
+
+  if (["希望", "希望する", "可", "許可", "ok", "あり", "有", "有効", "する"].includes(text)) {
+    return true;
+  }
+  if (["不要", "希望しない", "不可", "非許可", "なし", "無", "無効", "しない"].includes(text)) {
+    return false;
+  }
+  return null;
+}
+
+function resolveFromAddress(fromEmail, fromName) {
+  const email = asString(fromEmail).trim();
+  const name = asString(fromName).trim();
+  if (!name) return email;
+  const safeName = name.replaceAll('"', '\\"');
+  return `"${safeName}" <${email}>`;
 }
 
 function sleep(ms) {
@@ -930,6 +1025,690 @@ async function handleNotionSearchStudents(url, env) {
   return okResponse({ results });
 }
 
+async function resolveStudentsDbIdForNotifications(env) {
+  const explicit = getEnvString(env, "NOTION_STUDENTS_DB_ID");
+  if (explicit) return explicit;
+
+  const worksDbId = getEnvString(env, "NOTION_WORKS_DB_ID");
+  if (!worksDbId) return "";
+
+  const worksDbRes = await notionFetch(env, `/databases/${worksDbId}`, { method: "GET" });
+  if (!worksDbRes.ok) return "";
+
+  const worksProps = getWorksProps(env);
+  const authorPropName = pickPropertyName(
+    worksDbRes.data,
+    [worksProps.author, "作者", "生徒", "生徒名"],
+    "",
+  );
+  if (!authorPropName) return "";
+  const authorProp = worksDbRes.data?.properties?.[authorPropName];
+  if (!authorProp || authorProp.type !== "relation") return "";
+  return asString(authorProp?.relation?.database_id).trim();
+}
+
+async function collectStudentNotificationRecipients(env, authorIds) {
+  const ids = uniqueIds(authorIds);
+  if (ids.length === 0) {
+    return {
+      ok: true,
+      recipients: [],
+      skippedNoEmail: 0,
+      skippedOptOut: 0,
+      skippedNotFound: 0,
+      reason: "no_authors",
+    };
+  }
+
+  const studentsDbId = await resolveStudentsDbIdForNotifications(env);
+  if (!studentsDbId) {
+    return {
+      ok: false,
+      recipients: [],
+      skippedNoEmail: 0,
+      skippedOptOut: 0,
+      skippedNotFound: ids.length,
+      reason: "students_db_not_found",
+    };
+  }
+
+  const studentsDbRes = await notionFetch(env, `/databases/${studentsDbId}`, { method: "GET" });
+  if (!studentsDbRes.ok) {
+    return {
+      ok: false,
+      recipients: [],
+      skippedNoEmail: 0,
+      skippedOptOut: 0,
+      skippedNotFound: ids.length,
+      reason: "students_db_fetch_failed",
+    };
+  }
+
+  const studentsDb = studentsDbRes.data;
+  const titleProp = findFirstDatabasePropertyNameByType(studentsDb, "title");
+  const nicknameProp = studentsDb?.properties?.["ニックネーム"] ? "ニックネーム" : "";
+  const realNameProp = studentsDb?.properties?.["本名"] ? "本名" : "";
+
+  const emailOverride = getEnvString(env, "NOTION_STUDENTS_EMAIL_PROP");
+  const emailPreferred = emailOverride
+    ? [emailOverride]
+    : ["メールアドレス", "メール", "Email", "email"];
+  const emailProp = pickPropertyName(studentsDb, emailPreferred, "email");
+
+  const notifyOptInOverride = getEnvString(env, "NOTION_STUDENTS_NOTIFY_OPT_IN_PROP");
+  // Do not infer opt-in property by default.
+  // Reservation/schedule preference fields are often unrelated to gallery upload notifications.
+  const notifyOptInProp = notifyOptInOverride
+    ? pickPropertyName(studentsDb, [notifyOptInOverride], "")
+    : "";
+
+  let skippedNoEmail = 0;
+  let skippedOptOut = 0;
+  let skippedNotFound = 0;
+  const recipients = [];
+
+  const pageResults = await Promise.all(
+    ids.map(async (id) => {
+      const res = await notionFetch(env, `/pages/${id}`, { method: "GET" });
+      return { id, res };
+    }),
+  );
+
+  for (const entry of pageResults) {
+    if (!entry.res.ok) {
+      skippedNotFound += 1;
+      continue;
+    }
+
+    const page = entry.res.data;
+    if (notifyOptInProp) {
+      const optInValue = extractBooleanLikeProperty(getPageProperty(page, notifyOptInProp));
+      if (optInValue === false) {
+        skippedOptOut += 1;
+        continue;
+      }
+    }
+
+    let email = emailProp ? extractPropertyEmail(getPageProperty(page, emailProp)) : "";
+    if (!email) {
+      const props = page?.properties || {};
+      for (const prop of Object.values(props)) {
+        email = extractPropertyEmail(prop);
+        if (email) break;
+      }
+    }
+    if (!email) {
+      skippedNoEmail += 1;
+      continue;
+    }
+
+    const title = titleProp ? extractPropertyText(getPageProperty(page, titleProp)).trim() : "";
+    const parsed = splitStudentNameLabel(title);
+    const realName = (realNameProp ? extractPropertyText(getPageProperty(page, realNameProp)) : "").trim() || parsed.realName;
+    const nicknameRaw =
+      (nicknameProp ? extractPropertyText(getPageProperty(page, nicknameProp)) : "").trim() ||
+      parsed.nickname ||
+      title;
+    const nickname = normalizeNickname(nicknameRaw, realName) || parsed.nickname || realName;
+    const name = nickname || realName || "生徒さま";
+
+    recipients.push({
+      authorId: entry.id,
+      email: email.toLowerCase(),
+      name,
+    });
+  }
+
+  const deduped = [];
+  const seenEmails = new Set();
+  for (const recipient of recipients) {
+    if (seenEmails.has(recipient.email)) continue;
+    seenEmails.add(recipient.email);
+    deduped.push(recipient);
+  }
+
+  return {
+    ok: true,
+    recipients: deduped,
+    skippedNoEmail,
+    skippedOptOut,
+    skippedNotFound,
+    reason: "",
+  };
+}
+
+function escapeHtml(value) {
+  return asString(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function resolveUploadNotificationEntry(env) {
+  const reservationAppUrl = getEnvString(env, "UPLOAD_NOTIFY_RESERVATION_APP_URL");
+  if (reservationAppUrl) {
+    return {
+      url: reservationAppUrl,
+      label: "予約アプリ",
+      guidanceText: "予約アプリにログイン後、ギャラリーをご覧ください。",
+    };
+  }
+  const galleryUrl = getEnvString(env, "UPLOAD_NOTIFY_GALLERY_URL");
+  if (galleryUrl) {
+    return {
+      url: galleryUrl,
+      label: "ギャラリー",
+      guidanceText: "",
+    };
+  }
+  return {
+    url: "",
+    label: "",
+    guidanceText: "",
+  };
+}
+
+function buildUploadNotificationContent(env, payload, recipient) {
+  const title = asString(payload?.title).trim() || "新しい作品";
+  const completedDate = normalizeYmd(payload?.completedDate) || asString(payload?.completedDate).trim();
+  const classroom = asString(payload?.classroom).trim();
+  const imageCount = Array.isArray(payload?.images) ? payload.images.length : 0;
+  const entry = resolveUploadNotificationEntry(env);
+  const subjectOverride = getEnvString(env, "UPLOAD_NOTIFY_SUBJECT");
+  const subject = subjectOverride || `${title} の作品画像を登録しました`;
+  const salutation = `${asString(recipient?.name).trim() || "生徒さま"} 様`;
+
+  const lines = [
+    salutation,
+    "",
+    "生徒作品ギャラリーに、あなたの作品画像を登録しました。",
+    "",
+    `作品名: ${title}`,
+  ];
+  if (completedDate) lines.push(`完成日: ${completedDate}`);
+  if (classroom) lines.push(`教室: ${classroom}`);
+  if (imageCount > 0) lines.push(`画像枚数: ${imageCount}枚`);
+  if (entry.guidanceText) lines.push(entry.guidanceText);
+  if (entry.url) lines.push(`${entry.label}: ${entry.url}`);
+  lines.push("", "このメールは送信専用です。");
+  const text = lines.join("\n");
+
+  const htmlDetails = [`<li><strong>作品名:</strong> ${escapeHtml(title)}</li>`];
+  if (completedDate) htmlDetails.push(`<li><strong>完成日:</strong> ${escapeHtml(completedDate)}</li>`);
+  if (classroom) htmlDetails.push(`<li><strong>教室:</strong> ${escapeHtml(classroom)}</li>`);
+  if (imageCount > 0) htmlDetails.push(`<li><strong>画像枚数:</strong> ${imageCount}枚</li>`);
+  if (entry.url) {
+    htmlDetails.push(
+      `<li><strong>${escapeHtml(entry.label)}:</strong> <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.url)}</a></li>`,
+    );
+  }
+  if (entry.guidanceText) {
+    htmlDetails.push(`<li>${escapeHtml(entry.guidanceText)}</li>`);
+  }
+  const html = [
+    `<p>${escapeHtml(salutation)}</p>`,
+    "<p>生徒作品ギャラリーに、あなたの作品画像を登録しました。</p>",
+    `<ul>${htmlDetails.join("")}</ul>`,
+    "<p>このメールは送信専用です。</p>",
+  ].join("");
+
+  return { subject, text, html };
+}
+
+function normalizeUploadBatchNotificationItems(itemsRaw) {
+  if (!Array.isArray(itemsRaw)) return [];
+
+  const normalized = [];
+  const seen = new Set();
+  for (const raw of itemsRaw) {
+    const title = asString(raw?.title).trim();
+    const completedDate = normalizeYmd(raw?.completedDate) || asString(raw?.completedDate).trim();
+    const classroom = asString(raw?.classroom).trim();
+    const imageCountRaw = Number(raw?.imageCount);
+    const imageCount = Number.isFinite(imageCountRaw) ? Math.max(0, Math.floor(imageCountRaw)) : 0;
+    const authorIds = uniqueIds(Array.isArray(raw?.authorIds) ? raw.authorIds : []);
+    if (authorIds.length === 0) continue;
+
+    const signature = `${title}|${completedDate}|${classroom}|${imageCount}|${authorIds.join(",")}`;
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+
+    normalized.push({
+      title,
+      completedDate,
+      classroom,
+      imageCount,
+      authorIds,
+    });
+  }
+  return normalized;
+}
+
+function buildUploadBatchNotificationContent(env, recipient, works) {
+  const safeWorks = Array.isArray(works) ? works : [];
+  if (safeWorks.length <= 1) {
+    const first = safeWorks[0] || {};
+    return buildUploadNotificationContent(
+      env,
+      {
+        title: first.title,
+        completedDate: first.completedDate,
+        classroom: first.classroom,
+        images: Array.from({ length: Math.max(0, Number(first.imageCount) || 0) }),
+      },
+      recipient,
+    );
+  }
+
+  const salutation = `${asString(recipient?.name).trim() || "生徒さま"} 様`;
+  const entry = resolveUploadNotificationEntry(env);
+  const subjectOverride = getEnvString(env, "UPLOAD_NOTIFY_SUBJECT");
+  const subject = subjectOverride || `${safeWorks.length}件の作品画像を登録しました`;
+
+  const formatWorkLine = (work, index) => {
+    const title = asString(work?.title).trim() || `作品${index + 1}`;
+    const meta = [];
+    if (asString(work?.completedDate).trim()) meta.push(asString(work.completedDate).trim());
+    if (asString(work?.classroom).trim()) meta.push(asString(work.classroom).trim());
+    if (Number.isFinite(Number(work?.imageCount)) && Number(work.imageCount) > 0) {
+      meta.push(`${Math.floor(Number(work.imageCount))}枚`);
+    }
+    if (meta.length === 0) return `- ${title}`;
+    return `- ${title}（${meta.join(" / ")}）`;
+  };
+
+  const lines = [
+    salutation,
+    "",
+    "生徒作品ギャラリーに、あなたの作品画像を登録しました。",
+    `今回の登録件数: ${safeWorks.length}件`,
+    "",
+    ...safeWorks.slice(0, 10).map((work, index) => formatWorkLine(work, index)),
+  ];
+  if (safeWorks.length > 10) lines.push(`- ほか ${safeWorks.length - 10}件`);
+  if (entry.guidanceText) lines.push("", entry.guidanceText);
+  if (entry.url) lines.push("", `${entry.label}: ${entry.url}`);
+  lines.push("", "このメールは送信専用です。");
+  const text = lines.join("\n");
+
+  const htmlWorkItems = safeWorks
+    .slice(0, 10)
+    .map((work, index) => {
+      const title = escapeHtml(asString(work?.title).trim() || `作品${index + 1}`);
+      const meta = [];
+      if (asString(work?.completedDate).trim()) meta.push(escapeHtml(asString(work.completedDate).trim()));
+      if (asString(work?.classroom).trim()) meta.push(escapeHtml(asString(work.classroom).trim()));
+      if (Number.isFinite(Number(work?.imageCount)) && Number(work.imageCount) > 0) {
+        meta.push(`${Math.floor(Number(work.imageCount))}枚`);
+      }
+      if (meta.length === 0) return `<li>${title}</li>`;
+      return `<li>${title}（${meta.join(" / ")}）</li>`;
+    });
+  if (safeWorks.length > 10) {
+    htmlWorkItems.push(`<li>ほか ${safeWorks.length - 10}件</li>`);
+  }
+
+  const html = [
+    `<p>${escapeHtml(salutation)}</p>`,
+    "<p>生徒作品ギャラリーに、あなたの作品画像を登録しました。</p>",
+    `<p>今回の登録件数: ${safeWorks.length}件</p>`,
+    `<ul>${htmlWorkItems.join("")}</ul>`,
+    entry.guidanceText ? `<p>${escapeHtml(entry.guidanceText)}</p>` : "",
+    entry.url
+      ? `<p>${escapeHtml(entry.label)}: <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.url)}</a></p>`
+      : "",
+    "<p>このメールは送信専用です。</p>",
+  ].join("");
+
+  return { subject, text, html };
+}
+
+function getUploadNotificationConfig(env) {
+  const enabledRaw = getEnvString(env, "UPLOAD_NOTIFY_ENABLED");
+  if (isFalsyString(enabledRaw)) {
+    return { enabled: false, reason: "disabled", apiKey: "", from: "", replyTo: "", bcc: [] };
+  }
+
+  const apiKey = getEnvString(env, "UPLOAD_NOTIFY_RESEND_API_KEY");
+  const fromEmail = getEnvString(env, "UPLOAD_NOTIFY_FROM_EMAIL");
+  if (!apiKey || !fromEmail) {
+    return { enabled: false, reason: "not_configured", apiKey: "", from: "", replyTo: "", bcc: [] };
+  }
+  if (!isLikelyEmail(fromEmail)) {
+    return { enabled: false, reason: "invalid_from_email", apiKey: "", from: "", replyTo: "", bcc: [] };
+  }
+
+  const fromName = getEnvString(env, "UPLOAD_NOTIFY_FROM_NAME", "木彫り教室");
+  const replyToRaw = getEnvString(env, "UPLOAD_NOTIFY_REPLY_TO");
+  const replyTo = isLikelyEmail(replyToRaw) ? replyToRaw : "";
+  const bcc = parseEmailList(getEnvString(env, "UPLOAD_NOTIFY_BCC"));
+
+  return {
+    enabled: true,
+    reason: "",
+    apiKey,
+    from: resolveFromAddress(fromEmail, fromName),
+    replyTo,
+    bcc,
+  };
+}
+
+async function sendUploadNotificationWithResend(config, recipientEmail, content) {
+  const payload = {
+    from: config.from,
+    to: [recipientEmail],
+    subject: content.subject,
+    text: content.text,
+    html: content.html,
+  };
+  if (config.replyTo) payload.reply_to = config.replyTo;
+  if (config.bcc.length > 0) payload.bcc = config.bcc;
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`resend_error:${response.status}${detail ? ` ${detail.slice(0, 240)}` : ""}`);
+  }
+}
+
+function buildPendingWorkNotificationItem(workId, payload) {
+  const authorIds =
+    Array.isArray(payload?.authorIds) && payload.authorIds.length > 0
+      ? payload.authorIds
+      : payload?.authorId
+        ? [payload.authorId]
+        : [];
+  const uniqueAuthorIds = uniqueIds(authorIds);
+  const imageCount = Array.isArray(payload?.images) ? payload.images.length : 0;
+  return {
+    workId: asString(workId).trim(),
+    title: asString(payload?.title).trim(),
+    completedDate: normalizeYmd(payload?.completedDate) || asString(payload?.completedDate).trim(),
+    classroom: asString(payload?.classroom).trim(),
+    imageCount: Math.max(0, Number.isFinite(Number(imageCount)) ? Math.floor(Number(imageCount)) : 0),
+    authorIds: uniqueAuthorIds,
+    queuedAt: new Date().toISOString(),
+  };
+}
+
+async function queuePendingWorkNotification(env, workId, payload) {
+  if (!env.STAR_KV) return { queued: false, reason: "kv_not_configured" };
+
+  const item = buildPendingWorkNotificationItem(workId, payload);
+  if (!item.workId) return { queued: false, reason: "missing_work_id" };
+  if (!Array.isArray(item.authorIds) || item.authorIds.length === 0) {
+    return { queued: false, reason: "no_authors" };
+  }
+
+  const key = `${UPLOAD_NOTIFY_PENDING_WORK_PREFIX}${item.workId}`;
+  await env.STAR_KV.put(key, JSON.stringify(item));
+  return { queued: true, reason: "", key };
+}
+
+async function listKvKeysByPrefix(kv, prefix) {
+  const names = [];
+  let cursor = undefined;
+  while (true) {
+    const response = await kv.list({ prefix, cursor, limit: 1000 });
+    const keys = Array.isArray(response?.keys) ? response.keys : [];
+    names.push(...keys.map((entry) => asString(entry?.name)).filter(Boolean));
+    if (response?.list_complete) break;
+    const nextCursor = asString(response?.cursor);
+    if (!nextCursor) break;
+    cursor = nextCursor;
+  }
+  return names;
+}
+
+async function loadPendingWorkNotificationBatch(env) {
+  if (!env.STAR_KV) {
+    return { ok: false, reason: "kv_not_configured", items: [], validKeys: [], invalidKeys: [] };
+  }
+
+  const keys = await listKvKeysByPrefix(env.STAR_KV, UPLOAD_NOTIFY_PENDING_WORK_PREFIX);
+  if (keys.length === 0) {
+    return { ok: true, reason: "no_items", items: [], validKeys: [], invalidKeys: [] };
+  }
+
+  const validKeys = [];
+  const invalidKeys = [];
+  const items = [];
+
+  for (const key of keys) {
+    const raw = await env.STAR_KV.get(key);
+    if (!raw) {
+      invalidKeys.push(key);
+      continue;
+    }
+
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      invalidKeys.push(key);
+      continue;
+    }
+
+    const workId = asString(parsed?.workId).trim();
+    if (!workId) {
+      invalidKeys.push(key);
+      continue;
+    }
+    validKeys.push(key);
+    items.push({
+      title: asString(parsed?.title).trim(),
+      completedDate: normalizeYmd(parsed?.completedDate) || asString(parsed?.completedDate).trim(),
+      classroom: asString(parsed?.classroom).trim(),
+      imageCount: Math.max(0, Number.isFinite(Number(parsed?.imageCount)) ? Math.floor(Number(parsed?.imageCount)) : 0),
+      authorIds: uniqueIds(Array.isArray(parsed?.authorIds) ? parsed.authorIds : []),
+      workId,
+    });
+  }
+
+  return { ok: true, reason: "", items, validKeys, invalidKeys };
+}
+
+async function deleteKvKeys(kv, keys) {
+  if (!kv || !Array.isArray(keys) || keys.length === 0) return;
+  await Promise.all(keys.map((key) => kv.delete(key)));
+}
+
+async function notifyStudentsOnUploadBatch(env, itemsRaw) {
+  const config = getUploadNotificationConfig(env);
+  if (!config.enabled) {
+    return {
+      enabled: false,
+      attempted: false,
+      reason: config.reason,
+      works: 0,
+      recipients: 0,
+      sent: 0,
+      failed: 0,
+      skippedNoEmail: 0,
+      skippedOptOut: 0,
+      skippedNotFound: 0,
+    };
+  }
+
+  const works = normalizeUploadBatchNotificationItems(itemsRaw);
+  if (works.length === 0) {
+    return {
+      enabled: true,
+      attempted: false,
+      reason: "no_items",
+      works: 0,
+      recipients: 0,
+      sent: 0,
+      failed: 0,
+      skippedNoEmail: 0,
+      skippedOptOut: 0,
+      skippedNotFound: 0,
+    };
+  }
+
+  const authorIds = uniqueIds(works.flatMap((work) => work.authorIds || []));
+  if (authorIds.length === 0) {
+    return {
+      enabled: true,
+      attempted: false,
+      reason: "no_authors",
+      works: works.length,
+      recipients: 0,
+      sent: 0,
+      failed: 0,
+      skippedNoEmail: 0,
+      skippedOptOut: 0,
+      skippedNotFound: 0,
+    };
+  }
+
+  const recipientsResult = await collectStudentNotificationRecipients(env, authorIds);
+  if (!recipientsResult.ok) {
+    return {
+      enabled: true,
+      attempted: false,
+      reason: recipientsResult.reason || "recipients_resolve_failed",
+      works: works.length,
+      recipients: 0,
+      sent: 0,
+      failed: 0,
+      skippedNoEmail: recipientsResult.skippedNoEmail || 0,
+      skippedOptOut: recipientsResult.skippedOptOut || 0,
+      skippedNotFound: recipientsResult.skippedNotFound || authorIds.length,
+    };
+  }
+
+  const worksByAuthorId = new Map();
+  for (const work of works) {
+    for (const authorId of work.authorIds) {
+      if (!worksByAuthorId.has(authorId)) worksByAuthorId.set(authorId, []);
+      worksByAuthorId.get(authorId).push(work);
+    }
+  }
+
+  const recipients = (recipientsResult.recipients || []).filter((recipient) => worksByAuthorId.has(recipient.authorId));
+  if (recipients.length === 0) {
+    return {
+      enabled: true,
+      attempted: true,
+      reason: "no_recipients",
+      works: works.length,
+      recipients: 0,
+      sent: 0,
+      failed: 0,
+      skippedNoEmail: recipientsResult.skippedNoEmail,
+      skippedOptOut: recipientsResult.skippedOptOut,
+      skippedNotFound: recipientsResult.skippedNotFound,
+    };
+  }
+
+  let sent = 0;
+  let failed = 0;
+  for (const recipient of recipients) {
+    const worksForRecipient = worksByAuthorId.get(recipient.authorId) || [];
+    if (worksForRecipient.length === 0) continue;
+    const content = buildUploadBatchNotificationContent(env, recipient, worksForRecipient);
+    try {
+      await sendUploadNotificationWithResend(config, recipient.email, content);
+      sent += 1;
+    } catch (error) {
+      failed += 1;
+      console.error("student upload batch notification failed", {
+        authorId: recipient.authorId,
+        works: worksForRecipient.length,
+        message: asString(error?.message),
+      });
+    }
+  }
+
+  return {
+    enabled: true,
+    attempted: true,
+    reason: "",
+    works: works.length,
+    recipients: recipients.length,
+    sent,
+    failed,
+    skippedNoEmail: recipientsResult.skippedNoEmail,
+    skippedOptOut: recipientsResult.skippedOptOut,
+    skippedNotFound: recipientsResult.skippedNotFound,
+  };
+}
+
+async function handleNotifyStudentsAfterGalleryUpdate(env) {
+  if (!env.STAR_KV) return serverError("KV binding not configured (STAR_KV)");
+
+  const loaded = await loadPendingWorkNotificationBatch(env);
+  if (!loaded.ok) {
+    return serverError(`failed to load pending notifications: ${loaded.reason}`);
+  }
+
+  if (loaded.invalidKeys.length > 0) {
+    await deleteKvKeys(env.STAR_KV, loaded.invalidKeys);
+  }
+
+  if (loaded.items.length === 0) {
+    return okResponse({
+      notification: {
+        enabled: true,
+        attempted: false,
+        reason: "no_items",
+        works: 0,
+        recipients: 0,
+        sent: 0,
+        failed: 0,
+        skippedNoEmail: 0,
+        skippedOptOut: 0,
+        skippedNotFound: 0,
+      },
+      pendingWorks: 0,
+      cleanedInvalid: loaded.invalidKeys.length,
+    });
+  }
+
+  let notification;
+  try {
+    notification = await notifyStudentsOnUploadBatch(env, loaded.items);
+  } catch (error) {
+    console.error("student upload post-gallery notification unexpected error", {
+      message: asString(error?.message),
+    });
+    return jsonResponse(
+      {
+        ok: false,
+        error: "failed to send notifications after gallery update",
+        detail: asString(error?.message),
+        pendingWorks: loaded.validKeys.length,
+      },
+      500,
+    );
+  }
+
+  // Keep pending items when notification infra is not configured, so they can be sent later.
+  const keepPendingReasons = new Set(["disabled", "not_configured", "invalid_from_email"]);
+  const shouldDeletePending = !keepPendingReasons.has(asString(notification?.reason).trim());
+  if (shouldDeletePending) {
+    await deleteKvKeys(env.STAR_KV, loaded.validKeys);
+  }
+
+  return okResponse({
+    notification,
+    pendingWorks: shouldDeletePending ? 0 : loaded.validKeys.length,
+    processedWorks: loaded.validKeys.length,
+    cleanedInvalid: loaded.invalidKeys.length,
+    queueCleared: shouldDeletePending,
+  });
+}
+
 async function handleNotionCreateWork(request, env) {
   const worksDbId = getEnvString(env, "NOTION_WORKS_DB_ID");
   if (!worksDbId) return serverError("NOTION_WORKS_DB_ID not configured");
@@ -952,8 +1731,25 @@ async function handleNotionCreateWork(request, env) {
   if (!res.ok) {
     return jsonResponse({ ok: false, error: "failed to create notion page", detail: res.data }, 500);
   }
+  const workId = asString(res.data?.id);
+  const notificationMode = asString(payload.notificationMode).trim().toLowerCase();
+  const shouldQueueNotification = !["skip", "off", "none", "disabled", "false", "0"].includes(notificationMode);
 
-  return okResponse({ id: asString(res.data?.id) }, 201);
+  let notification = {
+    queued: 0,
+    attempted: false,
+    reason: shouldQueueNotification ? "not_queued" : "skipped_by_request",
+  };
+  if (shouldQueueNotification) {
+    const queued = await queuePendingWorkNotification(env, workId, payload);
+    notification = {
+      queued: queued.queued ? 1 : 0,
+      attempted: false,
+      reason: queued.reason || "",
+    };
+  }
+
+  return okResponse({ id: workId, notification }, 201);
 }
 
 async function handleNotionUpdateWork(request, env) {
@@ -2076,6 +2872,10 @@ export default {
 
     if (pathname === "/admin/notion/work" && request.method === "PATCH") {
       return handleNotionUpdateWork(request, env);
+    }
+
+    if (pathname === "/admin/notify/students-after-gallery-update" && request.method === "POST") {
+      return handleNotifyStudentsAfterGalleryUpdate(env);
     }
 
     if (pathname === "/admin/notion/tag" && request.method === "POST") {

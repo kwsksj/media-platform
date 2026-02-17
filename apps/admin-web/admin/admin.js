@@ -2650,7 +2650,10 @@ function validateUploadDraft(draft) {
 	return "";
 }
 
-async function submitSingleUploadDraft(draft, { statusEl, allowInteractiveRecovery = true } = {}) {
+async function submitSingleUploadDraft(
+	draft,
+	{ statusEl, allowInteractiveRecovery = true, notifyStudents = true } = {},
+) {
 	const validationError = validateUploadDraft(draft);
 	if (validationError) throw new Error(validationError);
 
@@ -2690,6 +2693,7 @@ async function submitSingleUploadDraft(draft, { statusEl, allowInteractiveRecove
 			tagIds,
 			ready,
 			images: filesOut.map((file) => ({ url: file.url, name: file.name })),
+			notificationMode: "default",
 		};
 
 		const tryCreate = async () =>
@@ -2738,6 +2742,16 @@ async function submitSingleUploadDraft(draft, { statusEl, allowInteractiveRecove
 					showToast("R2の孤立ファイル削除に失敗しました。手動確認してください。");
 				}
 				throw err;
+			}
+		}
+
+		if (notifyStudents) {
+			const queuedCount = Number(created?.notification?.queued) || 0;
+			const reason = trimText(created?.notification?.reason);
+			if (queuedCount > 0) {
+				showToast("通知はギャラリー更新後に送信されます");
+			} else if (reason && reason !== "skipped_by_request") {
+				showToast(`作品登録は完了しましたが、通知のキュー登録はされていません（${reason}）`);
 			}
 		}
 
@@ -2793,7 +2807,11 @@ async function submitUpload({ all = false } = {}) {
 			const prefix = all ? `[${i + 1}/${targets.length}] ` : "";
 			if (status) status.textContent = `${prefix}${getUploadDraftDisplayTitle(draft, i)} を登録中…`;
 			try {
-				await submitSingleUploadDraft(draft, { statusEl: status, allowInteractiveRecovery: !all });
+				await submitSingleUploadDraft(draft, {
+					statusEl: status,
+					allowInteractiveRecovery: !all,
+					notifyStudents: !all,
+				});
 				success += 1;
 			} catch (err) {
 				console.error(err);
@@ -2818,6 +2836,9 @@ async function submitUpload({ all = false } = {}) {
 			if (status) status.textContent = `一括登録完了: 成功${success}件 / 失敗${failed}件`;
 			showToast(`一括登録を実行しました（成功${success}件 / 失敗${failed}件）`);
 			if (firstFailedDraft) setActiveUploadDraft(firstFailedDraft.id, { saveCurrent: false });
+		}
+		if (success > 0) {
+			showToast("通知はギャラリー更新後にまとめて送信されます（同一生徒は1件に集約）");
 		}
 	} else {
 		if (failed === 0 && success === 1) {
