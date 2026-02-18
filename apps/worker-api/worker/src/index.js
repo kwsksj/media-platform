@@ -1186,71 +1186,77 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function resolveUploadNotificationEntry(env) {
-  const reservationAppUrl = getEnvString(env, "UPLOAD_NOTIFY_RESERVATION_APP_URL");
-  if (reservationAppUrl) {
-    return {
-      url: reservationAppUrl,
-      label: "予約アプリ",
-      guidanceText: "予約アプリにログイン後、ギャラリーをご覧ください。",
-    };
-  }
-  const galleryUrl = getEnvString(env, "UPLOAD_NOTIFY_GALLERY_URL");
-  if (galleryUrl) {
-    return {
-      url: galleryUrl,
-      label: "ギャラリー",
-      guidanceText: "",
-    };
-  }
-  return {
-    url: "",
-    label: "",
-    guidanceText: "",
-  };
+function resolveUploadNotificationLinks(env) {
+  const bookingUrl = getEnvString(env, "UPLOAD_NOTIFY_RESERVATION_APP_URL") || "https://www.kibori-class.net/booking";
+  const publicGalleryUrl = getEnvString(env, "UPLOAD_NOTIFY_GALLERY_URL") || "https://www.kibori-class.net/students-gallery";
+  return { bookingUrl, publicGalleryUrl };
+}
+
+function appendUploadNotificationGuideText(lines, links) {
+  lines.push(
+    "",
+    "【表示名について】",
+    "作品ギャラリーでの生徒表示名は、「よやく・きろく」ページのニックネーム設定を使います。",
+    "ニックネーム未設定の場合は、一般公開ページではランダム名、登録生徒向けページでは登録名の頭文字２文字で表示されます。",
+    "表示名を変更したい場合は、「よやく・きろく」ページでニックネームを設定してください。",
+    "",
+    "【ログインして見る】",
+    "「よやく・きろく」ページでログイン後、【さくひんギャラリー】ボタンから、",
+    "「ご自身の作品」と「みんなの作品」を分けて見られます。",
+    links.bookingUrl,
+    "",
+    "【一般公開ページ（ログイン不要）】",
+    "ログインなしで見られる生徒作品ページはこちらです。",
+    links.publicGalleryUrl,
+  );
+}
+
+function buildUploadNotificationGuideHtml(links) {
+  return [
+    "<p><strong>【表示名について】</strong><br>作品ギャラリーでの生徒表示名は、「よやく・きろく」ページのニックネーム設定を使います。<br>ニックネーム未設定の場合は、一般公開ページではランダム名、登録生徒向けページでは登録名の頭文字２文字で表示されます。<br>表示名を変更したい場合は、「よやく・きろく」ページでニックネームを設定してください。</p>",
+    `<p><strong>【ログインして見る】</strong><br>「よやく・きろく」ページでログイン後、【さくひんギャラリー】ボタンから、<br>「ご自身の作品」と「みんなの作品」を分けて見られます。<br><a href="${escapeHtml(links.bookingUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(links.bookingUrl)}</a></p>`,
+    `<p><strong>【一般公開ページ（ログイン不要）】</strong><br>ログインなしで見られる生徒作品ページはこちらです。<br><a href="${escapeHtml(links.publicGalleryUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(links.publicGalleryUrl)}</a></p>`,
+  ].join("");
 }
 
 function buildUploadNotificationContent(env, payload, recipient) {
   const title = asString(payload?.title).trim() || "新しい作品";
-  const completedDate = normalizeYmd(payload?.completedDate) || asString(payload?.completedDate).trim();
-  const classroom = asString(payload?.classroom).trim();
-  const imageCount = Array.isArray(payload?.images) ? payload.images.length : 0;
-  const entry = resolveUploadNotificationEntry(env);
+  const completedDateRaw = normalizeYmd(payload?.completedDate) || asString(payload?.completedDate).trim();
+  const classroomRaw = asString(payload?.classroom).trim();
+  const imageCountRaw = Array.isArray(payload?.images) ? payload.images.length : 0;
+  const completedDate = completedDateRaw || "-";
+  const classroom = classroomRaw || "-";
+  const imageCount = Number.isFinite(Number(imageCountRaw)) ? Math.max(0, Math.floor(Number(imageCountRaw))) : 0;
+  const links = resolveUploadNotificationLinks(env);
   const subjectOverride = getEnvString(env, "UPLOAD_NOTIFY_SUBJECT");
-  const subject = subjectOverride || `${title} の作品画像を登録しました`;
+  const subject = subjectOverride || `【木彫り教室】「${title}」を生徒作品ギャラリーに掲載しました`;
   const salutation = `${asString(recipient?.name).trim() || "生徒さま"} 様`;
 
   const lines = [
     salutation,
     "",
-    "生徒作品ギャラリーに、あなたの作品画像を登録しました。",
+    "生徒作品ギャラリーに、あなたの作品を掲載しました。",
     "",
     `作品名: ${title}`,
+    `完成日: ${completedDate}`,
+    `教室: ${classroom}`,
+    `枚数: ${imageCount}枚`,
   ];
-  if (completedDate) lines.push(`完成日: ${completedDate}`);
-  if (classroom) lines.push(`教室: ${classroom}`);
-  if (imageCount > 0) lines.push(`画像枚数: ${imageCount}枚`);
-  if (entry.guidanceText) lines.push(entry.guidanceText);
-  if (entry.url) lines.push(`${entry.label}: ${entry.url}`);
+  appendUploadNotificationGuideText(lines, links);
   lines.push("", "このメールは送信専用です。");
   const text = lines.join("\n");
 
-  const htmlDetails = [`<li><strong>作品名:</strong> ${escapeHtml(title)}</li>`];
-  if (completedDate) htmlDetails.push(`<li><strong>完成日:</strong> ${escapeHtml(completedDate)}</li>`);
-  if (classroom) htmlDetails.push(`<li><strong>教室:</strong> ${escapeHtml(classroom)}</li>`);
-  if (imageCount > 0) htmlDetails.push(`<li><strong>画像枚数:</strong> ${imageCount}枚</li>`);
-  if (entry.url) {
-    htmlDetails.push(
-      `<li><strong>${escapeHtml(entry.label)}:</strong> <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.url)}</a></li>`,
-    );
-  }
-  if (entry.guidanceText) {
-    htmlDetails.push(`<li>${escapeHtml(entry.guidanceText)}</li>`);
-  }
+  const htmlDetails = [
+    `<li><strong>作品名:</strong> ${escapeHtml(title)}</li>`,
+    `<li><strong>完成日:</strong> ${escapeHtml(completedDate)}</li>`,
+    `<li><strong>教室:</strong> ${escapeHtml(classroom)}</li>`,
+    `<li><strong>枚数:</strong> ${imageCount}枚</li>`,
+  ];
   const html = [
     `<p>${escapeHtml(salutation)}</p>`,
-    "<p>生徒作品ギャラリーに、あなたの作品画像を登録しました。</p>",
+    "<p>生徒作品ギャラリーに、あなたの作品を掲載しました。</p>",
     `<ul>${htmlDetails.join("")}</ul>`,
+    buildUploadNotificationGuideHtml(links),
     "<p>このメールは送信専用です。</p>",
   ].join("");
 
@@ -1303,33 +1309,28 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
   }
 
   const salutation = `${asString(recipient?.name).trim() || "生徒さま"} 様`;
-  const entry = resolveUploadNotificationEntry(env);
+  const links = resolveUploadNotificationLinks(env);
   const subjectOverride = getEnvString(env, "UPLOAD_NOTIFY_SUBJECT");
-  const subject = subjectOverride || `${safeWorks.length}件の作品画像を登録しました`;
+  const subject = subjectOverride || `【木彫り教室】生徒作品ギャラリーに${safeWorks.length}件の作品を掲載しました`;
 
   const formatWorkLine = (work, index) => {
     const title = asString(work?.title).trim() || `作品${index + 1}`;
-    const meta = [];
-    if (asString(work?.completedDate).trim()) meta.push(asString(work.completedDate).trim());
-    if (asString(work?.classroom).trim()) meta.push(asString(work.classroom).trim());
-    if (Number.isFinite(Number(work?.imageCount)) && Number(work.imageCount) > 0) {
-      meta.push(`${Math.floor(Number(work.imageCount))}枚`);
-    }
-    if (meta.length === 0) return `- ${title}`;
-    return `- ${title}（${meta.join(" / ")}）`;
+    const completedDate = asString(work?.completedDate).trim() || "-";
+    const classroom = asString(work?.classroom).trim() || "-";
+    const imageCount = Number.isFinite(Number(work?.imageCount)) ? Math.max(0, Math.floor(Number(work.imageCount))) : 0;
+    return `- ${title}（${completedDate} / ${classroom} / ${imageCount}枚）`;
   };
 
   const lines = [
     salutation,
     "",
-    "生徒作品ギャラリーに、あなたの作品画像を登録しました。",
-    `今回の登録件数: ${safeWorks.length}件`,
+    "生徒作品ギャラリーに、あなたの作品を掲載しました。",
+    `今回の掲載件数: ${safeWorks.length}件`,
     "",
     ...safeWorks.slice(0, 10).map((work, index) => formatWorkLine(work, index)),
   ];
   if (safeWorks.length > 10) lines.push(`- ほか ${safeWorks.length - 10}件`);
-  if (entry.guidanceText) lines.push("", entry.guidanceText);
-  if (entry.url) lines.push("", `${entry.label}: ${entry.url}`);
+  appendUploadNotificationGuideText(lines, links);
   lines.push("", "このメールは送信専用です。");
   const text = lines.join("\n");
 
@@ -1337,14 +1338,10 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
     .slice(0, 10)
     .map((work, index) => {
       const title = escapeHtml(asString(work?.title).trim() || `作品${index + 1}`);
-      const meta = [];
-      if (asString(work?.completedDate).trim()) meta.push(escapeHtml(asString(work.completedDate).trim()));
-      if (asString(work?.classroom).trim()) meta.push(escapeHtml(asString(work.classroom).trim()));
-      if (Number.isFinite(Number(work?.imageCount)) && Number(work.imageCount) > 0) {
-        meta.push(`${Math.floor(Number(work.imageCount))}枚`);
-      }
-      if (meta.length === 0) return `<li>${title}</li>`;
-      return `<li>${title}（${meta.join(" / ")}）</li>`;
+      const completedDate = escapeHtml(asString(work?.completedDate).trim() || "-");
+      const classroom = escapeHtml(asString(work?.classroom).trim() || "-");
+      const imageCount = Number.isFinite(Number(work?.imageCount)) ? Math.max(0, Math.floor(Number(work.imageCount))) : 0;
+      return `<li>${title}（${completedDate} / ${classroom} / ${imageCount}枚）</li>`;
     });
   if (safeWorks.length > 10) {
     htmlWorkItems.push(`<li>ほか ${safeWorks.length - 10}件</li>`);
@@ -1352,13 +1349,10 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
 
   const html = [
     `<p>${escapeHtml(salutation)}</p>`,
-    "<p>生徒作品ギャラリーに、あなたの作品画像を登録しました。</p>",
-    `<p>今回の登録件数: ${safeWorks.length}件</p>`,
+    "<p>生徒作品ギャラリーに、あなたの作品を掲載しました。</p>",
+    `<p>今回の掲載件数: ${safeWorks.length}件</p>`,
     `<ul>${htmlWorkItems.join("")}</ul>`,
-    entry.guidanceText ? `<p>${escapeHtml(entry.guidanceText)}</p>` : "",
-    entry.url
-      ? `<p>${escapeHtml(entry.label)}: <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(entry.url)}</a></p>`
-      : "",
+    buildUploadNotificationGuideHtml(links),
     "<p>このメールは送信専用です。</p>",
   ].join("");
 
