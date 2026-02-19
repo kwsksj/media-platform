@@ -21,35 +21,36 @@ JST = ZoneInfo("Asia/Tokyo")
 
 # Palette aligned to apps/gallery-web/gallery.html.
 PALETTE = {
-    "bg_top": (245, 241, 236),
-    "bg_bottom": (234, 225, 217),
+    "bg_top": (221, 214, 206),
+    "bg_bottom": (221, 214, 206),
     "paper": (255, 255, 255),
+    "empty_cell": (246, 242, 238),
     "ink": (78, 52, 46),
     "subtle": (120, 90, 78),
     "muted": (161, 136, 127),
     "line": (211, 194, 185),
     "line_light": (232, 221, 214),
-    "accent": (200, 111, 52),
-    "accent_2": (90, 140, 54),
-    "sun_bg": (255, 246, 236),
-    "sat_bg": (243, 249, 241),
+    "accent": (191, 102, 43),
+    "accent_2": (74, 128, 49),
+    "sun_bg": (250, 236, 220),
+    "sat_bg": (231, 243, 229),
 }
 
 WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
 
 # Classroom colors aligned with reservation app palette.
 CLASSROOM_CARD_STYLES = {
-    "tokyo": {"fill": (236, 136, 141), "text": (255, 255, 255)},
-    "tsukuba": {"fill": (110, 193, 170), "text": (255, 255, 255)},
-    "numazu": {"fill": (110, 176, 221), "text": (255, 255, 255)},
-    "default": {"fill": (166, 176, 189), "text": (255, 255, 255)},
+    "tokyo": {"fill": (233, 131, 136), "text": (255, 255, 255)},
+    "tsukuba": {"fill": (106, 189, 166), "text": (255, 255, 255)},
+    "numazu": {"fill": (106, 172, 217), "text": (255, 255, 255)},
+    "default": {"fill": (162, 173, 186), "text": (255, 255, 255)},
 }
 
 VENUE_BADGE_STYLES = {
-    "浅草橋": {"fill": (237, 152, 98), "text": (255, 255, 255)},
-    "東池袋": {"fill": (196, 120, 209), "text": (255, 255, 255)},
-    "複数会場": {"fill": (145, 153, 169), "text": (255, 255, 255)},
-    "default": {"fill": (145, 153, 169), "text": (255, 255, 255)},
+    "浅草橋": {"fill": (255, 255, 255), "text": (244, 139, 75)},
+    "東池袋": {"fill": (255, 255, 255), "text": (196, 120, 209)},
+    "複数会場": {"fill": (255, 255, 255), "text": (145, 153, 169)},
+    "default": {"fill": (255, 255, 255), "text": (145, 153, 169)},
 }
 
 NIGHT_BADGE_STYLE = {
@@ -398,17 +399,17 @@ def render_monthly_schedule_image(
 
     font_paths = _resolve_required_font_paths(config)
     title_fonts = _load_font_set(font_paths, size=max(72, width // 17), bold=True)
-    month_fonts = _load_font_set(font_paths, size=max(40, width // 32), bold=True)
+    month_fonts = _load_font_set(font_paths, size=max(64, width // 20), bold=True)
     weekday_fonts = _load_font_set(font_paths, size=max(28, width // 50), bold=True)
     day_fonts = _load_font_set(font_paths, size=max(38, width // 32), bold=True)
-    classroom_fonts = _load_font_set(font_paths, size=max(30, width // 44), bold=True)
+    classroom_fonts = _load_font_set(font_paths, size=max(33, width // 39), bold=True)
     venue_badge_fonts = _load_font_set(font_paths, size=max(22, width // 62), bold=True)
-    time_fonts = _load_font_set(font_paths, size=max(18, width // 80), bold=True)
-    beginner_label_fonts = _load_font_set(font_paths, size=max(17, width // 82), bold=True)
+    time_fonts = _load_font_set(font_paths, size=max(25, width // 58), bold=True)
+    beginner_label_fonts = _load_font_set(font_paths, size=max(22, width // 64), bold=True)
     hidden_fonts = _load_font_set(font_paths, size=max(17, width // 82), bold=True)
     night_badge_fonts = _load_font_set(font_paths, size=max(18, width // 74), bold=True)
 
-    margin = max(44, width // 28)
+    margin = max(24, width // 56)
     title_text = "川崎誠二 木彫り教室"
     month_text = f"{year}年 {month}月"
     title_w = _mixed_text_width(draw, title_text, title_fonts)
@@ -425,25 +426,37 @@ def render_monthly_schedule_image(
     month_y = header_bottom - month_h
 
     _draw_mixed_text(draw, (title_x, title_y), title_text, title_fonts, fill=PALETTE["ink"])
-    _draw_mixed_text(draw, (month_x, month_y), month_text, month_fonts, fill=PALETTE["subtle"])
+    _draw_mixed_text(draw, (month_x, month_y), month_text, month_fonts, fill=PALETTE["ink"])
 
-    week_top = header_bottom + max(20, height // 78)
-    grid_top = week_top + max(36, height // 48)
+    week_top = header_bottom + max(18, height // 84)
+    week_height = max(46, height // 52)
     grid_bottom = height - margin
 
     month_matrix = calendar.Calendar(firstweekday=0).monthdayscalendar(year, month)
     row_count = len(month_matrix)
     col_gap = max(8, width // 192)
-    row_gap = max(8, height // 240)
+    row_gap = max(6, height // 320)
+    grid_top = week_top + week_height + row_gap
     grid_width = width - margin * 2
-    cell_width = int((grid_width - col_gap * 6) / 7)
+    usable_grid_width = max(7, grid_width - col_gap * 6)
+    cell_width_base = usable_grid_width // 7
+    cell_width_remainder = usable_grid_width % 7
+    cell_widths = [
+        cell_width_base + (1 if col < cell_width_remainder else 0)
+        for col in range(7)
+    ]
     grid_height = grid_bottom - grid_top
     cell_height = int((grid_height - row_gap * (row_count - 1)) / max(1, row_count))
+    col_lefts: list[int] = []
+    cursor_x = margin
+    for col in range(7):
+        col_lefts.append(cursor_x)
+        cursor_x += cell_widths[col] + col_gap
 
     for col, label in enumerate(WEEKDAY_LABELS):
-        x = margin + col * (cell_width + col_gap)
+        x = col_lefts[col]
         y = week_top
-        week_rect = (x, y, x + cell_width, y + max(26, height // 72))
+        week_rect = (x, y, x + cell_widths[col], y + week_height)
         fill = PALETTE["paper"]
         text_color = PALETTE["subtle"]
         if col == 5:
@@ -454,10 +467,8 @@ def render_monthly_schedule_image(
             text_color = PALETTE["accent"]
         draw.rounded_rectangle(
             week_rect,
-            radius=max(12, width // 128),
+            radius=max(14, width // 110),
             fill=fill,
-            outline=PALETTE["line_light"],
-            width=1,
         )
         _draw_centered_mixed_text(draw, week_rect, label, weekday_fonts, text_color)
 
@@ -469,9 +480,9 @@ def render_monthly_schedule_image(
 
     for row_index, week in enumerate(month_matrix):
         for col_index, day_num in enumerate(week):
-            x1 = margin + col_index * (cell_width + col_gap)
+            x1 = col_lefts[col_index]
             y1 = grid_top + row_index * (cell_height + row_gap)
-            x2 = x1 + cell_width
+            x2 = x1 + cell_widths[col_index]
             y2 = y1 + cell_height
             rect = (x1, y1, x2, y2)
 
@@ -481,7 +492,7 @@ def render_monthly_schedule_image(
             elif col_index == 6:
                 cell_fill = PALETTE["sun_bg"]
             if day_num == 0:
-                cell_fill = tuple(int(c * 0.96) for c in PALETTE["line_light"])
+                cell_fill = PALETTE["empty_cell"]
 
             draw.rounded_rectangle(
                 rect,
@@ -500,7 +511,7 @@ def render_monthly_schedule_image(
 
             _draw_mixed_text(
                 draw,
-                (x1 + 14, y1 + 10),
+                (x1 + 14, y1 + 6),
                 str(day_num),
                 day_fonts,
                 fill=day_color,
@@ -552,17 +563,7 @@ def default_schedule_filename(year: int, month: int, mime_type: str = "image/jpe
 
 
 def _create_gradient_background(width: int, height: int) -> Image.Image:
-    image = Image.new("RGB", (width, height), color=PALETTE["bg_top"])
-    draw = ImageDraw.Draw(image)
-
-    for y in range(height):
-        t = y / max(1, height - 1)
-        r = int(PALETTE["bg_top"][0] * (1 - t) + PALETTE["bg_bottom"][0] * t)
-        g = int(PALETTE["bg_top"][1] * (1 - t) + PALETTE["bg_bottom"][1] * t)
-        b = int(PALETTE["bg_top"][2] * (1 - t) + PALETTE["bg_bottom"][2] * t)
-        draw.line((0, y, width, y), fill=(r, g, b))
-
-    return image
+    return Image.new("RGB", (width, height), color=PALETTE["bg_top"])
 
 
 def _draw_day_events(
@@ -584,35 +585,30 @@ def _draw_day_events(
     if not cards:
         return
 
-    start_x = x1 + 8
-    start_y = y1 + max(62, day_number_height + 26)
-    max_width = (x2 - x1) - 16
-    available_h = max(0, y2 - start_y - 8)
+    cell_margin_x = 8
+    cell_margin_bottom = 6
+    start_x = x1 + cell_margin_x
+    start_y_min = y1 + max(50, day_number_height + 16)
+    max_width = (x2 - x1) - cell_margin_x * 2
 
     classroom_h = _mixed_font_height(draw, classroom_fonts)
-    line_h = _mixed_font_height(draw, time_fonts) + 4
-    title_to_time_gap = 10
-    beginner_gap = 8
+    line_h = _mixed_font_height(draw, time_fonts) + 3
+    title_to_time_gap = 8
+    beginner_gap = 6
     beginner_heading_h = _mixed_font_height(draw, beginner_label_fonts)
-    base_card_h = max(96, classroom_h + title_to_time_gap + line_h * 2 + 26)
+    base_card_h = max(90, classroom_h + title_to_time_gap + line_h * 2 + 20)
     beginner_extra_h = beginner_gap + beginner_heading_h + line_h
     card_gap = 6
-
-    def _take_visible(card_height: int) -> list[DayCard]:
-        slot_h = card_height + card_gap
-        max_cards = max(1, available_h // max(1, slot_h))
-        visible = cards[:max_cards]
-        if not visible and cards:
-            visible = [cards[0]]
-        return visible
-
-    visible_cards = _take_visible(base_card_h)
-    has_beginner_block = any(_build_fixed_time_rows(card)[1] for card in visible_cards)
-    card_h = base_card_h + (beginner_extra_h if has_beginner_block else 0)
-    visible_cards = _take_visible(card_h)
-    has_beginner_block = any(_build_fixed_time_rows(card)[1] for card in visible_cards)
-    card_h = base_card_h + (beginner_extra_h if has_beginner_block else 0)
-    visible_cards = _take_visible(card_h)
+    card_h = base_card_h + beginner_extra_h
+    day_available_h = max(0, y2 - start_y_min - cell_margin_bottom)
+    slot_h = card_h + card_gap
+    max_cards = max(1, (day_available_h + card_gap) // max(1, slot_h))
+    visible_cards = cards[:max_cards]
+    if not visible_cards and cards:
+        visible_cards = [cards[0]]
+    has_beginner_block = True
+    used_h = len(visible_cards) * card_h + max(0, len(visible_cards) - 1) * card_gap
+    start_y = max(start_y_min, y2 - cell_margin_bottom - used_h)
     slot_h = card_h + card_gap
 
     y = start_y
@@ -626,9 +622,12 @@ def _draw_day_events(
             fill=class_style["fill"],
         )
 
-        inner_x = card_rect[0] + 10
-        inner_right = card_rect[2] - 10
-        class_y = card_rect[1] + 8
+        # Keep a slightly wider left inset for classroom title, while tightening
+        # overall horizontal padding for time lines.
+        inner_x = card_rect[0] + 6
+        inner_right = card_rect[2] - 6
+        class_x = inner_x + 2
+        class_y = card_rect[1] + 4
 
         classroom_text = _short_classroom_name(card.classroom) or "未定"
         venue_badge: tuple[str, dict[str, tuple[int, int, int]], ScheduleFontSet, int, int] | None = None
@@ -640,14 +639,14 @@ def _draw_day_events(
             badge_pad_top = 1
             badge_pad_bottom = 4
             badge_h = _mixed_font_height(draw, fit_badge_fonts) + badge_pad_top + badge_pad_bottom
-            badge_w = _mixed_text_width(draw, card.venue, fit_badge_fonts) + 16
-            badge_w = min(badge_w, max_badge_text_w + 16)
-            class_right = max(inner_x + 12, inner_right - badge_w - 8)
+            badge_w = _mixed_text_width(draw, card.venue, fit_badge_fonts) + 12
+            badge_w = min(badge_w, max_badge_text_w + 12)
+            class_right = max(class_x + 12, inner_right - badge_w - 8)
             venue_badge = (card.venue, venue_style, fit_badge_fonts, badge_w, badge_h)
 
-        class_area_w = max(10, class_right - inner_x)
+        class_area_w = max(10, class_right - class_x)
         fit_classroom_fonts = _fit_font_set_to_width(draw, classroom_text, classroom_fonts, class_area_w)
-        _draw_mixed_text(draw, (inner_x, class_y), classroom_text, fit_classroom_fonts, fill=class_style["text"])
+        _draw_mixed_text(draw, (class_x, class_y), classroom_text, fit_classroom_fonts, fill=class_style["text"])
         class_h = _mixed_font_height(draw, fit_classroom_fonts)
         class_bottom = class_y + class_h
 
@@ -661,18 +660,19 @@ def _draw_day_events(
             )
             _draw_mixed_text(
                 draw,
-                (badge_rect[0] + 8, badge_rect[1]),
+                (badge_rect[0] + 6, badge_rect[1]),
                 badge_text,
                 fit_badge_fonts,
                 fill=badge_style["text"],
             )
 
         night_time_indexes = _resolve_night_time_line_indexes(card, lines)
+        regular_time_fonts_for_card: ScheduleFontSet | None = None
         line_y = class_y + class_h + title_to_time_gap
         for index, value in enumerate(lines):
             line_x = inner_x
             line_area_w = max(10, inner_right - line_x)
-            if value and index in night_time_indexes:
+            if index in night_time_indexes:
                 badge_text = "夜"
                 fit_night_fonts = _fit_font_set_to_width(draw, badge_text, night_badge_fonts, max(16, line_area_w // 3))
                 night_pad_top = 1
@@ -694,6 +694,7 @@ def _draw_day_events(
 
             if value:
                 fit_line_fonts = _fit_font_set_to_width(draw, value, time_fonts, line_area_w)
+                regular_time_fonts_for_card = _pick_smaller_font_set(regular_time_fonts_for_card, fit_line_fonts)
                 _draw_mixed_text(
                     draw,
                     (line_x, line_y),
@@ -710,13 +711,19 @@ def _draw_day_events(
                 fit_beginner_title_fonts = _fit_font_set_to_width(draw, beginner_title, beginner_label_fonts, max(10, inner_right - inner_x))
                 _draw_mixed_text(
                     draw,
-                    (inner_x, line_y),
+                    (class_x, line_y),
                     beginner_title,
                     fit_beginner_title_fonts,
                     fill=class_style["text"],
                 )
                 line_y += line_h
-                fit_beginner_time_fonts = _fit_font_set_to_width(draw, beginner_time, time_fonts, max(10, inner_right - inner_x))
+                beginner_base_fonts = regular_time_fonts_for_card or time_fonts
+                fit_beginner_time_fonts = _fit_font_set_to_width(
+                    draw,
+                    beginner_time,
+                    beginner_base_fonts,
+                    max(10, inner_right - inner_x),
+                )
                 _draw_mixed_text(
                     draw,
                     (inner_x, line_y),
@@ -779,7 +786,13 @@ def _build_fixed_time_rows(card: DayCard) -> tuple[list[str], str]:
     morning: list[str] = []
     afternoon: list[str] = []
     unknown: list[str] = []
+    night_values: list[str] = []
+    non_night_values: list[str] = []
     for value in values:
+        if _is_night_time_text(value):
+            night_values.append(value)
+        else:
+            non_night_values.append(value)
         hour = _extract_start_hour_from_time_text(value)
         if hour is None:
             unknown.append(value)
@@ -788,12 +801,28 @@ def _build_fixed_time_rows(card: DayCard) -> tuple[list[str], str]:
         else:
             afternoon.append(value)
 
-    line1 = morning[0] if morning else ""
-    line2 = afternoon[0] if afternoon else ""
-    if not line1 and unknown:
-        line1 = unknown[0]
-    if not line2 and len(unknown) >= 2:
-        line2 = unknown[1]
+    non_night_morning = [value for value in morning if value in non_night_values]
+    non_night_afternoon = [value for value in afternoon if value in non_night_values]
+    non_night_unknown = [value for value in unknown if value in non_night_values]
+
+    line1 = non_night_morning[0] if non_night_morning else ""
+    if not line1 and non_night_afternoon:
+        line1 = non_night_afternoon[0]
+    if not line1 and non_night_unknown:
+        line1 = non_night_unknown[0]
+    if not line1 and non_night_values:
+        line1 = non_night_values[0]
+
+    line2 = night_values[0] if night_values else ""
+    if not line2:
+        for candidate in [*non_night_afternoon, *non_night_unknown, *non_night_values]:
+            if candidate and candidate != line1:
+                line2 = candidate
+                break
+
+    if not line1 and line2 and _is_night_time_text(line2):
+        line1 = ""
+
     beginner_time = beginner_values[0] if beginner_values else ""
     return [line1, line2], beginner_time
 
@@ -934,12 +963,18 @@ def _resolve_night_time_line_indexes(
     if not card.has_night:
         return set()
 
+    if len(lines) >= 2 and lines[1] and _is_night_time_text(lines[1]):
+        # Keep badge on first time row while showing night time on second row.
+        return {0}
+
     explicit = {index for index, value in enumerate(lines) if value and _is_night_time_text(value)}
     if explicit:
+        if 0 in explicit:
+            return {0}
         return explicit
 
     if len(lines) >= 2 and lines[1]:
-        return {1}
+        return {0}
     if lines and lines[0]:
         return {0}
     return set()
@@ -956,6 +991,16 @@ def _is_night_time_text(value: str) -> bool:
         if 0 <= hour <= 23:
             return hour >= 17
     return False
+
+
+def _pick_smaller_font_set(current: ScheduleFontSet | None, candidate: ScheduleFontSet) -> ScheduleFontSet:
+    if current is None:
+        return candidate
+    current_size = int(getattr(current.num_font, "size", 0))
+    candidate_size = int(getattr(candidate.num_font, "size", 0))
+    if candidate_size < current_size:
+        return candidate
+    return current
 
 
 def _get_classroom_card_style(classroom: str) -> dict[str, tuple[int, int, int]]:
@@ -1149,10 +1194,11 @@ def _draw_centered_mixed_text(
     color: tuple[int, int, int],
 ) -> None:
     x1, y1, x2, y2 = rect
-    w = _mixed_text_width(draw, text, fonts)
-    h = _mixed_font_height(draw, fonts)
-    x = x1 + ((x2 - x1) - w) / 2
-    y = y1 + ((y2 - y1) - h) / 2
+    left, top, right, bottom = _mixed_text_bbox(draw, text, fonts)
+    w = max(0.0, right - left)
+    h = max(0.0, bottom - top)
+    x = x1 + ((x2 - x1) - w) / 2 - left
+    y = y1 + ((y2 - y1) - h) / 2 - top
     _draw_mixed_text(draw, (x, y), text, fonts, fill=color)
 
 
@@ -1212,6 +1258,36 @@ def _mixed_text_width(draw: ImageDraw.ImageDraw, text: str, fonts: ScheduleFontS
         font = fonts.num_font if is_ascii else fonts.jp_font
         width += _text_width(draw, chunk, font)
     return width
+
+
+def _mixed_text_bbox(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    fonts: ScheduleFontSet,
+) -> tuple[float, float, float, float]:
+    left: float | None = None
+    top: float | None = None
+    right: float | None = None
+    bottom: float | None = None
+    x = 0.0
+    for chunk, is_ascii in _split_text_runs(text):
+        font = fonts.num_font if is_ascii else fonts.jp_font
+        y_pos = float(fonts.num_baseline_offset) if is_ascii else 0.0
+        c_left, c_top, c_right, c_bottom = draw.textbbox((x, y_pos), chunk, font=font)
+        if left is None:
+            left = float(c_left)
+            top = float(c_top)
+            right = float(c_right)
+            bottom = float(c_bottom)
+        else:
+            left = min(left, float(c_left))
+            top = min(top, float(c_top))
+            right = max(right, float(c_right))
+            bottom = max(bottom, float(c_bottom))
+        x += float(_text_width(draw, chunk, font))
+    if left is None or top is None or right is None or bottom is None:
+        return (0.0, 0.0, 0.0, 0.0)
+    return (left, top, right, bottom)
 
 
 def _mixed_font_height(draw: ImageDraw.ImageDraw, fonts: ScheduleFontSet) -> int:
