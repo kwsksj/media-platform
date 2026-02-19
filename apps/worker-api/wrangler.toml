@@ -27,11 +27,13 @@ R2_PUBLIC_BASE_URL = "https://pub-c80f2f91aa634266b2e7178229073f65.r2.dev"
 # インデックスJSON（URLを指定する場合）
 # PARTI/CIPANTS_INDEX_URL 等を未設定にすると、R2（GALLERY_R2）から *KEY のオブジェクトを読みます。
 #PARTICIPANTS_INDEX_URL = "https://example.com/participants_index.json"
+#SCHEDULE_INDEX_URL = "https://example.com/schedule_index.json"
 #STUDENTS_INDEX_URL = "https://example.com/students_index.json"
 #TAGS_INDEX_URL = "https://example.com/tags_index.json"
 
 # R2から読む場合のキー（任意）
 #PARTICIPANTS_INDEX_KEY = "participants_index.json"
+#SCHEDULE_INDEX_KEY = "schedule_index.json"
 #STUDENTS_INDEX_KEY = "students_index.json"
 #TAGS_INDEX_KEY = "tags_index.json"
 
@@ -48,10 +50,13 @@ NOTION_WORKS_AUTHOR_PROP = "作者"
 
 # 参加者/生徒/タグインデックスのR2キー（任意）
 PARTICIPANTS_INDEX_KEY = "participants_index.json"
+SCHEDULE_INDEX_KEY = "schedule_index.json"
 STUDENTS_INDEX_KEY = "students_index.json"
 TAGS_INDEX_KEY = "tags_index.json"
 # participants_index push受信用のBearerは secret で設定:
 #   npx wrangler secret put UPLOAD_UI_PARTICIPANTS_INDEX_PUSH_TOKEN
+# schedule_index push受信用のBearerは secret で設定（任意。未設定時はparticipants用を流用）:
+#   npx wrangler secret put UPLOAD_UI_SCHEDULE_INDEX_PUSH_TOKEN
 # 管理API保護用のBearerは secret で設定:
 #   npx wrangler secret put ADMIN_API_TOKEN
 

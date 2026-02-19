@@ -288,7 +288,7 @@ GitHub リポジトリ → Settings → Secrets and variables → Actions
 | `R2_PUBLIC_URL`                 | パブリックURL                   |
 | `NOTION_TOKEN`                  | Notion Integration Token        |
 | `NOTION_DATABASE_ID`            | データベースID                  |
-| `MONTHLY_SCHEDULE_JSON_KEY`（Variable推奨） | 月次日程JSONのR2キー（例: `participants_index.json`） |
+| `MONTHLY_SCHEDULE_JSON_KEY`（Variable推奨） | 月次日程JSONのR2キー（例: `schedule_index.json`） |
 | `MONTHLY_SCHEDULE_SOURCE`（Variable推奨） | `r2-json`（既定）/ `json` / `notion` |
 
 ※ Threads App ID/Secret は Instagram と同じ Meta アプリを使用する場合、`INSTAGRAM_APP_ID`/`INSTAGRAM_APP_SECRET` と同じ値になります。

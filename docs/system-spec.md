@@ -222,7 +222,7 @@ CLI は `auto-post` を中心に運用し、日常実行は `Makefile` を優先
 ### ワークフロー: `monthly-schedule.yml`（Monthly Schedule Post）
 
 - **スケジュール**: 毎月25日 16:00 JST (07:00 UTC)
-- **既定データソース**: R2上のJSON（`participants_index.json` 等）
+- **既定データソース**: R2上のJSON（`schedule_index.json` など）
 - **手動実行オプション**:
   - `year` / `month`: 対象年月（省略時は `target` を使用）
   - `target`: current / next

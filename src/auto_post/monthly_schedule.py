@@ -96,14 +96,14 @@ class ScheduleRenderConfig:
 class ScheduleJsonSourceConfig:
     """JSON source config (R2 key or direct URL)."""
 
-    key: str = "participants_index.json"
+    key: str = "schedule_index.json"
     url: str = ""
     timezone: str = "Asia/Tokyo"
 
     @classmethod
     def from_env(cls) -> "ScheduleJsonSourceConfig":
         return cls(
-            key=os.environ.get("MONTHLY_SCHEDULE_JSON_KEY", "participants_index.json").strip() or "participants_index.json",
+            key=os.environ.get("MONTHLY_SCHEDULE_JSON_KEY", "schedule_index.json").strip() or "schedule_index.json",
             url=os.environ.get("MONTHLY_SCHEDULE_JSON_URL", "").strip(),
             timezone=os.environ.get("MONTHLY_SCHEDULE_TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo",
         )
