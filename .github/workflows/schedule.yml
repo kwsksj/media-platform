@@ -30,6 +30,11 @@ on:
         required: false
         type: number
         default: 1
+      year_start_limit:
+        description: "Number of year-start posts per platform (from Jan 1)"
+        required: false
+        type: number
+        default: 1
       dry_run:
         description: "Dry run (preview only, no actual posting)"
         required: false
@@ -104,6 +109,10 @@ jobs:
 
           if [ -n "${{ github.event.inputs.catchup_limit }}" ]; then
             CMD="$CMD --catchup-limit ${{ github.event.inputs.catchup_limit }}"
+          fi
+
+          if [ -n "${{ github.event.inputs.year_start_limit }}" ]; then
+            CMD="$CMD --year-start-limit ${{ github.event.inputs.year_start_limit }}"
           fi
 
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then

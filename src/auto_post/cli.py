@@ -240,8 +240,21 @@ def main(ctx, env_file: Path | None, debug: bool):
 )
 @click.option("--basic-limit", "-b", default=2, help="Number of basic posts per platform (default: 2)")
 @click.option("--catchup-limit", "-c", default=1, help="Number of catch-up posts per platform (default: 1)")
+@click.option(
+    "--year-start-limit",
+    default=1,
+    help="Number of year-start posts per platform (from Jan 1 of target year, default: 1)",
+)
 @click.pass_context
-def post(ctx, date: datetime | None, dry_run: bool, platform: str, basic_limit: int, catchup_limit: int):
+def post(
+    ctx,
+    date: datetime | None,
+    dry_run: bool,
+    platform: str,
+    basic_limit: int,
+    catchup_limit: int,
+    year_start_limit: int,
+):
     """Run the daily posting job."""
     config = Config.load(ctx.obj.get("env_file"))
     poster = Poster(config)
@@ -260,6 +273,7 @@ def post(ctx, date: datetime | None, dry_run: bool, platform: str, basic_limit: 
         platforms=platforms,
         basic_limit=basic_limit,
         catchup_limit=catchup_limit,
+        year_start_limit=year_start_limit,
     )
 
     click.echo("\n" + "=" * 30)

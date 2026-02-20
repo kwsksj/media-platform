@@ -149,6 +149,9 @@ CLI は `auto-post` を中心に運用し、日常実行は `Makefile` を優先
     - 「当該SNSで未投稿」の作品（完成日順）
     - 1日最大 2件（既定値。`--basic-limit` で変更可能）
     - ※ X (Basic Tier) は1ツイートにつき画像1枚のみ（Notionの画像リストの先頭を使用）
+4. **Priority 4: 年初投稿（今年1月起点）**
+    - 「当該SNSで未投稿」かつ「完成日が対象年の1月1日以降」の作品（完成日順）
+    - 1日最大 1件（既定値。`--year-start-limit` で変更可能）
 
 ※ 画像処理は全プラットフォームの選定作品をまとめて行うため効率的です。
 
@@ -201,6 +204,7 @@ CLI は `auto-post` を中心に運用し、日常実行は `Makefile` を優先
   - `platform`: プラットフォーム選択 (all/instagram/x/threads)
   - `basic_limit`: 基本投稿件数
   - `catchup_limit`: キャッチアップ件数
+  - `year_start_limit`: 年初投稿件数（対象年1月1日以降）
   - `dry_run`: dry-run 実行
 
 ### ワークフロー: `gallery-export.yml`（Daily Gallery Export）

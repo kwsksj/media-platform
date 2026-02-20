@@ -830,3 +830,60 @@ class NotionDB:
         )
 
         return [self._parse_page(page) for page in response["results"]]
+
+    def get_year_start_candidates(
+        self,
+        target_platform: str,
+        start_date: datetime,
+        limit: int = 10,
+    ) -> list[WorkItem]:
+        """
+        Get candidates from a given start date (e.g. Jan 1st of current year).
+        Condition: Unposted on target_platform AND 完成日 >= start_date.
+        """
+        platform_prop_map = {
+            "instagram": "Instagram投稿済",
+            "x": "X投稿済",
+            "threads": "Threads投稿済",
+        }
+
+        target_prop = platform_prop_map.get(target_platform)
+        if not target_prop:
+            logger.warning(f"Invalid target platform: {target_platform}")
+            return []
+
+        filters = [
+            {
+                "property": target_prop,
+                "checkbox": {"equals": False}
+            },
+            {
+                "property": "投稿予定日",
+                "date": {"is_empty": True},
+            },
+            {
+                "property": "スキップ",
+                "checkbox": {"equals": False}
+            },
+            {
+                "property": "完成日",
+                "date": {"on_or_after": start_date.strftime("%Y-%m-%d")},
+            },
+        ]
+
+        response = self.client.request(
+            path=f"databases/{self.database_id}/query",
+            method="POST",
+            body={
+                "filter": {
+                    "and": filters
+                },
+                "sorts": [
+                    {"property": "完成日", "direction": "ascending"},
+                    {"timestamp": "created_time", "direction": "ascending"}
+                ],
+                "page_size": limit,
+            },
+        )
+
+        return [self._parse_page(page) for page in response["results"]]
