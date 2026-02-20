@@ -201,6 +201,32 @@ class Poster:
                 )
                 time.sleep(wait_seconds)
 
+    def _add_candidates_to_queue(
+        self,
+        queue: list[str],
+        unique_works: dict[str, WorkItem],
+        candidates: list[WorkItem],
+        limit: int,
+    ) -> int:
+        """
+        Add up to limit candidates into queue, skipping duplicated page IDs.
+        Returns number of newly added items.
+        """
+        if limit <= 0:
+            return 0
+
+        added_count = 0
+        for work in candidates:
+            if added_count >= limit:
+                break
+            if work.page_id in queue:
+                continue
+            queue.append(work.page_id)
+            unique_works[work.page_id] = work
+            added_count += 1
+
+        return added_count
+
     def run_daily_post(
         self,
         target_date: datetime | None = None,
@@ -273,16 +299,12 @@ class Poster:
             # Fetch candidates (fetch a bit more to allow for skipping duplicates)
             catchup_candidates = self.notion.get_catchup_candidates(p, other_platforms, limit=5)
 
-            added_count = 0
-            for work in catchup_candidates:
-                if work.page_id in platform_queues[p]:
-                    continue # Already selected (e.g. by Date Designated)
-
-                platform_queues[p].append(work.page_id)
-                unique_works[work.page_id] = work
-                added_count += 1
-                if added_count >= catchup_limit:
-                    break
+            added_count = self._add_candidates_to_queue(
+                queue=platform_queues[p],
+                unique_works=unique_works,
+                candidates=catchup_candidates,
+                limit=catchup_limit,
+            )
 
             if added_count > 0:
                 logger.info(f"[{p}] Added {added_count} catch-up posts")
@@ -290,16 +312,12 @@ class Poster:
             # 3. Basic Post (Limit 3)
             basic_candidates = self.notion.get_basic_candidates(p, limit=10)
 
-            added_count = 0
-            for work in basic_candidates:
-                if work.page_id in platform_queues[p]:
-                    continue # Already selected
-
-                platform_queues[p].append(work.page_id)
-                unique_works[work.page_id] = work
-                added_count += 1
-                if added_count >= basic_limit:
-                    break
+            added_count = self._add_candidates_to_queue(
+                queue=platform_queues[p],
+                unique_works=unique_works,
+                candidates=basic_candidates,
+                limit=basic_limit,
+            )
 
             if added_count > 0:
                 logger.info(f"[{p}] Added {added_count} basic posts")
@@ -311,16 +329,12 @@ class Poster:
                 limit=10,
             )
 
-            added_count = 0
-            for work in year_start_candidates:
-                if work.page_id in platform_queues[p]:
-                    continue  # Already selected
-
-                platform_queues[p].append(work.page_id)
-                unique_works[work.page_id] = work
-                added_count += 1
-                if added_count >= year_start_limit:
-                    break
+            added_count = self._add_candidates_to_queue(
+                queue=platform_queues[p],
+                unique_works=unique_works,
+                candidates=year_start_candidates,
+                limit=year_start_limit,
+            )
 
             if added_count > 0:
                 logger.info(

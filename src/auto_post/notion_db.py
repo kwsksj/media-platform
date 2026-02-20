@@ -9,6 +9,12 @@ from notion_client import Client
 
 logger = logging.getLogger(__name__)
 
+PLATFORM_POSTED_PROPERTY = {
+    "instagram": "Instagram投稿済",
+    "x": "X投稿済",
+    "threads": "Threads投稿済",
+}
+
 
 @dataclass
 class WorkItem:
@@ -721,24 +727,16 @@ class NotionDB:
         if properties:
             self.client.pages.update(page_id=page_id, properties=properties)
             logger.info(f"Updated location for page {page_id}: {classroom}")
-    def get_catchup_candidates(self, target_platform: str, other_platforms: list[str], limit: int = 10) -> list[WorkItem]:
-        """
-        Get candidates for 'Catch-up Post'.
-        Condition: Unposted on target_platform AND posted on at least one other_platform.
-        """
-        platform_prop_map = {
-            "instagram": "Instagram投稿済",
-            "x": "X投稿済",
-            "threads": "Threads投稿済",
-        }
 
-        target_prop = platform_prop_map.get(target_platform)
+    def _get_platform_posted_property(self, platform: str) -> str | None:
+        target_prop = PLATFORM_POSTED_PROPERTY.get(platform)
         if not target_prop:
-            logger.warning(f"Invalid target platform: {target_platform}")
-            return []
+            logger.warning(f"Invalid target platform: {platform}")
+            return None
+        return target_prop
 
-        # Filter: Target Platform is Unposted
-        filters = [
+    def _build_unposted_filters(self, target_prop: str) -> list[dict]:
+        return [
             {
                 "property": target_prop,
                 "checkbox": {"equals": False}
@@ -750,13 +748,42 @@ class NotionDB:
             {
                 "property": "スキップ",
                 "checkbox": {"equals": False}
-            }
+            },
         ]
+
+    def _query_candidates(self, filters: list[dict], limit: int) -> list[WorkItem]:
+        response = self.client.request(
+            path=f"databases/{self.database_id}/query",
+            method="POST",
+            body={
+                "filter": {
+                    "and": filters
+                },
+                "sorts": [
+                    {"property": "完成日", "direction": "ascending"},
+                    {"timestamp": "created_time", "direction": "ascending"}
+                ],
+                "page_size": limit,
+            },
+        )
+        return [self._parse_page(page) for page in response["results"]]
+
+    def get_catchup_candidates(self, target_platform: str, other_platforms: list[str], limit: int = 10) -> list[WorkItem]:
+        """
+        Get candidates for 'Catch-up Post'.
+        Condition: Unposted on target_platform AND posted on at least one other_platform.
+        """
+        target_prop = self._get_platform_posted_property(target_platform)
+        if not target_prop:
+            return []
+
+        # Filter: Target Platform is Unposted
+        filters = self._build_unposted_filters(target_prop)
 
         # Filter: At least one Other Platform is Posted
         other_filters = []
         for p in other_platforms:
-            prop = platform_prop_map.get(p)
+            prop = PLATFORM_POSTED_PROPERTY.get(p)
             if prop:
                 other_filters.append({
                     "property": prop,
@@ -766,70 +793,20 @@ class NotionDB:
         if other_filters:
             filters.append({"or": other_filters})
 
-        response = self.client.request(
-            path=f"databases/{self.database_id}/query",
-            method="POST",
-            body={
-                "filter": {
-                    "and": filters
-                },
-                "sorts": [
-                    {"property": "完成日", "direction": "ascending"},
-                    {"timestamp": "created_time", "direction": "ascending"}
-                ],
-                "page_size": limit,
-            },
-        )
-
-        return [self._parse_page(page) for page in response["results"]]
+        return self._query_candidates(filters, limit)
 
     def get_basic_candidates(self, target_platform: str, limit: int = 10) -> list[WorkItem]:
         """
         Get candidates for 'Basic Post'.
         Condition: Unposted on target_platform.
         """
-        platform_prop_map = {
-            "instagram": "Instagram投稿済",
-            "x": "X投稿済",
-            "threads": "Threads投稿済",
-        }
-
-        target_prop = platform_prop_map.get(target_platform)
+        target_prop = self._get_platform_posted_property(target_platform)
         if not target_prop:
-            logger.warning(f"Invalid target platform: {target_platform}")
             return []
 
-        filters = [
-            {
-                "property": target_prop,
-                "checkbox": {"equals": False}
-            },
-            {
-                "property": "投稿予定日",
-                "date": {"is_empty": True},
-            },
-            {
-                "property": "スキップ",
-                "checkbox": {"equals": False}
-            }
-        ]
+        filters = self._build_unposted_filters(target_prop)
 
-        response = self.client.request(
-            path=f"databases/{self.database_id}/query",
-            method="POST",
-            body={
-                "filter": {
-                    "and": filters
-                },
-                "sorts": [
-                    {"property": "完成日", "direction": "ascending"},
-                    {"timestamp": "created_time", "direction": "ascending"}
-                ],
-                "page_size": limit,
-            },
-        )
-
-        return [self._parse_page(page) for page in response["results"]]
+        return self._query_candidates(filters, limit)
 
     def get_year_start_candidates(
         self,
@@ -841,49 +818,16 @@ class NotionDB:
         Get candidates from a given start date (e.g. Jan 1st of current year).
         Condition: Unposted on target_platform AND 完成日 >= start_date.
         """
-        platform_prop_map = {
-            "instagram": "Instagram投稿済",
-            "x": "X投稿済",
-            "threads": "Threads投稿済",
-        }
-
-        target_prop = platform_prop_map.get(target_platform)
+        target_prop = self._get_platform_posted_property(target_platform)
         if not target_prop:
-            logger.warning(f"Invalid target platform: {target_platform}")
             return []
 
-        filters = [
-            {
-                "property": target_prop,
-                "checkbox": {"equals": False}
-            },
-            {
-                "property": "投稿予定日",
-                "date": {"is_empty": True},
-            },
-            {
-                "property": "スキップ",
-                "checkbox": {"equals": False}
-            },
+        filters = self._build_unposted_filters(target_prop)
+        filters.append(
             {
                 "property": "完成日",
                 "date": {"on_or_after": start_date.strftime("%Y-%m-%d")},
-            },
-        ]
-
-        response = self.client.request(
-            path=f"databases/{self.database_id}/query",
-            method="POST",
-            body={
-                "filter": {
-                    "and": filters
-                },
-                "sorts": [
-                    {"property": "完成日", "direction": "ascending"},
-                    {"timestamp": "created_time", "direction": "ascending"}
-                ],
-                "page_size": limit,
-            },
+            }
         )
 
-        return [self._parse_page(page) for page in response["results"]]
+        return self._query_candidates(filters, limit)

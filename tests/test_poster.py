@@ -148,3 +148,38 @@ class TestRunDailyPost:
             start_date=datetime(2026, 1, 1),
             limit=10,
         )
+
+    def test_year_start_limit_zero_does_not_enqueue_year_start(self, monkeypatch):
+        poster = object.__new__(Poster)
+        poster.notion = Mock()
+
+        oldest_work = _make_work("old-1", "oldest", datetime(2023, 12, 31))
+        year_start_work = _make_work("jan-1", "january", datetime(2026, 1, 5))
+
+        poster.notion.get_posts_for_date.return_value = []
+        poster.notion.get_catchup_candidates.return_value = []
+        poster.notion.get_basic_candidates.return_value = [oldest_work]
+        poster.notion.get_year_start_candidates.return_value = [year_start_work]
+        poster.notion.update_post_status.return_value = None
+
+        posted_ids: list[str] = []
+
+        def fake_process_post(work: WorkItem, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
+            posted_ids.append(work.page_id)
+            return {"instagram": True, "x": False, "threads": False, "errors": []}
+
+        poster._process_post = fake_process_post  # type: ignore[method-assign]
+
+        monkeypatch.setattr("auto_post.poster.time.sleep", lambda _seconds: None)
+
+        result = poster.run_daily_post(
+            target_date=datetime(2026, 2, 20),
+            dry_run=True,
+            platforms=["instagram"],
+            basic_limit=1,
+            catchup_limit=0,
+            year_start_limit=0,
+        )
+
+        assert posted_ids == ["old-1"]
+        assert result["processed"] == ["oldest"]
