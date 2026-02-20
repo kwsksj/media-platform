@@ -201,6 +201,32 @@ class Poster:
                 )
                 time.sleep(wait_seconds)
 
+    def _add_candidates_to_queue(
+        self,
+        queue: list[str],
+        unique_works: dict[str, WorkItem],
+        candidates: list[WorkItem],
+        limit: int,
+    ) -> int:
+        """
+        Add up to limit candidates into queue, skipping duplicated page IDs.
+        Returns number of newly added items.
+        """
+        if limit <= 0:
+            return 0
+
+        added_count = 0
+        for work in candidates:
+            if added_count >= limit:
+                break
+            if work.page_id in queue:
+                continue
+            queue.append(work.page_id)
+            unique_works[work.page_id] = work
+            added_count += 1
+
+        return added_count
+
     def run_daily_post(
         self,
         target_date: datetime | None = None,
@@ -208,6 +234,7 @@ class Poster:
         platforms: list[str] | None = None,
         basic_limit: int = 2,
         catchup_limit: int = 1,
+        year_start_limit: int = 1,
     ) -> dict:
         """
         Run the daily posting job.
@@ -216,6 +243,7 @@ class Poster:
         1. Date Designated (投稿予定日 = target_date)
         2. Catch-up (Posted on other platforms but not target) - Limit catchup_limit
         3. Basic (Oldest unposted) - Limit basic_limit
+        4. Year-start (Completed on/after Jan 1st of target year) - Limit year_start_limit
 
         Args:
             target_date: Target date for posting (default: today)
@@ -223,6 +251,7 @@ class Poster:
             platforms: List of platforms to post to
             basic_limit: Max number of basic posts per platform (default: 2)
             catchup_limit: Max number of catch-up posts per platform (default: 1)
+            year_start_limit: Max number of year-start posts per platform (default: 1)
 
         Returns:
             dict with 'processed', 'ig_success', 'x_success', 'errors' counts
@@ -231,6 +260,7 @@ class Poster:
             target_date = datetime.now()
 
         logger.info(f"Starting daily post for {target_date.strftime('%Y-%m-%d')}")
+        year_start_date = datetime(target_date.year, 1, 1)
 
         # Platforms to process
         target_platforms = platforms if platforms else ["instagram", "x", "threads"]
@@ -262,23 +292,19 @@ class Poster:
                 if not is_posted:
                     platform_queues[p].append(work.page_id)
 
-        # 2 & 3. Per-Platform Selection (Catch-up & Basic)
+        # 2, 3 & 4. Per-Platform Selection (Catch-up, Basic & Year-start)
         for p in target_platforms:
             # 2. Catch-up Post (Limit 1)
             other_platforms = [op for op in all_supported_platforms if op != p]
             # Fetch candidates (fetch a bit more to allow for skipping duplicates)
             catchup_candidates = self.notion.get_catchup_candidates(p, other_platforms, limit=5)
 
-            added_count = 0
-            for work in catchup_candidates:
-                if work.page_id in platform_queues[p]:
-                    continue # Already selected (e.g. by Date Designated)
-
-                platform_queues[p].append(work.page_id)
-                unique_works[work.page_id] = work
-                added_count += 1
-                if added_count >= catchup_limit:
-                    break
+            added_count = self._add_candidates_to_queue(
+                queue=platform_queues[p],
+                unique_works=unique_works,
+                candidates=catchup_candidates,
+                limit=catchup_limit,
+            )
 
             if added_count > 0:
                 logger.info(f"[{p}] Added {added_count} catch-up posts")
@@ -286,19 +312,35 @@ class Poster:
             # 3. Basic Post (Limit 3)
             basic_candidates = self.notion.get_basic_candidates(p, limit=10)
 
-            added_count = 0
-            for work in basic_candidates:
-                if work.page_id in platform_queues[p]:
-                    continue # Already selected
-
-                platform_queues[p].append(work.page_id)
-                unique_works[work.page_id] = work
-                added_count += 1
-                if added_count >= basic_limit:
-                    break
+            added_count = self._add_candidates_to_queue(
+                queue=platform_queues[p],
+                unique_works=unique_works,
+                candidates=basic_candidates,
+                limit=basic_limit,
+            )
 
             if added_count > 0:
                 logger.info(f"[{p}] Added {added_count} basic posts")
+
+            # 4. Year-start Post (from Jan 1st of target year)
+            year_start_candidates = self.notion.get_year_start_candidates(
+                p,
+                start_date=year_start_date,
+                limit=10,
+            )
+
+            added_count = self._add_candidates_to_queue(
+                queue=platform_queues[p],
+                unique_works=unique_works,
+                candidates=year_start_candidates,
+                limit=year_start_limit,
+            )
+
+            if added_count > 0:
+                logger.info(
+                    f"[{p}] Added {added_count} year-start posts "
+                    f"(from {year_start_date.strftime('%Y-%m-%d')})"
+                )
 
 
         # --- Phase 2: Processing ---
