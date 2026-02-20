@@ -3404,7 +3404,7 @@
 	<body>
 		<div
 			class="app"
-			data-star-api="https://gallery-star.shiawasenahito3000.workers.dev/"
+			data-api-base="https://media-platform-api.shiawasenahito3000.workers.dev/"
 			id="app"
 		>
 			<div class="header">
@@ -3519,7 +3519,7 @@
 				starsAvailable: true,
 				filter: { type: "", value: "" },
 				filterOptions: null,
-				starApiBase: "",
+				apiBase: "",
 				modalScrollY: 0,
 				bodyScrollLocked: false,
 				gridCenteringRafId: 0,
@@ -3749,9 +3749,12 @@
 				map.set(key, list);
 			}
 
-			function getStarApiBase() {
-				const fromData = document.getElementById("app").dataset.starApi;
+			function getApiBase() {
+				const app = document.getElementById("app");
+				const fromData =
+					app?.dataset.apiBase || app?.dataset.starApi || "";
 				if (fromData) return fromData.trim();
+				if (window.API_BASE) return String(window.API_BASE).trim();
 				if (window.STAR_API_BASE) return String(window.STAR_API_BASE).trim();
 				return "";
 			}
@@ -3762,8 +3765,8 @@
 				if (fromData) return fromData;
 				if (window.STUDENTS_INDEX_URL)
 					return trimText(window.STUDENTS_INDEX_URL);
-				if (state.starApiBase) {
-					return `${state.starApiBase.replace(/\/$/, "")}/students-index`;
+				if (state.apiBase) {
+					return `${state.apiBase.replace(/\/$/, "")}/students-index`;
 				}
 				return "";
 			}
@@ -5086,12 +5089,12 @@
 			}
 
 			async function fetchStars(ids) {
-				if (!state.starApiBase) {
+				if (!state.apiBase) {
 					state.starsAvailable = false;
 					return;
 				}
 				try {
-					const url = `${state.starApiBase.replace(/\/$/, "")}/stars?ids=${ids.join(",")}`;
+					const url = `${state.apiBase.replace(/\/$/, "")}/stars?ids=${ids.join(",")}`;
 					const res = await fetch(url, { method: "GET" });
 					if (!res.ok) throw new Error("stars fetch failed");
 					const data = await res.json();
@@ -5110,7 +5113,7 @@
 
 			async function sendStarDelta(id, delta) {
 				const res = await fetch(
-					`${state.starApiBase.replace(/\/$/, "")}/star`,
+					`${state.apiBase.replace(/\/$/, "")}/star`,
 					{
 						method: "POST",
 						headers: { "Content-Type": "application/json" },
@@ -5126,7 +5129,7 @@
 			}
 
 			function flushStarQueue(id) {
-				if (!state.starApiBase) return;
+				if (!state.apiBase) return;
 				const entry = getStarState(id);
 				if (entry.sending || entry.pending <= 0) return;
 				const delta = entry.pending;
@@ -5449,8 +5452,8 @@
 			}
 
 			async function init() {
-				state.starApiBase = getStarApiBase();
-				if (!state.starApiBase) {
+				state.apiBase = getApiBase();
+				if (!state.apiBase) {
 					state.starsAvailable = false;
 				}
 				state.viewer = readViewerContext();

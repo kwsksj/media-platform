@@ -1950,18 +1950,24 @@ async function handleProxyJson(env, urlVarName, r2KeyVarName, defaultKey) {
   }
 }
 
-async function handleParticipantsIndexPush(request, env) {
+function getFirstEnvString(env, keys) {
+  for (const key of keys) {
+    const value = getEnvString(env, key);
+    if (value) return value;
+  }
+  return "";
+}
+
+async function handleJsonIndexPush(request, env, options) {
   if (!env.GALLERY_R2) return serverError("R2 binding not configured (GALLERY_R2)");
 
-  const expectedToken =
-    getEnvString(env, "UPLOAD_UI_PARTICIPANTS_INDEX_PUSH_TOKEN") ||
-    getEnvString(env, "PARTICIPANTS_INDEX_PUSH_TOKEN");
+  const expectedToken = getFirstEnvString(env, options.tokenEnvKeys);
   if (!expectedToken) {
-    return serverError("UPLOAD_UI_PARTICIPANTS_INDEX_PUSH_TOKEN not configured");
+    return serverError(`${options.tokenEnvKeys[0]} not configured`);
   }
 
   const actualToken = getBearerToken(request);
-  if (!actualToken || actualToken !== expectedToken) {
+  if (!actualToken || !timingSafeEqual(actualToken, expectedToken)) {
     return jsonResponse({ ok: false, error: "unauthorized" }, 401);
   }
 
@@ -1970,7 +1976,7 @@ async function handleParticipantsIndexPush(request, env) {
     return badRequest("invalid json");
   }
 
-  const key = getEnvString(env, "PARTICIPANTS_INDEX_KEY", "participants_index.json");
+  const key = getEnvString(env, options.keyEnvName, options.defaultKey);
   const json = JSON.stringify(payload);
   await env.GALLERY_R2.put(key, json, {
     httpMetadata: {
@@ -1982,6 +1988,27 @@ async function handleParticipantsIndexPush(request, env) {
   return okResponse({
     key,
     bytes: new TextEncoder().encode(json).length,
+  });
+}
+
+async function handleParticipantsIndexPush(request, env) {
+  return handleJsonIndexPush(request, env, {
+    tokenEnvKeys: ["UPLOAD_UI_PARTICIPANTS_INDEX_PUSH_TOKEN", "PARTICIPANTS_INDEX_PUSH_TOKEN"],
+    keyEnvName: "PARTICIPANTS_INDEX_KEY",
+    defaultKey: "participants_index.json",
+  });
+}
+
+async function handleScheduleIndexPush(request, env) {
+  return handleJsonIndexPush(request, env, {
+    tokenEnvKeys: [
+      "UPLOAD_UI_SCHEDULE_INDEX_PUSH_TOKEN",
+      "SCHEDULE_INDEX_PUSH_TOKEN",
+      "UPLOAD_UI_PARTICIPANTS_INDEX_PUSH_TOKEN",
+      "PARTICIPANTS_INDEX_PUSH_TOKEN",
+    ],
+    keyEnvName: "SCHEDULE_INDEX_KEY",
+    defaultKey: "schedule_index.json",
   });
 }
 
@@ -2008,6 +2035,14 @@ export default {
 
     if (pathname === "/participants-index" && request.method === "POST") {
       return handleParticipantsIndexPush(request, env);
+    }
+
+    if (pathname === "/schedule-index" && request.method === "GET") {
+      return handleProxyJson(env, "SCHEDULE_INDEX_URL", "SCHEDULE_INDEX_KEY", "schedule_index.json");
+    }
+
+    if (pathname === "/schedule-index" && request.method === "POST") {
+      return handleScheduleIndexPush(request, env);
     }
 
     if (pathname === "/students-index" && request.method === "GET") {

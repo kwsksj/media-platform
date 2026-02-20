@@ -12,12 +12,15 @@
   - Schedule: 毎日 16:10 JST (07:10 UTC)
 - `Daily Auto Post` (`.github/workflows/schedule.yml`)
   - Schedule: 毎日 16:42 JST (07:42 UTC)
+- `Monthly Schedule Post` (`.github/workflows/monthly-schedule.yml`)
+  - Schedule: 毎月25日 16:00 JST (07:00 UTC)
 
 ## Manual Jobs
 
 - `Catch-up Post` (`.github/workflows/catchup.yml`)
 - `Daily Gallery Export` の手動再実行
 - `Daily Auto Post` の手動再実行
+- `Monthly Schedule Post` の手動再実行
 
 ## Local Runbook (Make)
 
@@ -32,6 +35,7 @@ make ingest-import-dry TAKEOUT_DIR=./takeout-photos
 # publish dry-run
 make publish-dry
 make publish-catchup-dry
+make publish-monthly-schedule-dry
 
 # gallery build dry-run
 make gallery-export
@@ -52,6 +56,7 @@ make worker-dry
 # publish
 ./tools/publish/post.sh --dry-run
 ./tools/publish/catchup.sh --dry-run
+./tools/publish/monthly-schedule.sh --dry-run
 
 # gallery build
 ./tools/gallery-build/export.sh --no-upload --no-thumbs --no-light

@@ -606,6 +606,81 @@ class Poster:
         image_contents = [(content, filename) for content, filename, _ in images_data]
         return self.x.post_with_images(caption, image_contents)
 
+    def post_custom_images(
+        self,
+        images_data: list[tuple[bytes, str, str]],
+        caption: str,
+        dry_run: bool = False,
+        platforms: list[str] | None = None,
+    ) -> dict:
+        """
+        Post arbitrary image payloads directly to SNS.
+
+        This path does not read/update Notion posting states.
+        """
+        status = {"instagram": False, "x": False, "threads": False, "post_ids": {}, "errors": []}
+
+        if not images_data:
+            raise ValueError("images_data must not be empty")
+
+        target_platforms = platforms if platforms else ["instagram", "threads", "x"]
+        target_platforms = [p for p in target_platforms if p in {"instagram", "threads", "x"}]
+        if not target_platforms:
+            raise ValueError("platforms must include at least one of: instagram, threads, x")
+
+        if dry_run:
+            logger.info("Dry Run: custom post preview")
+            logger.info("  Platforms: %s", ", ".join(target_platforms))
+            logger.info("  Images: %s", len(images_data))
+            logger.info("  Caption:\n%s\n", caption)
+            for platform in target_platforms:
+                status[platform] = True
+            return status
+
+        if "instagram" in target_platforms:
+            try:
+                ig_post_id = self._post_with_retry(
+                    "Instagram",
+                    lambda: self._post_to_instagram(images_data, caption),
+                    (InstagramAPIError,),
+                )
+                status["instagram"] = True
+                status["post_ids"]["instagram"] = ig_post_id
+                logger.info(f"Instagram posted: {ig_post_id}")
+            except InstagramAPIError as e:
+                logger.error(f"Instagram error: {e}")
+                status["errors"].append(f"Instagram: {e}")
+
+        if "x" in target_platforms:
+            try:
+                x_post_id = self._post_with_retry(
+                    "X",
+                    lambda: self._post_to_x(images_data, caption),
+                    (XAPIError,),
+                )
+                status["x"] = True
+                status["post_ids"]["x"] = x_post_id
+                logger.info(f"X posted: {x_post_id}")
+            except XAPIError as e:
+                logger.error(f"X error: {e}")
+                status["errors"].append(f"X: {e}")
+
+        if "threads" in target_platforms:
+            try:
+                threads_post_id = self._post_with_retry(
+                    "Threads",
+                    lambda: self._post_to_threads(images_data, caption),
+                    (ThreadsAPIError,),
+                )
+                status["threads"] = True
+                status["post_ids"]["threads"] = threads_post_id
+                logger.info(f"Threads posted: {threads_post_id}")
+            except ThreadsAPIError as e:
+                logger.error(f"Threads error: {e}")
+                status["errors"].append(f"Threads: {e}")
+
+        return status
+
     def list_works(self, student: str | None = None, only_unposted: bool = False) -> list[WorkItem]:
         """List work items from Notion."""
         return self.notion.list_works(filter_student=student, only_unposted=only_unposted)

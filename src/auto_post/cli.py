@@ -1,9 +1,14 @@
 """Command-line interface."""
 
 import logging
+import os
+import re
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -22,6 +27,189 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MonthlyScheduleItem:
+    year: int
+    month: int
+    caption_entries: list[Any]
+    image: Any
+
+
+def _parse_skip_target_months(raw: str) -> set[tuple[int, int]]:
+    months: set[tuple[int, int]] = set()
+    text = str(raw or "").strip()
+    if not text:
+        return months
+    for token in re.split(r"[,\s]+", text):
+        value = token.strip()
+        if not value:
+            continue
+        match = re.fullmatch(r"(\d{4})[-/](\d{1,2})", value)
+        if not match:
+            raise click.ClickException(
+                "MONTHLY_SCHEDULE_SKIP_TARGET_MONTHS has invalid token: "
+                f"{value} (expected YYYY-MM, separated by comma or space)"
+            )
+        year = int(match.group(1))
+        month = int(match.group(2))
+        if not 1 <= month <= 12:
+            raise click.ClickException(
+                "MONTHLY_SCHEDULE_SKIP_TARGET_MONTHS has invalid month: "
+                f"{value} (month must be 1-12)"
+            )
+        months.add((year, month))
+    return months
+
+
+def _shift_year_month(base_year: int, base_month: int, add: int) -> tuple[int, int]:
+    total = base_year * 12 + (base_month - 1) + add
+    return total // 12, (total % 12) + 1
+
+
+def _build_monthly_output_path(base_output: Path, index: int, year: int, month: int) -> Path:
+    if index == 0:
+        return base_output
+    suffix = base_output.suffix or ".jpg"
+    return base_output.with_name(f"{base_output.stem}-{year}-{month:02d}{suffix}")
+
+
+def _build_monthly_schedule_loader(source: str, config: Config) -> Callable[[int, int], list[Any]]:
+    from .monthly_schedule import (
+        MonthlyScheduleNotionClient,
+        ScheduleJsonSourceConfig,
+        ScheduleSourceConfig,
+        extract_month_entries_from_json,
+    )
+    from .r2_storage import R2Storage
+
+    if source in {"r2-json", "json", "r2"}:
+        json_source = ScheduleJsonSourceConfig.from_env()
+        if json_source.url:
+            import requests
+
+            try:
+                res = requests.get(json_source.url, timeout=30)
+                res.raise_for_status()
+                data = res.json()
+            except Exception as e:
+                raise click.ClickException(f"Failed to fetch MONTHLY_SCHEDULE_JSON_URL: {e}") from e
+        else:
+            r2 = R2Storage(config.r2)
+            data = r2.get_json(json_source.key)
+            if data is None:
+                raise click.ClickException(f"R2 JSON not found: key={json_source.key}")
+
+        if not isinstance(data, dict):
+            raise click.ClickException("Schedule JSON must be an object")
+
+        def load_month_entries(y: int, m: int) -> list[Any]:
+            return extract_month_entries_from_json(
+                data,
+                y,
+                m,
+                timezone=json_source.timezone,
+                include_adjacent=True,
+            )
+
+        return load_month_entries
+
+    if source == "notion":
+        try:
+            source_config = ScheduleSourceConfig.from_env()
+        except ValueError as e:
+            raise click.ClickException(str(e)) from e
+        schedule_client = MonthlyScheduleNotionClient(config.notion.token, source_config)
+
+        def load_month_entries(y: int, m: int) -> list[Any]:
+            return schedule_client.fetch_month_entries(y, m, include_adjacent=True)
+
+        return load_month_entries
+
+    raise click.ClickException("MONTHLY_SCHEDULE_SOURCE must be one of: r2-json, json, r2, notion")
+
+
+def _prepare_monthly_schedule_images(
+    month_items: list[MonthlyScheduleItem],
+    output: Path | None,
+    *,
+    default_schedule_filename: Callable[[int, int, str], str],
+    image_to_bytes: Callable[[Any, str], bytes],
+    save_image: Callable[[Any, Path], str],
+) -> tuple[list[tuple[bytes, str, str]], list[Path]]:
+    images_data: list[tuple[bytes, str, str]] = []
+    saved_outputs: list[Path] = []
+
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+    for index, item in enumerate(month_items):
+        post_mime_type = "image/jpeg"
+        post_filename = default_schedule_filename(item.year, item.month, post_mime_type)
+
+        if output:
+            output_path = _build_monthly_output_path(output, index, item.year, item.month)
+            save_image(item.image, output_path)
+            saved_outputs.append(output_path)
+
+        image_bytes = image_to_bytes(item.image, post_mime_type)
+        images_data.append((image_bytes, post_filename, post_mime_type))
+
+    return images_data, saved_outputs
+
+
+def _merge_post_result(target: dict, partial: dict) -> None:
+    for key in ("instagram", "threads", "x"):
+        target[key] = bool(target[key] or partial.get(key))
+    target["post_ids"].update(partial.get("post_ids", {}))
+    target["errors"].extend(partial.get("errors", []))
+
+
+def _echo_monthly_schedule_summary(
+    *,
+    target_year: int,
+    target_month: int,
+    source: str,
+    month_items: list[MonthlyScheduleItem],
+    render_width: int,
+    render_height: int,
+    saved_outputs: list[Path],
+    result: dict,
+) -> None:
+    click.echo("\n" + "=" * 34)
+    click.echo("Monthly Schedule Post Summary")
+    click.echo("=" * 34)
+    click.echo(f"Target month: {target_year}-{target_month:02d}")
+    click.echo(
+        "Posted months: "
+        + ", ".join([f"{item.year}-{item.month:02d}" for item in month_items])
+    )
+    click.echo(f"Source: {source}")
+    for item in month_items:
+        click.echo(f"Entries {item.year}-{item.month:02d}: {len(item.caption_entries)}")
+    click.echo(f"Image size: {render_width}x{render_height} (3:4 expected)")
+    if saved_outputs:
+        if len(saved_outputs) == 1:
+            click.echo(f"Saved image: {saved_outputs[0]}")
+        else:
+            click.echo("Saved images:")
+            for path in saved_outputs:
+                click.echo(f"  - {path}")
+    click.echo(f"Instagram: {'OK' if result['instagram'] else '-'}")
+    click.echo(f"Threads:   {'OK' if result['threads'] else '-'}")
+    click.echo(f"X:         {'OK' if result['x'] else '-'}")
+    if result.get("post_ids"):
+        post_ids = result["post_ids"]
+        click.echo(f"Post IDs:  {post_ids}")
+    if result["errors"]:
+        click.echo("-" * 34)
+        click.echo("Errors:")
+        for err in result["errors"]:
+            click.echo(f"  - {err}")
+        click.echo("=" * 34)
+        sys.exit(1)
+    click.echo("=" * 34)
 
 
 @click.group()
@@ -305,6 +493,197 @@ def export_gallery_json(
         click.echo(f"Light existing:   {stats.light_skipped_existing}")
         click.echo(f"Light failed:     {stats.light_failed}")
     click.echo("=" * 30)
+
+
+@main.command("post-monthly-schedule")
+@click.option("--year", type=int, help="Target year (e.g. 2026)")
+@click.option("--month", type=click.IntRange(1, 12), help="Target month (1-12)")
+@click.option(
+    "--target",
+    type=click.Choice(["current", "next"]),
+    default=None,
+    help="When year/month are omitted, post current or next month",
+)
+@click.option(
+    "--platform",
+    type=click.Choice(["instagram", "x", "threads", "all"]),
+    default="all",
+    help="Platform to post to (default: all)",
+)
+@click.option("--dry-run", is_flag=True, help="Generate image and caption without posting")
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Optional output path to save generated image (.jpg/.png)",
+)
+@click.pass_context
+def post_monthly_schedule(
+    ctx,
+    year: int | None,
+    month: int | None,
+    target: str | None,
+    platform: str,
+    dry_run: bool,
+    output: Path | None,
+):
+    """Generate monthly schedule image from JSON/R2 and post to SNS."""
+    config = Config.load(ctx.obj.get("env_file"))
+    from .monthly_schedule import (
+        JST,
+        ScheduleRenderConfig,
+        build_monthly_caption,
+        default_schedule_filename,
+        image_to_bytes,
+        render_monthly_schedule_image,
+        resolve_target_year_month,
+        save_image,
+    )
+
+    env_target = os.environ.get("MONTHLY_SCHEDULE_TARGET", "next").strip().lower()
+    if env_target not in {"current", "next"}:
+        env_target = "next"
+    resolved_target = target or env_target
+
+    try:
+        target_year, target_month = resolve_target_year_month(
+            now=datetime.now(tz=JST),
+            target=resolved_target,
+            year=year,
+            month=month,
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    skip_targets_raw = os.environ.get("MONTHLY_SCHEDULE_SKIP_TARGET_MONTHS", "").strip()
+    skip_targets = _parse_skip_target_months(skip_targets_raw)
+    if (target_year, target_month) in skip_targets:
+        click.echo("\n" + "=" * 34)
+        click.echo("Monthly Schedule Post Summary")
+        click.echo("=" * 34)
+        click.echo(f"Target month: {target_year}-{target_month:02d}")
+        click.echo("Result: SKIPPED")
+        click.echo(f"Reason: MONTHLY_SCHEDULE_SKIP_TARGET_MONTHS={skip_targets_raw}")
+        click.echo("=" * 34)
+        return
+
+    source = os.environ.get("MONTHLY_SCHEDULE_SOURCE", "").strip().lower() or "r2-json"
+    render_config = ScheduleRenderConfig.from_env()
+    target_months = [_shift_year_month(target_year, target_month, offset) for offset in range(3)]
+    month_items: list[MonthlyScheduleItem] = []
+    load_month_entries = _build_monthly_schedule_loader(source, config)
+
+    for y, m in target_months:
+        render_entries = load_month_entries(y, m)
+
+        caption_entries = [e for e in render_entries if e.day.year == y and e.day.month == m]
+        if not caption_entries:
+            continue
+
+        image = render_monthly_schedule_image(y, m, render_entries, render_config)
+        month_items.append(
+            MonthlyScheduleItem(
+                year=y,
+                month=m,
+                caption_entries=caption_entries,
+                image=image,
+            )
+        )
+
+    if not month_items:
+        end_year, end_month = target_months[-1]
+        raise click.ClickException(
+            f"No schedule entries found from {target_year}-{target_month:02d} to {end_year}-{end_month:02d}"
+        )
+
+    images_data, saved_outputs = _prepare_monthly_schedule_images(
+        month_items,
+        output,
+        default_schedule_filename=default_schedule_filename,
+        image_to_bytes=image_to_bytes,
+        save_image=save_image,
+    )
+
+    caption_template = os.environ.get("MONTHLY_SCHEDULE_CAPTION_TEMPLATE", "").strip()
+    monthly_schedule_tags = ""
+    first_item = month_items[0]
+    first_year = first_item.year
+    first_month = first_item.month
+    first_entries = first_item.caption_entries
+    merged_entries = [entry for item in month_items for entry in item.caption_entries]
+
+    if len(month_items) > 1:
+        last_item = month_items[-1]
+        last_year = last_item.year
+        last_month = last_item.month
+        if first_year == last_year:
+            range_label = f"{first_year}年{first_month}月〜{last_month}月"
+        else:
+            range_label = f"{first_year}年{first_month}月〜{last_year}年{last_month}月"
+        multi_template = (
+            f"{range_label}の教室日程です。\n"
+            "最新の空き状況や詳細は予約ページをご確認ください。"
+        )
+        caption_for_ig_threads = build_monthly_caption(
+            first_year,
+            first_month,
+            merged_entries,
+            default_tags=monthly_schedule_tags,
+            template=multi_template,
+        )
+    else:
+        caption_for_ig_threads = build_monthly_caption(
+            first_year,
+            first_month,
+            first_entries,
+            default_tags=monthly_schedule_tags,
+            template=caption_template,
+        )
+
+    caption_for_x = build_monthly_caption(
+        first_year,
+        first_month,
+        first_entries,
+        default_tags=monthly_schedule_tags,
+        template=caption_template,
+    )
+
+    if platform == "all":
+        platforms = ["instagram", "threads", "x"]
+    else:
+        platforms = [platform]
+
+    poster = Poster(config)
+    result = {"instagram": False, "x": False, "threads": False, "post_ids": {}, "errors": []}
+
+    ig_threads_platforms = [p for p in platforms if p in {"instagram", "threads"}]
+    if ig_threads_platforms:
+        ig_threads_result = poster.post_custom_images(
+            images_data=images_data,
+            caption=caption_for_ig_threads,
+            dry_run=dry_run,
+            platforms=ig_threads_platforms,
+        )
+        _merge_post_result(result, ig_threads_result)
+
+    if "x" in platforms:
+        x_result = poster.post_custom_images(
+            images_data=[images_data[0]],
+            caption=caption_for_x,
+            dry_run=dry_run,
+            platforms=["x"],
+        )
+        _merge_post_result(result, x_result)
+
+    _echo_monthly_schedule_summary(
+        target_year=target_year,
+        target_month=target_month,
+        source=source,
+        month_items=month_items,
+        render_width=render_config.width,
+        render_height=render_config.height,
+        saved_outputs=saved_outputs,
+        result=result,
+    )
 
 
 @main.command()

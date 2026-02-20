@@ -32,7 +32,8 @@ media-platform (monorepo)
 ├─ GitHub Actions
 │  ├─ schedule.yml       (毎日 16:42 JST)
 │  ├─ gallery-export.yml (毎日 16:10 JST)
-│  └─ catchup.yml        (手動実行)
+│  ├─ catchup.yml        (手動実行)
+│  └─ monthly-schedule.yml (毎月25日 16:00 JST)
 ├─ auto-post CLI (src/auto_post)
 │  ├→ Instagram Graph API
 │  ├→ X (Twitter) API v2
@@ -54,7 +55,7 @@ media-platform (monorepo)
 CLI は `auto-post` を中心に運用し、日常実行は `Makefile` を優先します。  
 主要カテゴリは以下です。
 
-- 投稿系: `post`, `catchup`
+- 投稿系: `post`, `catchup`, `post-monthly-schedule`
 - 取り込み系: `preview-groups`, `import-direct`, `import-folders`, `export-groups`, `import-groups`
 - gallery build 系: `export-gallery-json`
 - 管理系: `check-notion`, `list-works`, `refresh-token`
@@ -218,6 +219,16 @@ CLI は `auto-post` を中心に運用し、日常実行は `Makefile` を優先
   - `platform`: プラットフォーム選択 (all/instagram/x/threads)
   - `dry_run`: dry-run 実行
 
+### ワークフロー: `monthly-schedule.yml`（Monthly Schedule Post）
+
+- **スケジュール**: 毎月25日 16:00 JST (07:00 UTC)
+- **既定データソース**: R2上のJSON（`schedule_index.json` など）
+- **手動実行オプション**:
+  - `year` / `month`: 対象年月（省略時は `target` を使用）
+  - `target`: current / next
+  - `platform`: プラットフォーム選択 (all/instagram/x/threads)
+  - `dry_run`: dry-run 実行
+
 ### 必要な Secrets
 
 GitHub リポジトリの Settings > Secrets に設定:
@@ -258,7 +269,8 @@ media-platform/
 ├── .github/workflows/
 │   ├── schedule.yml       # Daily Auto Post
 │   ├── catchup.yml        # Catch-up Post
-│   └── gallery-export.yml # Daily Gallery Export
+│   ├── gallery-export.yml # Daily Gallery Export
+│   └── monthly-schedule.yml # Monthly Schedule Post
 ├── src/auto_post/
 │   ├── cli.py           # CLIエントリーポイント
 │   ├── config.py        # 設定クラス

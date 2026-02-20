@@ -11,7 +11,7 @@ TAKEOUT_DIR ?= ./takeout-photos
 THRESHOLD ?= 10
 MAX_PER_GROUP ?= 10
 
-.PHONY: help check-monorepo ingest-preview ingest-import-dry publish-dry publish-catchup-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry secrets-list
+.PHONY: help check-monorepo ingest-preview ingest-import-dry publish-dry publish-catchup-dry publish-monthly-schedule-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry secrets-list
 
 help:
 	@echo "Monorepo helper targets"
@@ -20,6 +20,7 @@ help:
 	@echo "  make ingest-import-dry TAKEOUT_DIR=./takeout-photos [THRESHOLD=10] [MAX_PER_GROUP=10]"
 	@echo "  make publish-dry [DATE=$$(date +%Y-%m-%d)]"
 	@echo "  make publish-catchup-dry"
+	@echo "  make publish-monthly-schedule-dry"
 	@echo "  make gallery-export"
 	@echo "  make gallery-tag-recalc-dry"
 	@echo "  make gallery-tag-recalc-apply"
@@ -41,6 +42,9 @@ publish-dry:
 
 publish-catchup-dry:
 	@"$(PUBLISH_TOOL_DIR)/catchup.sh" --dry-run
+
+publish-monthly-schedule-dry:
+	@"$(PUBLISH_TOOL_DIR)/monthly-schedule.sh" --dry-run
 
 gallery-export:
 	@"$(GALLERY_BUILD_TOOL_DIR)/export.sh" --no-upload --no-thumbs --no-light

@@ -19,7 +19,7 @@ Notion（母艦）＋ Cloudflare R2（画像）をソースとして、作品ギ
 **Cloudflare Workers（任意）**
 
 - `star` API：★カウント取得/更新（KV使用）
-  - `data-star-api` または `window.STAR_API_BASE` が未設定なら ★は非表示
+  - `data-api-base`（後方互換で `data-star-api`）または `window.API_BASE`（後方互換で `window.STAR_API_BASE`）が未設定なら ★は非表示
 
 **Googleサイト**
 

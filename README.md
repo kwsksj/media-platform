@@ -49,6 +49,9 @@ make publish-dry
 # catch-up dry-run
 make publish-catchup-dry
 
+# monthly schedule dry-run
+make publish-monthly-schedule-dry
+
 # gallery export dry-run（R2アップロードなし）
 make gallery-export
 
@@ -87,6 +90,7 @@ make ingest-preview TAKEOUT_DIR=./takeout-photos
 make ingest-import-dry TAKEOUT_DIR=./takeout-photos
 make publish-dry
 make publish-catchup-dry
+make publish-monthly-schedule-dry
 make gallery-export
 make gallery-tag-recalc-dry
 make admin-smoke
@@ -103,6 +107,7 @@ make worker-dry
 # publish
 ./tools/publish/post.sh --dry-run
 ./tools/publish/catchup.sh --dry-run
+./tools/publish/monthly-schedule.sh --dry-run
 
 # gallery build
 ./tools/gallery-build/export.sh --no-upload --no-thumbs --no-light
@@ -125,6 +130,8 @@ auto-post export-gallery-json --no-upload --no-thumbs --no-light
   - 毎日 16:42 JST (07:42 UTC)
 - `Catch-up Post` (`.github/workflows/catchup.yml`)
   - 手動実行のみ
+- `Monthly Schedule Post` (`.github/workflows/monthly-schedule.yml`)
+  - 毎月25日 16:00 JST (07:00 UTC)
 
 ## ドキュメント
 
