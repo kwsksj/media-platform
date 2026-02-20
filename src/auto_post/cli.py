@@ -604,6 +604,7 @@ def post_monthly_schedule(
     )
 
     caption_template = os.environ.get("MONTHLY_SCHEDULE_CAPTION_TEMPLATE", "").strip()
+    monthly_schedule_tags = ""
     first_item = month_items[0]
     first_year = first_item.year
     first_month = first_item.month
@@ -626,7 +627,7 @@ def post_monthly_schedule(
             first_year,
             first_month,
             merged_entries,
-            default_tags=config.default_tags,
+            default_tags=monthly_schedule_tags,
             template=multi_template,
         )
     else:
@@ -634,7 +635,7 @@ def post_monthly_schedule(
             first_year,
             first_month,
             first_entries,
-            default_tags=config.default_tags,
+            default_tags=monthly_schedule_tags,
             template=caption_template,
         )
 
@@ -642,7 +643,7 @@ def post_monthly_schedule(
         first_year,
         first_month,
         first_entries,
-        default_tags=config.default_tags,
+        default_tags=monthly_schedule_tags,
         template=caption_template,
     )
 
