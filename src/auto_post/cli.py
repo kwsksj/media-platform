@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,32 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_skip_target_months(raw: str) -> set[tuple[int, int]]:
+    months: set[tuple[int, int]] = set()
+    text = str(raw or "").strip()
+    if not text:
+        return months
+    for token in re.split(r"[,\s]+", text):
+        value = token.strip()
+        if not value:
+            continue
+        match = re.fullmatch(r"(\d{4})[-/](\d{1,2})", value)
+        if not match:
+            raise click.ClickException(
+                "MONTHLY_SCHEDULE_SKIP_TARGET_MONTHS has invalid token: "
+                f"{value} (expected YYYY-MM, separated by comma or space)"
+            )
+        year = int(match.group(1))
+        month = int(match.group(2))
+        if not 1 <= month <= 12:
+            raise click.ClickException(
+                "MONTHLY_SCHEDULE_SKIP_TARGET_MONTHS has invalid month: "
+                f"{value} (month must be 1-12)"
+            )
+        months.add((year, month))
+    return months
 
 
 @click.group()
@@ -375,6 +402,18 @@ def post_monthly_schedule(
         )
     except ValueError as e:
         raise click.ClickException(str(e)) from e
+
+    skip_targets_raw = os.environ.get("MONTHLY_SCHEDULE_SKIP_TARGET_MONTHS", "").strip()
+    skip_targets = _parse_skip_target_months(skip_targets_raw)
+    if (target_year, target_month) in skip_targets:
+        click.echo("\n" + "=" * 34)
+        click.echo("Monthly Schedule Post Summary")
+        click.echo("=" * 34)
+        click.echo(f"Target month: {target_year}-{target_month:02d}")
+        click.echo("Result: SKIPPED")
+        click.echo(f"Reason: MONTHLY_SCHEDULE_SKIP_TARGET_MONTHS={skip_targets_raw}")
+        click.echo("=" * 34)
+        return
 
     source = os.environ.get("MONTHLY_SCHEDULE_SOURCE", "").strip().lower() or "r2-json"
     render_config = ScheduleRenderConfig.from_env()
