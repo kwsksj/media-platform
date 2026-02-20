@@ -156,6 +156,33 @@ def test_extract_month_entries_supports_sheet_time_keys():
     assert entries[0].end and entries[0].end.hour == 12
 
 
+def test_extract_month_entries_from_json_include_adjacent_weeks():
+    payload = {
+        "dates": {
+            "2026-02-28": [
+                {"lesson_id": "prev", "classroom": "東京教室", "venue": "浅草橋", "start_at": "2026-02-28T12:00:00+09:00"}
+            ],
+            "2026-03-20": [
+                {"lesson_id": "mid", "classroom": "沼津教室", "venue": "東池袋", "start_at": "2026-03-20T09:30:00+09:00"}
+            ],
+            "2026-04-02": [
+                {"lesson_id": "next", "classroom": "つくば教室", "venue": "浅草橋", "start_at": "2026-04-02T13:00:00+09:00"}
+            ],
+        }
+    }
+    month_only = extract_month_entries_from_json(payload, 2026, 3, timezone="Asia/Tokyo")
+    assert [e.day for e in month_only] == [date(2026, 3, 20)]
+
+    with_adjacent = extract_month_entries_from_json(
+        payload,
+        2026,
+        3,
+        timezone="Asia/Tokyo",
+        include_adjacent=True,
+    )
+    assert [e.day for e in with_adjacent] == [date(2026, 2, 28), date(2026, 3, 20), date(2026, 4, 2)]
+
+
 def test_build_day_cards_merges_same_classroom_slots():
     entries = [
         ScheduleEntry(

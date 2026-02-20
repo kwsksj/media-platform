@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar
+import colorsys
 import logging
 import os
 import re
@@ -13,7 +14,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from notion_client import Client
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 logger = logging.getLogger(__name__)
 
@@ -195,10 +196,14 @@ class MonthlyScheduleNotionClient:
         self.source = source
         self._title_property_name: str | None = source.title_property or None
 
-    def fetch_month_entries(self, year: int, month: int) -> list[ScheduleEntry]:
+    def fetch_month_entries(self, year: int, month: int, *, include_adjacent: bool = False) -> list[ScheduleEntry]:
         first_day = date(year, month, 1)
         next_month = (first_day.replace(day=28) + timedelta(days=4)).replace(day=1)
         last_day = next_month - timedelta(days=1)
+        range_start = first_day
+        range_end = last_day
+        if include_adjacent:
+            range_start, range_end = _calendar_visible_date_range(year, month)
         tz = ZoneInfo(self.source.timezone)
 
         body = {
@@ -206,11 +211,11 @@ class MonthlyScheduleNotionClient:
                 "and": [
                     {
                         "property": self.source.date_property,
-                        "date": {"on_or_after": first_day.isoformat()},
+                        "date": {"on_or_after": range_start.isoformat()},
                     },
                     {
                         "property": self.source.date_property,
-                        "date": {"on_or_before": last_day.isoformat()},
+                        "date": {"on_or_before": range_end.isoformat()},
                     },
                 ]
             },
@@ -235,7 +240,7 @@ class MonthlyScheduleNotionClient:
                 entry = self._parse_page(page, tz)
                 if entry is None:
                     continue
-                if entry.day.year == year and entry.day.month == month:
+                if range_start <= entry.day <= range_end:
                     entries.append(entry)
 
             if not response.get("has_more"):
@@ -312,6 +317,14 @@ def resolve_target_year_month(
     raise ValueError("target must be 'current' or 'next'")
 
 
+def _calendar_visible_date_range(year: int, month: int) -> tuple[date, date]:
+    weeks = calendar.Calendar(firstweekday=0).monthdatescalendar(year, month)
+    if not weeks:
+        day = date(year, month, 1)
+        return day, day
+    return weeks[0][0], weeks[-1][-1]
+
+
 def build_monthly_caption(
     year: int,
     month: int,
@@ -342,9 +355,16 @@ def extract_month_entries_from_json(
     year: int,
     month: int,
     timezone: str = "Asia/Tokyo",
+    *,
+    include_adjacent: bool = False,
 ) -> list[ScheduleEntry]:
     """Extract month entries from schedule JSON."""
     tz = ZoneInfo(timezone)
+    range_start = date(year, month, 1)
+    next_month = (range_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    range_end = next_month - timedelta(days=1)
+    if include_adjacent:
+        range_start, range_end = _calendar_visible_date_range(year, month)
     out: list[ScheduleEntry] = []
     payload = data
     wrapped = data.get("data")
@@ -355,7 +375,7 @@ def extract_month_entries_from_json(
     if isinstance(dates, dict):
         for raw_date, groups in dates.items():
             day = _parse_date_ymd(raw_date)
-            if day is None or day.year != year or day.month != month:
+            if day is None or not (range_start <= day <= range_end):
                 continue
             if isinstance(groups, list):
                 for group in groups:
@@ -377,7 +397,7 @@ def extract_month_entries_from_json(
                 entry = _build_entry_from_any_date(item, tz)
                 if not entry:
                     continue
-                if entry.day.year == year and entry.day.month == month:
+                if range_start <= entry.day <= range_end:
                     out.append(entry)
             if out:
                 break
@@ -432,7 +452,7 @@ def render_monthly_schedule_image(
     week_height = max(46, height // 52)
     grid_bottom = height - margin
 
-    month_matrix = calendar.Calendar(firstweekday=0).monthdayscalendar(year, month)
+    month_matrix = calendar.Calendar(firstweekday=0).monthdatescalendar(year, month)
     row_count = len(month_matrix)
     col_gap = max(8, width // 192)
     row_gap = max(6, height // 320)
@@ -472,14 +492,14 @@ def render_monthly_schedule_image(
         )
         _draw_centered_mixed_text(draw, week_rect, label, weekday_fonts, text_color)
 
-    events_by_day: dict[int, list[ScheduleEntry]] = {}
+    events_by_day: dict[date, list[ScheduleEntry]] = {}
     for entry in entries:
-        events_by_day.setdefault(entry.day.day, []).append(entry)
+        events_by_day.setdefault(entry.day, []).append(entry)
     for day_entries in events_by_day.values():
         day_entries.sort(key=_entry_sort_key)
 
     for row_index, week in enumerate(month_matrix):
-        for col_index, day_num in enumerate(week):
+        for col_index, cell_date in enumerate(week):
             x1 = col_lefts[col_index]
             y1 = grid_top + row_index * (cell_height + row_gap)
             x2 = x1 + cell_widths[col_index]
@@ -491,7 +511,7 @@ def render_monthly_schedule_image(
                 cell_fill = PALETTE["sat_bg"]
             elif col_index == 6:
                 cell_fill = PALETTE["sun_bg"]
-            if day_num == 0:
+            if cell_date.month != month:
                 cell_fill = PALETTE["empty_cell"]
 
             draw.rounded_rectangle(
@@ -500,24 +520,23 @@ def render_monthly_schedule_image(
                 fill=cell_fill,
             )
 
-            if day_num == 0:
-                continue
-
             day_color = PALETTE["ink"]
             if col_index == 5:
                 day_color = PALETTE["accent_2"]
             elif col_index == 6:
                 day_color = PALETTE["accent"]
+            if cell_date.month != month:
+                day_color = PALETTE["muted"]
 
             _draw_mixed_text(
                 draw,
                 (x1 + 14, y1 + 6),
-                str(day_num),
+                str(cell_date.day),
                 day_fonts,
                 fill=day_color,
             )
 
-            day_events = events_by_day.get(day_num, [])
+            day_events = events_by_day.get(cell_date, [])
             _draw_day_events(
                 draw=draw,
                 events=day_events,
@@ -532,7 +551,7 @@ def render_monthly_schedule_image(
                 muted_color=PALETTE["muted"],
             )
 
-    return image
+    return _apply_clear_warm_background_style(image)
 
 
 def save_image(image: Image.Image, output_path: Path) -> str:
@@ -564,6 +583,31 @@ def default_schedule_filename(year: int, month: int, mime_type: str = "image/jpe
 
 def _create_gradient_background(width: int, height: int) -> Image.Image:
     return Image.new("RGB", (width, height), color=PALETTE["bg_top"])
+
+
+def _apply_clear_warm_background_style(image: Image.Image) -> Image.Image:
+    """Apply selected 'clear-warmbg' finish to final calendar image."""
+    styled = ImageEnhance.Color(image).enhance(1.08)
+    styled = ImageEnhance.Contrast(styled).enhance(1.06)
+    styled = ImageEnhance.Sharpness(styled).enhance(1.08)
+    if styled.mode != "RGB":
+        styled = styled.convert("RGB")
+
+    pixels = styled.load()
+    width, height = styled.size
+    warm = (245, 226, 205)
+    blend = 0.22
+    for y in range(height):
+        for x in range(width):
+            r, g, b = pixels[x, y]
+            _, s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+            # Warm up low-saturation bright areas (background/empty cells) while preserving card colors.
+            if s < 0.22 and v > 0.70:
+                nr = int(r * (1 - blend) + warm[0] * blend)
+                ng = int(g * (1 - blend) + warm[1] * blend)
+                nb = int(b * (1 - blend) + warm[2] * blend)
+                pixels[x, y] = (nr, ng, nb)
+    return styled
 
 
 def _draw_day_events(

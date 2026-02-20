@@ -374,7 +374,7 @@ def post_monthly_schedule(
 
     source = os.environ.get("MONTHLY_SCHEDULE_SOURCE", "").strip().lower() or "r2-json"
     render_config = ScheduleRenderConfig.from_env()
-    entries = []
+    render_entries = []
 
     if source in {"r2-json", "json", "r2"}:
         json_source = ScheduleJsonSourceConfig.from_env()
@@ -397,17 +397,24 @@ def post_monthly_schedule(
 
         if not isinstance(data, dict):
             raise click.ClickException("Schedule JSON must be an object")
-        entries = extract_month_entries_from_json(data, target_year, target_month, timezone=json_source.timezone)
+        render_entries = extract_month_entries_from_json(
+            data,
+            target_year,
+            target_month,
+            timezone=json_source.timezone,
+            include_adjacent=True,
+        )
     elif source == "notion":
         try:
             source_config = ScheduleSourceConfig.from_env()
         except ValueError as e:
             raise click.ClickException(str(e)) from e
         schedule_client = MonthlyScheduleNotionClient(config.notion.token, source_config)
-        entries = schedule_client.fetch_month_entries(target_year, target_month)
+        render_entries = schedule_client.fetch_month_entries(target_year, target_month, include_adjacent=True)
     else:
         raise click.ClickException("MONTHLY_SCHEDULE_SOURCE must be one of: r2-json, json, r2, notion")
-    image = render_monthly_schedule_image(target_year, target_month, entries, render_config)
+    image = render_monthly_schedule_image(target_year, target_month, render_entries, render_config)
+    caption_entries = [e for e in render_entries if e.day.year == target_year and e.day.month == target_month]
 
     mime_type = "image/jpeg"
     if output:
@@ -420,7 +427,7 @@ def post_monthly_schedule(
     caption = build_monthly_caption(
         target_year,
         target_month,
-        entries,
+        caption_entries,
         default_tags=config.default_tags,
         template=caption_template,
     )
@@ -443,7 +450,7 @@ def post_monthly_schedule(
     click.echo("=" * 34)
     click.echo(f"Target month: {target_year}-{target_month:02d}")
     click.echo(f"Source: {source}")
-    click.echo(f"Entries: {len(entries)}")
+    click.echo(f"Entries: {len(caption_entries)}")
     click.echo(f"Image size: {render_config.width}x{render_config.height} (3:4 expected)")
     if output:
         click.echo(f"Saved image: {output}")
