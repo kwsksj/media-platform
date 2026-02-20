@@ -357,6 +357,10 @@ def post_monthly_schedule(
     )
     from .r2_storage import R2Storage
 
+    def _shift_year_month(base_year: int, base_month: int, add: int) -> tuple[int, int]:
+        total = base_year * 12 + (base_month - 1) + add
+        return total // 12, (total % 12) + 1
+
     env_target = os.environ.get("MONTHLY_SCHEDULE_TARGET", "next").strip().lower()
     if env_target not in {"current", "next"}:
         env_target = "next"
@@ -374,11 +378,14 @@ def post_monthly_schedule(
 
     source = os.environ.get("MONTHLY_SCHEDULE_SOURCE", "").strip().lower() or "r2-json"
     render_config = ScheduleRenderConfig.from_env()
-    render_entries = []
+    target_months = [_shift_year_month(target_year, target_month, offset) for offset in range(3)]
+    month_items: list[dict] = []
 
+    json_source = None
+    data = None
+    schedule_client = None
     if source in {"r2-json", "json", "r2"}:
         json_source = ScheduleJsonSourceConfig.from_env()
-        data = None
 
         if json_source.url:
             import requests
@@ -397,37 +404,113 @@ def post_monthly_schedule(
 
         if not isinstance(data, dict):
             raise click.ClickException("Schedule JSON must be an object")
-        render_entries = extract_month_entries_from_json(
-            data,
-            target_year,
-            target_month,
-            timezone=json_source.timezone,
-            include_adjacent=True,
-        )
     elif source == "notion":
         try:
             source_config = ScheduleSourceConfig.from_env()
         except ValueError as e:
             raise click.ClickException(str(e)) from e
         schedule_client = MonthlyScheduleNotionClient(config.notion.token, source_config)
-        render_entries = schedule_client.fetch_month_entries(target_year, target_month, include_adjacent=True)
     else:
         raise click.ClickException("MONTHLY_SCHEDULE_SOURCE must be one of: r2-json, json, r2, notion")
-    image = render_monthly_schedule_image(target_year, target_month, render_entries, render_config)
-    caption_entries = [e for e in render_entries if e.day.year == target_year and e.day.month == target_month]
 
-    mime_type = "image/jpeg"
-    if output:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        mime_type = save_image(image, output)
-    filename = output.name if output else default_schedule_filename(target_year, target_month, mime_type)
-    image_bytes = image_to_bytes(image, mime_type)
+    for year_month in target_months:
+        y, m = year_month
+        if source in {"r2-json", "json", "r2"}:
+            assert isinstance(data, dict)
+            assert json_source is not None
+            render_entries = extract_month_entries_from_json(
+                data,
+                y,
+                m,
+                timezone=json_source.timezone,
+                include_adjacent=True,
+            )
+        else:
+            assert schedule_client is not None
+            render_entries = schedule_client.fetch_month_entries(y, m, include_adjacent=True)
+
+        caption_entries = [e for e in render_entries if e.day.year == y and e.day.month == m]
+        if not caption_entries:
+            continue
+
+        image = render_monthly_schedule_image(y, m, render_entries, render_config)
+        month_items.append(
+            {
+                "year": y,
+                "month": m,
+                "caption_entries": caption_entries,
+                "image": image,
+            }
+        )
+
+    if not month_items:
+        end_year, end_month = target_months[-1]
+        raise click.ClickException(
+            f"No schedule entries found from {target_year}-{target_month:02d} to {end_year}-{end_month:02d}"
+        )
+
+    saved_outputs: list[Path] = []
+    images_data: list[tuple[bytes, str, str]] = []
+    for index, item in enumerate(month_items):
+        image = item["image"]
+        year = item["year"]
+        month = item["month"]
+        mime_type = "image/jpeg"
+        filename = default_schedule_filename(year, month, mime_type)
+
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            if index == 0:
+                output_path = output
+            else:
+                suffix = output.suffix or ".jpg"
+                output_path = output.with_name(f"{output.stem}-{year}-{month:02d}{suffix}")
+            mime_type = save_image(image, output_path)
+            filename = output_path.name
+            saved_outputs.append(output_path)
+
+        image_bytes = image_to_bytes(image, mime_type)
+        images_data.append((image_bytes, filename, mime_type))
 
     caption_template = os.environ.get("MONTHLY_SCHEDULE_CAPTION_TEMPLATE", "").strip()
-    caption = build_monthly_caption(
-        target_year,
-        target_month,
-        caption_entries,
+    first_item = month_items[0]
+    first_year = first_item["year"]
+    first_month = first_item["month"]
+    first_entries = first_item["caption_entries"]
+    merged_entries = [entry for item in month_items for entry in item["caption_entries"]]
+
+    if len(month_items) > 1:
+        last_item = month_items[-1]
+        last_year = last_item["year"]
+        last_month = last_item["month"]
+        if first_year == last_year:
+            range_label = f"{first_year}年{first_month}月〜{last_month}月"
+        else:
+            range_label = f"{first_year}年{first_month}月〜{last_year}年{last_month}月"
+        multi_template = (
+            f"{range_label}の教室日程です。\n"
+            "最新の空き状況や詳細は予約ページをご確認ください。"
+        )
+        caption_for_ig_threads = build_monthly_caption(
+            first_year,
+            first_month,
+            merged_entries,
+            default_tags=config.default_tags,
+            template=multi_template,
+        )
+    else:
+        caption_for_ig_threads = build_monthly_caption(
+            first_year,
+            first_month,
+            first_entries,
+            default_tags=config.default_tags,
+            template=caption_template,
+        )
+
+    caption_for_x = build_monthly_caption(
+        first_year,
+        first_month,
+        first_entries,
         default_tags=config.default_tags,
         template=caption_template,
     )
@@ -438,22 +521,51 @@ def post_monthly_schedule(
         platforms = [platform]
 
     poster = Poster(config)
-    result = poster.post_custom_images(
-        images_data=[(image_bytes, filename, mime_type)],
-        caption=caption,
-        dry_run=dry_run,
-        platforms=platforms,
-    )
+    result = {"instagram": False, "x": False, "threads": False, "post_ids": {}, "errors": []}
+
+    ig_threads_platforms = [p for p in platforms if p in {"instagram", "threads"}]
+    if ig_threads_platforms:
+        ig_threads_result = poster.post_custom_images(
+            images_data=images_data,
+            caption=caption_for_ig_threads,
+            dry_run=dry_run,
+            platforms=ig_threads_platforms,
+        )
+        for key in ("instagram", "threads", "x"):
+            result[key] = result[key] or ig_threads_result[key]
+        result["post_ids"].update(ig_threads_result.get("post_ids", {}))
+        result["errors"].extend(ig_threads_result.get("errors", []))
+
+    if "x" in platforms:
+        x_result = poster.post_custom_images(
+            images_data=[images_data[0]],
+            caption=caption_for_x,
+            dry_run=dry_run,
+            platforms=["x"],
+        )
+        result["x"] = result["x"] or x_result["x"]
+        result["post_ids"].update(x_result.get("post_ids", {}))
+        result["errors"].extend(x_result.get("errors", []))
 
     click.echo("\n" + "=" * 34)
     click.echo("Monthly Schedule Post Summary")
     click.echo("=" * 34)
     click.echo(f"Target month: {target_year}-{target_month:02d}")
+    click.echo(
+        "Posted months: "
+        + ", ".join([f"{item['year']}-{item['month']:02d}" for item in month_items])
+    )
     click.echo(f"Source: {source}")
-    click.echo(f"Entries: {len(caption_entries)}")
+    for item in month_items:
+        click.echo(f"Entries {item['year']}-{item['month']:02d}: {len(item['caption_entries'])}")
     click.echo(f"Image size: {render_config.width}x{render_config.height} (3:4 expected)")
-    if output:
-        click.echo(f"Saved image: {output}")
+    if saved_outputs:
+        if len(saved_outputs) == 1:
+            click.echo(f"Saved image: {saved_outputs[0]}")
+        else:
+            click.echo("Saved images:")
+            for path in saved_outputs:
+                click.echo(f"  - {path}")
     click.echo(f"Instagram: {'OK' if result['instagram'] else '-'}")
     click.echo(f"Threads:   {'OK' if result['threads'] else '-'}")
     click.echo(f"X:         {'OK' if result['x'] else '-'}")
