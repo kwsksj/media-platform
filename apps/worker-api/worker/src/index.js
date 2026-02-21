@@ -1105,6 +1105,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
   let skippedNoEmail = 0;
   let skippedOptOut = 0;
   let skippedNotFound = 0;
+  let retryableFetchErrors = 0;
   const recipients = [];
 
   const pageResults = await Promise.all(
@@ -1116,7 +1117,11 @@ async function collectStudentNotificationRecipients(env, authorIds) {
 
   for (const entry of pageResults) {
     if (!entry.res.ok) {
-      skippedNotFound += 1;
+      if (Number(entry.res.status) === 404) {
+        skippedNotFound += 1;
+      } else {
+        retryableFetchErrors += 1;
+      }
       continue;
     }
 
@@ -1153,19 +1158,38 @@ async function collectStudentNotificationRecipients(env, authorIds) {
     const name = nickname || realName || "生徒さま";
 
     recipients.push({
-      authorId: entry.id,
+      authorIds: [entry.id],
       email: email.toLowerCase(),
       name,
     });
   }
 
-  const deduped = [];
-  const seenEmails = new Set();
-  for (const recipient of recipients) {
-    if (seenEmails.has(recipient.email)) continue;
-    seenEmails.add(recipient.email);
-    deduped.push(recipient);
+  if (retryableFetchErrors > 0) {
+    return {
+      ok: false,
+      recipients: [],
+      skippedNoEmail,
+      skippedOptOut,
+      skippedNotFound,
+      reason: "students_page_fetch_failed",
+    };
   }
+
+  const deduped = [];
+  const recipientByEmail = new Map();
+  for (const recipient of recipients) {
+    const existing = recipientByEmail.get(recipient.email);
+    if (!existing) {
+      recipientByEmail.set(recipient.email, {
+        authorIds: [...recipient.authorIds],
+        email: recipient.email,
+        name: recipient.name,
+      });
+      continue;
+    }
+    existing.authorIds = uniqueIds([...existing.authorIds, ...recipient.authorIds]);
+  }
+  deduped.push(...recipientByEmail.values());
 
   return {
     ok: true,
@@ -1220,6 +1244,9 @@ function buildUploadNotificationGuideHtml(links) {
 }
 
 function buildRecipientSalutation(recipient) {
+  const authorIds = uniqueIds(Array.isArray(recipient?.authorIds) ? recipient.authorIds : []);
+  if (authorIds.length > 1) return "生徒のみなさま";
+
   let base = asString(recipient?.name).trim();
   if (base.endsWith("様")) {
     base = base.slice(0, -1).trim();
@@ -1489,35 +1516,42 @@ async function loadPendingWorkNotificationBatch(env) {
   const invalidKeys = [];
   const items = [];
 
-  for (const key of keys) {
-    const raw = await env.STAR_KV.get(key);
-    if (!raw) {
-      invalidKeys.push(key);
-      continue;
-    }
+  const readBatchSize = 50;
+  for (let offset = 0; offset < keys.length; offset += readBatchSize) {
+    const batchKeys = keys.slice(offset, offset + readBatchSize);
+    const rawValues = await Promise.all(batchKeys.map((key) => env.STAR_KV.get(key)));
 
-    let parsed = null;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      invalidKeys.push(key);
-      continue;
-    }
+    for (let i = 0; i < batchKeys.length; i += 1) {
+      const key = batchKeys[i];
+      const raw = rawValues[i];
+      if (!raw) {
+        invalidKeys.push(key);
+        continue;
+      }
 
-    const workId = asString(parsed?.workId).trim();
-    if (!workId) {
-      invalidKeys.push(key);
-      continue;
+      let parsed = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        invalidKeys.push(key);
+        continue;
+      }
+
+      const workId = asString(parsed?.workId).trim();
+      if (!workId) {
+        invalidKeys.push(key);
+        continue;
+      }
+      validKeys.push(key);
+      items.push({
+        title: asString(parsed?.title).trim(),
+        completedDate: normalizeYmd(parsed?.completedDate) || asString(parsed?.completedDate).trim(),
+        classroom: asString(parsed?.classroom).trim(),
+        imageCount: Math.max(0, Number.isFinite(Number(parsed?.imageCount)) ? Math.floor(Number(parsed?.imageCount)) : 0),
+        authorIds: uniqueIds(Array.isArray(parsed?.authorIds) ? parsed.authorIds : []),
+        workId,
+      });
     }
-    validKeys.push(key);
-    items.push({
-      title: asString(parsed?.title).trim(),
-      completedDate: normalizeYmd(parsed?.completedDate) || asString(parsed?.completedDate).trim(),
-      classroom: asString(parsed?.classroom).trim(),
-      imageCount: Math.max(0, Number.isFinite(Number(parsed?.imageCount)) ? Math.floor(Number(parsed?.imageCount)) : 0),
-      authorIds: uniqueIds(Array.isArray(parsed?.authorIds) ? parsed.authorIds : []),
-      workId,
-    });
   }
 
   return { ok: true, reason: "", items, validKeys, invalidKeys };
@@ -1587,9 +1621,9 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       recipients: 0,
       sent: 0,
       failed: 0,
-      skippedNoEmail: recipientsResult.skippedNoEmail || 0,
-      skippedOptOut: recipientsResult.skippedOptOut || 0,
-      skippedNotFound: recipientsResult.skippedNotFound || authorIds.length,
+      skippedNoEmail: recipientsResult.skippedNoEmail ?? 0,
+      skippedOptOut: recipientsResult.skippedOptOut ?? 0,
+      skippedNotFound: recipientsResult.skippedNotFound ?? authorIds.length,
     };
   }
 
@@ -1601,7 +1635,9 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
     }
   }
 
-  const recipients = (recipientsResult.recipients || []).filter((recipient) => worksByAuthorId.has(recipient.authorId));
+  const recipients = (recipientsResult.recipients || []).filter((recipient) =>
+    (Array.isArray(recipient.authorIds) ? recipient.authorIds : []).some((authorId) => worksByAuthorId.has(authorId)),
+  );
   if (recipients.length === 0) {
     return {
       enabled: true,
@@ -1620,7 +1656,18 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
   let sent = 0;
   let failed = 0;
   for (const recipient of recipients) {
-    const worksForRecipient = worksByAuthorId.get(recipient.authorId) || [];
+    const authorIdsForRecipient = uniqueIds(Array.isArray(recipient.authorIds) ? recipient.authorIds : []);
+    const workSignatureSet = new Set();
+    const worksForRecipient = [];
+    for (const authorId of authorIdsForRecipient) {
+      const worksForAuthor = worksByAuthorId.get(authorId) || [];
+      for (const work of worksForAuthor) {
+        const signature = `${work.title}|${work.completedDate}|${work.classroom}|${work.imageCount}|${(work.authorIds || []).join(",")}`;
+        if (workSignatureSet.has(signature)) continue;
+        workSignatureSet.add(signature);
+        worksForRecipient.push(work);
+      }
+    }
     if (worksForRecipient.length === 0) continue;
     const content = buildUploadBatchNotificationContent(env, recipient, worksForRecipient);
     try {
@@ -1629,7 +1676,7 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
     } catch (error) {
       failed += 1;
       console.error("student upload batch notification failed", {
-        authorId: recipient.authorId,
+        authorIds: authorIdsForRecipient,
         works: worksForRecipient.length,
         message: asString(error?.message),
       });
@@ -1701,11 +1748,12 @@ async function handleNotifyStudentsAfterGalleryUpdate(env) {
 
   // Keep pending items when notification infra is not configured or when delivery was incomplete.
   const reason = asString(notification?.reason).trim();
-  const keepPendingReasons = new Set(["disabled", "not_configured", "invalid_from_email"]);
+  const keepPendingForConfigIssues = new Set(["disabled", "not_configured", "invalid_from_email"]).has(reason);
   const hasDeliveryFailure = Number(notification?.failed) > 0;
   const notAttempted = notification?.attempted === false;
-  const terminalNoopReasons = new Set(["no_items", "no_authors"]);
-  const shouldKeepPending = keepPendingReasons.has(reason) || hasDeliveryFailure || (notAttempted && !terminalNoopReasons.has(reason));
+  const isTerminalNoop = new Set(["no_items", "no_authors"]).has(reason);
+  const isRecoverableNotAttempted = notAttempted && !isTerminalNoop;
+  const shouldKeepPending = keepPendingForConfigIssues || hasDeliveryFailure || isRecoverableNotAttempted;
   const shouldDeletePending = !shouldKeepPending;
   if (shouldDeletePending) {
     await deleteKvKeys(env.STAR_KV, loaded.validKeys);
