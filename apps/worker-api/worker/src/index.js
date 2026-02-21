@@ -1219,6 +1219,18 @@ function buildUploadNotificationGuideHtml(links) {
   ].join("");
 }
 
+function buildRecipientSalutation(recipient) {
+  let base = asString(recipient?.name).trim();
+  if (base.endsWith("様")) {
+    base = base.slice(0, -1).trim();
+  }
+  if (base.endsWith("さま")) {
+    base = base.slice(0, -2).trim();
+  }
+  if (!base) base = "生徒";
+  return `${base}さま`;
+}
+
 function buildUploadNotificationContent(env, payload, recipient) {
   const title = asString(payload?.title).trim() || "新しい作品";
   const completedDateRaw = normalizeYmd(payload?.completedDate) || asString(payload?.completedDate).trim();
@@ -1229,13 +1241,13 @@ function buildUploadNotificationContent(env, payload, recipient) {
   const imageCount = Number.isFinite(Number(imageCountRaw)) ? Math.max(0, Math.floor(Number(imageCountRaw))) : 0;
   const links = resolveUploadNotificationLinks(env);
   const subjectOverride = getEnvString(env, "UPLOAD_NOTIFY_SUBJECT");
-  const subject = subjectOverride || `【木彫り教室】「${title}」を生徒作品ギャラリーに掲載しました`;
-  const salutation = `${asString(recipient?.name).trim() || "生徒さま"} 様`;
+  const subject = subjectOverride || `【木彫り教室】「${title}」を生徒作品ギャラリーに掲載しました！`;
+  const salutation = buildRecipientSalutation(recipient);
 
   const lines = [
     salutation,
     "",
-    "生徒作品ギャラリーに、あなたの作品を掲載しました。",
+    "生徒作品ギャラリーに、あなたの作品を掲載しました！",
     "",
     `作品名: ${title}`,
     `完成日: ${completedDate}`,
@@ -1243,7 +1255,7 @@ function buildUploadNotificationContent(env, payload, recipient) {
     `枚数: ${imageCount}枚`,
   ];
   appendUploadNotificationGuideText(lines, links);
-  lines.push("", "このメールは送信専用です。");
+  lines.push("", "このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。");
   const text = lines.join("\n");
 
   const htmlDetails = [
@@ -1254,10 +1266,10 @@ function buildUploadNotificationContent(env, payload, recipient) {
   ];
   const html = [
     `<p>${escapeHtml(salutation)}</p>`,
-    "<p>生徒作品ギャラリーに、あなたの作品を掲載しました。</p>",
+    "<p>生徒作品ギャラリーに、あなたの作品を掲載しました！</p>",
     `<ul>${htmlDetails.join("")}</ul>`,
     buildUploadNotificationGuideHtml(links),
-    "<p>このメールは送信専用です。</p>",
+    "<p>このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。</p>",
   ].join("");
 
   return { subject, text, html };
@@ -1308,10 +1320,10 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
     );
   }
 
-  const salutation = `${asString(recipient?.name).trim() || "生徒さま"} 様`;
+  const salutation = buildRecipientSalutation(recipient);
   const links = resolveUploadNotificationLinks(env);
   const subjectOverride = getEnvString(env, "UPLOAD_NOTIFY_SUBJECT");
-  const subject = subjectOverride || `【木彫り教室】生徒作品ギャラリーに${safeWorks.length}件の作品を掲載しました`;
+  const subject = subjectOverride || `【木彫り教室】生徒作品ギャラリーに${safeWorks.length}件の作品を掲載しました！`;
 
   const formatWorkLine = (work, index) => {
     const title = asString(work?.title).trim() || `作品${index + 1}`;
@@ -1324,14 +1336,14 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
   const lines = [
     salutation,
     "",
-    "生徒作品ギャラリーに、あなたの作品を掲載しました。",
+    "生徒作品ギャラリーに、あなたの作品を掲載しました！",
     `今回の掲載件数: ${safeWorks.length}件`,
     "",
     ...safeWorks.slice(0, 10).map((work, index) => formatWorkLine(work, index)),
   ];
   if (safeWorks.length > 10) lines.push(`- ほか ${safeWorks.length - 10}件`);
   appendUploadNotificationGuideText(lines, links);
-  lines.push("", "このメールは送信専用です。");
+  lines.push("", "このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。");
   const text = lines.join("\n");
 
   const htmlWorkItems = safeWorks
@@ -1349,11 +1361,11 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
 
   const html = [
     `<p>${escapeHtml(salutation)}</p>`,
-    "<p>生徒作品ギャラリーに、あなたの作品を掲載しました。</p>",
+    "<p>生徒作品ギャラリーに、あなたの作品を掲載しました！</p>",
     `<p>今回の掲載件数: ${safeWorks.length}件</p>`,
     `<ul>${htmlWorkItems.join("")}</ul>`,
     buildUploadNotificationGuideHtml(links),
-    "<p>このメールは送信専用です。</p>",
+    "<p>このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。</p>",
   ].join("");
 
   return { subject, text, html };
@@ -1687,9 +1699,14 @@ async function handleNotifyStudentsAfterGalleryUpdate(env) {
     );
   }
 
-  // Keep pending items when notification infra is not configured, so they can be sent later.
+  // Keep pending items when notification infra is not configured or when delivery was incomplete.
+  const reason = asString(notification?.reason).trim();
   const keepPendingReasons = new Set(["disabled", "not_configured", "invalid_from_email"]);
-  const shouldDeletePending = !keepPendingReasons.has(asString(notification?.reason).trim());
+  const hasDeliveryFailure = Number(notification?.failed) > 0;
+  const notAttempted = notification?.attempted === false;
+  const terminalNoopReasons = new Set(["no_items", "no_authors"]);
+  const shouldKeepPending = keepPendingReasons.has(reason) || hasDeliveryFailure || (notAttempted && !terminalNoopReasons.has(reason));
+  const shouldDeletePending = !shouldKeepPending;
   if (shouldDeletePending) {
     await deleteKvKeys(env.STAR_KV, loaded.validKeys);
   }
