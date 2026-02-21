@@ -47,6 +47,18 @@ NOTION_STUDENTS_DB_ID = "2fc57846aac281209bb2e7438629499a"
 NOTION_WORKS_READY_PROP = "整備済み"
 NOTION_WORKS_VENUE_PROP = ""
 NOTION_WORKS_AUTHOR_PROP = "作者"
+# NOTION_STUDENTS_EMAIL_PROP = "メールアドレス"
+# NOTION_STUDENTS_NOTIFY_OPT_IN_PROP = "作品通知希望" # 未指定時は全員通知
+
+# 生徒向けアップロード通知メール（任意）
+# UPLOAD_NOTIFY_ENABLED = "true"
+# UPLOAD_NOTIFY_FROM_EMAIL = "noreply@example.com"
+# UPLOAD_NOTIFY_FROM_NAME = "木彫り教室"
+# UPLOAD_NOTIFY_REPLY_TO = "support@example.com"
+# UPLOAD_NOTIFY_BCC = "owner@example.com"
+# UPLOAD_NOTIFY_SUBJECT = "作品画像を登録しました"
+# UPLOAD_NOTIFY_RESERVATION_APP_URL = "https://example.com/reservation"
+# UPLOAD_NOTIFY_GALLERY_URL = "https://example.com/gallery.html"
 
 # 参加者/生徒/タグインデックスのR2キー（任意）
 PARTICIPANTS_INDEX_KEY = "participants_index.json"
@@ -59,6 +71,8 @@ TAGS_INDEX_KEY = "tags_index.json"
 #   npx wrangler secret put UPLOAD_UI_SCHEDULE_INDEX_PUSH_TOKEN
 # 管理API保護用のBearerは secret で設定:
 #   npx wrangler secret put ADMIN_API_TOKEN
+# 生徒向け通知メール送信用（Resend APIキー、任意）:
+#   npx wrangler secret put UPLOAD_NOTIFY_RESEND_API_KEY
 
 # GitHub Actions（ギャラリー更新トリガー用）
 GITHUB_REPO = "kwsksj/media-platform"
