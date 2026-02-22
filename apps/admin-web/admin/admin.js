@@ -3613,18 +3613,55 @@ function initCuration() {
 
 function initHeaderActions() {
 	const triggerBtn = qs("#trigger-gallery-update");
-	triggerBtn.addEventListener("click", async () => {
-		if (!confirm("ギャラリーを更新しますか？（反映まで1〜2分かかります）")) return;
-		triggerBtn.disabled = true;
-		try {
-			await apiFetch("/admin/trigger-gallery-update", { method: "POST" });
-			showToast("更新をリクエストしました（1〜2分後に反映）");
-		} catch (err) {
-			showToast(`更新に失敗: ${err.message}`);
-		} finally {
-			triggerBtn.disabled = false;
-		}
-	});
+	if (triggerBtn) {
+		triggerBtn.addEventListener("click", async () => {
+			if (!confirm("ギャラリーを更新しますか？（反映まで1〜2分かかります）")) return;
+			triggerBtn.disabled = true;
+			try {
+				await apiFetch("/admin/trigger-gallery-update", { method: "POST" });
+				showToast("更新をリクエストしました（1〜2分後に反映）");
+			} catch (err) {
+				showToast(`更新に失敗: ${err.message}`);
+			} finally {
+				triggerBtn.disabled = false;
+			}
+		});
+	}
+
+	const notifyBtn = qs("#trigger-student-notify");
+	if (notifyBtn) {
+		notifyBtn.addEventListener("click", async () => {
+			if (!confirm("通知キューに溜まっている作品を送信しますか？")) return;
+			notifyBtn.disabled = true;
+			try {
+				const res = await apiFetch("/admin/notify/students-after-gallery-update", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({}),
+				});
+				const notification = res?.notification || {};
+				const sent = Number(notification?.sent) || 0;
+				const failed = Number(notification?.failed) || 0;
+				const recipients = Number(notification?.recipients) || 0;
+				const processed = Number(res?.processedWorks) || 0;
+				const pending = Number(res?.pendingWorks) || 0;
+				const reason = trimText(notification?.reason);
+
+				if (reason === "no_items") {
+					showToast("通知キューは空です");
+				} else if (failed > 0) {
+					showToast(`通知送信を実行: 送信${sent}件 / 失敗${failed}件 / 対象受信者${recipients}件（未処理キュー${pending}件）`);
+				} else {
+					showToast(`通知送信を実行: 送信${sent}件 / 対象受信者${recipients}件 / 処理作品${processed}件`);
+				}
+				await loadCurationQueue();
+			} catch (err) {
+				showToast(`通知送信に失敗: ${err.message}`);
+			} finally {
+				notifyBtn.disabled = false;
+			}
+		});
+	}
 }
 
 function initToolsActions() {

@@ -5,7 +5,7 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>先生専用アップロード</title>
 		<link rel="stylesheet" href="./shared/gallery-core.css" />
-		<link rel="stylesheet" href="./admin/admin.css?v=20260222-1" />
+		<link rel="stylesheet" href="./admin/admin.css?v=20260222-2" />
 	</head>
 	<body>
 		<div
@@ -63,11 +63,14 @@
 						<span class="header-meta__label">gallery.json</span>
 						<span id="gallery-updated-at" class="header-meta__value">-</span>
 					</div>
-					<button id="trigger-gallery-update" class="btn btn--primary" type="button">
-						ギャラリー更新
-					</button>
-				</div>
-			</header>
+						<button id="trigger-gallery-update" class="btn btn--primary" type="button">
+							ギャラリー更新
+						</button>
+						<button id="trigger-student-notify" class="btn" type="button">
+							通知送信（キュー）
+						</button>
+					</div>
+				</header>
 
 			<div id="banner" class="banner" hidden></div>
 
@@ -282,6 +285,6 @@
 			<div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="true"></div>
 		</div>
 
-		<script type="module" src="./admin/admin.js?v=20260212-4"></script>
+		<script type="module" src="./admin/admin.js?v=20260222-2"></script>
 	</body>
 </html>
