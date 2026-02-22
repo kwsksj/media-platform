@@ -1068,6 +1068,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
       skippedOptOut: 0,
       skippedNotFound: 0,
       reason: "no_authors",
+      terminalSkippedAuthorIds: [],
     };
   }
 
@@ -1080,6 +1081,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
       skippedOptOut: 0,
       skippedNotFound: ids.length,
       reason: "students_db_not_found",
+      terminalSkippedAuthorIds: [],
     };
   }
 
@@ -1092,6 +1094,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
       skippedOptOut: 0,
       skippedNotFound: ids.length,
       reason: "students_db_fetch_failed",
+      terminalSkippedAuthorIds: [],
     };
   }
 
@@ -1118,6 +1121,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
   let skippedNotFound = 0;
   let retryableFetchErrors = 0;
   const recipients = [];
+  const terminalSkippedAuthorIdSet = new Set();
 
   const pageResults = await Promise.all(
     ids.map(async (id) => {
@@ -1130,6 +1134,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
     if (!entry.res.ok) {
       if (Number(entry.res.status) === 404) {
         skippedNotFound += 1;
+        terminalSkippedAuthorIdSet.add(entry.id);
       } else {
         retryableFetchErrors += 1;
       }
@@ -1141,6 +1146,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
       const optInValue = extractBooleanLikeProperty(getPageProperty(page, notifyOptInProp));
       if (optInValue === false) {
         skippedOptOut += 1;
+        terminalSkippedAuthorIdSet.add(entry.id);
         continue;
       }
     }
@@ -1155,6 +1161,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
     }
     if (!email) {
       skippedNoEmail += 1;
+      terminalSkippedAuthorIdSet.add(entry.id);
       continue;
     }
 
@@ -1183,6 +1190,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
       skippedOptOut,
       skippedNotFound,
       reason: "students_page_fetch_failed",
+      terminalSkippedAuthorIds: [],
     };
   }
 
@@ -1209,6 +1217,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
     skippedOptOut,
     skippedNotFound,
     reason: "",
+    terminalSkippedAuthorIds: Array.from(terminalSkippedAuthorIdSet.values()),
   };
 }
 
@@ -1397,7 +1406,7 @@ async function enrichUploadBatchWorksWithNotionAuthors(env, worksRaw) {
     })
     .filter(Boolean);
 
-  const targets = works.filter((work) => work.workId && work.authorIds.length <= 1);
+  const targets = works.filter((work) => work.workId);
   const batchSize = 20;
   for (let offset = 0; offset < targets.length; offset += batchSize) {
     const batch = targets.slice(offset, offset + batchSize);
@@ -1409,9 +1418,9 @@ async function enrichUploadBatchWorksWithNotionAuthors(env, worksRaw) {
       const resolvedAuthorIds = resolveAuthorIdsFromWorkPage(env, pages[index]);
       if (resolvedAuthorIds.length === 0) continue;
       work.authorIds = resolvedAuthorIds;
-      if (work.pendingAuthorIdsDerived && isSameIdSet(previousPendingAuthorIds, previousAuthorIds)) {
-        work.pendingAuthorIds = [...resolvedAuthorIds];
-      }
+      const preservedPendingAuthorIds = previousPendingAuthorIds.filter((authorId) => resolvedAuthorIds.includes(authorId));
+      const newlyAddedAuthorIds = resolvedAuthorIds.filter((authorId) => !previousAuthorIds.includes(authorId));
+      work.pendingAuthorIds = uniqueIds([...preservedPendingAuthorIds, ...newlyAddedAuthorIds]);
     }
   }
 
@@ -1952,9 +1961,21 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
     };
   }
 
+  const terminalSkippedAuthorIds = uniqueIds(
+    Array.isArray(recipientsResult?.terminalSkippedAuthorIds) ? recipientsResult.terminalSkippedAuthorIds : [],
+  );
+  if (terminalSkippedAuthorIds.length > 0) {
+    for (const pendingAuthorIdSet of pendingAuthorIdsByWorkId.values()) {
+      terminalSkippedAuthorIds.forEach((authorId) => pendingAuthorIdSet.delete(authorId));
+    }
+  }
+
   const worksByAuthorId = new Map();
   for (const work of works) {
-    const pendingAuthorIds = uniqueIds(Array.isArray(work?.pendingAuthorIds) ? work.pendingAuthorIds : []);
+    const workId = asString(work?.workId).trim();
+    const pendingAuthorIds = workId
+      ? uniqueIds(Array.from(pendingAuthorIdsByWorkId.get(workId)?.values() || []))
+      : uniqueIds(Array.isArray(work?.pendingAuthorIds) ? work.pendingAuthorIds : []);
     for (const authorId of pendingAuthorIds) {
       if (!worksByAuthorId.has(authorId)) worksByAuthorId.set(authorId, []);
       worksByAuthorId.get(authorId).push(work);
@@ -2359,7 +2380,7 @@ async function handleAdminCurationWorkSyncStatus(request, env) {
     return {
       workId,
       pending,
-      galleryReflected: gallerySnapshot.workIdSet.has(workId),
+      galleryReflected: gallerySnapshot.ok ? gallerySnapshot.workIdSet.has(workId) : null,
       notification: {
         notificationState: deriveUiNotificationState(rawState, pending),
         rawState,
