@@ -1347,6 +1347,7 @@ function normalizeUploadBatchNotificationItems(itemsRaw) {
     if (authorIds.length === 0) continue;
     const pendingAuthorIds = pendingAuthorIdsRaw.length > 0 ? pendingAuthorIdsRaw.filter((id) => authorIds.includes(id)) : [...authorIds];
     if (pendingAuthorIds.length === 0) continue;
+    const pendingAuthorIdsDerived = Boolean(raw?.pendingAuthorIdsDerived) || isSameIdSet(pendingAuthorIds, authorIds);
 
     const signature = `${workId}|${title}|${completedDate}|${classroom}|${imageCount}|${authorIds.join(",")}|${pendingAuthorIds.join(",")}`;
     if (seen.has(signature)) continue;
@@ -1361,7 +1362,7 @@ function normalizeUploadBatchNotificationItems(itemsRaw) {
       imageCount,
       authorIds,
       pendingAuthorIds,
-      pendingAuthorIdsDerived: Boolean(raw?.pendingAuthorIdsDerived),
+      pendingAuthorIdsDerived,
     });
   }
   return normalized;
@@ -1720,6 +1721,7 @@ async function loadPendingWorkNotificationBatch(env) {
         invalidKeys.push(key);
         continue;
       }
+      const pendingAuthorIdsDerived = !hasPendingAuthorIdsField || isSameIdSet(pendingAuthorIds, mergedAuthorIds);
 
       validKeys.push(key);
       items.push({
@@ -1731,7 +1733,7 @@ async function loadPendingWorkNotificationBatch(env) {
         imageCount: Math.max(0, Number.isFinite(Number(parsed?.imageCount)) ? Math.floor(Number(parsed?.imageCount)) : 0),
         authorIds: mergedAuthorIds,
         pendingAuthorIds,
-        pendingAuthorIdsDerived: !hasPendingAuthorIdsField,
+        pendingAuthorIdsDerived,
         workId,
       });
     }
