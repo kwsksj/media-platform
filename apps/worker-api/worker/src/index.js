@@ -1354,7 +1354,7 @@ function normalizeUploadBatchNotificationItems(itemsRaw) {
     const pendingAuthorIdsRaw = uniqueIds(Array.isArray(raw?.pendingAuthorIds) ? raw.pendingAuthorIds : []);
     const authorIds = uniqueIds([...authorIdsRaw, ...pendingAuthorIdsRaw]);
     if (authorIds.length === 0) continue;
-    const pendingAuthorIds = pendingAuthorIdsRaw.length > 0 ? pendingAuthorIdsRaw.filter((id) => authorIds.includes(id)) : [...authorIds];
+    const pendingAuthorIds = pendingAuthorIdsRaw.length > 0 ? [...pendingAuthorIdsRaw] : [...authorIds];
     if (pendingAuthorIds.length === 0) continue;
     const pendingAuthorIdsDerived = Boolean(raw?.pendingAuthorIdsDerived) || isSameIdSet(pendingAuthorIds, authorIds);
 
@@ -1724,8 +1724,7 @@ async function loadPendingWorkNotificationBatch(env) {
       const hasPendingAuthorIdsField = Array.isArray(parsed?.pendingAuthorIds);
       const pendingAuthorIdsRaw = uniqueIds(hasPendingAuthorIdsField ? parsed.pendingAuthorIds : authorIds);
       const mergedAuthorIds = uniqueIds([...authorIds, ...pendingAuthorIdsRaw]);
-      const pendingAuthorIds =
-        pendingAuthorIdsRaw.length > 0 ? pendingAuthorIdsRaw.filter((id) => mergedAuthorIds.includes(id)) : [];
+      const pendingAuthorIds = pendingAuthorIdsRaw.length > 0 ? [...pendingAuthorIdsRaw] : [];
       if (mergedAuthorIds.length === 0 || pendingAuthorIds.length === 0) {
         invalidKeys.push(key);
         continue;
