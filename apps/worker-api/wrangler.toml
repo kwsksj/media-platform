@@ -59,6 +59,9 @@ NOTION_WORKS_AUTHOR_PROP = "作者"
 # UPLOAD_NOTIFY_SUBJECT = "作品画像を登録しました"
 # UPLOAD_NOTIFY_RESERVATION_APP_URL = "https://example.com/reservation"
 # UPLOAD_NOTIFY_GALLERY_URL = "https://example.com/gallery.html"
+# UPLOAD_NOTIFY_RESEND_MIN_INTERVAL_MS = "600" # 送信間隔（ms）。Resendの2req/sec制限対策
+# UPLOAD_NOTIFY_RESEND_RATE_LIMIT_RETRIES = "2" # 429時の再試行回数
+# UPLOAD_NOTIFY_RESEND_RATE_LIMIT_RETRY_MS = "1500" # 429時の最小待機時間（ms）
 
 # 参加者/生徒/タグインデックスのR2キー（任意）
 PARTICIPANTS_INDEX_KEY = "participants_index.json"
