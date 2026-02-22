@@ -1341,10 +1341,14 @@ function normalizeUploadBatchNotificationItems(itemsRaw) {
     const queuedAt = asString(raw?.queuedAt).trim();
     const imageCountRaw = Number(raw?.imageCount);
     const imageCount = Number.isFinite(imageCountRaw) ? Math.max(0, Math.floor(imageCountRaw)) : 0;
-    const authorIds = uniqueIds(Array.isArray(raw?.authorIds) ? raw.authorIds : []);
+    const authorIdsRaw = uniqueIds(Array.isArray(raw?.authorIds) ? raw.authorIds : []);
+    const pendingAuthorIdsRaw = uniqueIds(Array.isArray(raw?.pendingAuthorIds) ? raw.pendingAuthorIds : []);
+    const authorIds = uniqueIds([...authorIdsRaw, ...pendingAuthorIdsRaw]);
     if (authorIds.length === 0) continue;
+    const pendingAuthorIds = pendingAuthorIdsRaw.length > 0 ? pendingAuthorIdsRaw.filter((id) => authorIds.includes(id)) : [...authorIds];
+    if (pendingAuthorIds.length === 0) continue;
 
-    const signature = `${title}|${completedDate}|${classroom}|${imageCount}|${authorIds.join(",")}`;
+    const signature = `${workId}|${title}|${completedDate}|${classroom}|${imageCount}|${authorIds.join(",")}|${pendingAuthorIds.join(",")}`;
     if (seen.has(signature)) continue;
     seen.add(signature);
 
@@ -1356,6 +1360,8 @@ function normalizeUploadBatchNotificationItems(itemsRaw) {
       queuedAt,
       imageCount,
       authorIds,
+      pendingAuthorIds,
+      pendingAuthorIdsDerived: Boolean(raw?.pendingAuthorIdsDerived),
     });
   }
   return normalized;
@@ -1372,10 +1378,23 @@ function resolveAuthorIdsFromWorkPage(env, page) {
 async function enrichUploadBatchWorksWithNotionAuthors(env, worksRaw) {
   if (!Array.isArray(worksRaw) || worksRaw.length === 0) return [];
 
-  const works = worksRaw.map((work) => ({
-    ...work,
-    authorIds: uniqueIds(Array.isArray(work?.authorIds) ? work.authorIds : []),
-  }));
+  const works = worksRaw
+    .map((work) => {
+      const authorIds = uniqueIds(Array.isArray(work?.authorIds) ? work.authorIds : []);
+      const pendingAuthorIdsRaw = uniqueIds(Array.isArray(work?.pendingAuthorIds) ? work.pendingAuthorIds : []);
+      const mergedAuthorIds = uniqueIds([...authorIds, ...pendingAuthorIdsRaw]);
+      if (mergedAuthorIds.length === 0) return null;
+      const pendingAuthorIds =
+        pendingAuthorIdsRaw.length > 0 ? pendingAuthorIdsRaw.filter((id) => mergedAuthorIds.includes(id)) : [...mergedAuthorIds];
+      if (pendingAuthorIds.length === 0) return null;
+      return {
+        ...work,
+        authorIds: mergedAuthorIds,
+        pendingAuthorIds,
+        pendingAuthorIdsDerived: Boolean(work?.pendingAuthorIdsDerived),
+      };
+    })
+    .filter(Boolean);
 
   const targets = works.filter((work) => work.workId && work.authorIds.length <= 1);
   const batchSize = 20;
@@ -1384,9 +1403,14 @@ async function enrichUploadBatchWorksWithNotionAuthors(env, worksRaw) {
     const pages = await Promise.all(batch.map((work) => fetchWorkPage(env, work.workId)));
     for (let index = 0; index < batch.length; index += 1) {
       const work = batch[index];
+      const previousAuthorIds = [...work.authorIds];
+      const previousPendingAuthorIds = [...work.pendingAuthorIds];
       const resolvedAuthorIds = resolveAuthorIdsFromWorkPage(env, pages[index]);
       if (resolvedAuthorIds.length === 0) continue;
       work.authorIds = resolvedAuthorIds;
+      if (work.pendingAuthorIdsDerived && isSameIdSet(previousPendingAuthorIds, previousAuthorIds)) {
+        work.pendingAuthorIds = [...resolvedAuthorIds];
+      }
     }
   }
 
@@ -1583,7 +1607,27 @@ function buildPendingWorkNotificationItem(workId, payload) {
     classroom: asString(payload?.classroom).trim(),
     imageCount: Math.max(0, Number.isFinite(Number(imageCount)) ? Math.floor(Number(imageCount)) : 0),
     authorIds: uniqueAuthorIds,
+    pendingAuthorIds: [...uniqueAuthorIds],
     queuedAt: new Date().toISOString(),
+  };
+}
+
+function buildPendingWorkNotificationItemFromSnapshot(snapshot, pendingAuthorIdsRaw) {
+  const workId = asString(snapshot?.workId).trim();
+  const pendingAuthorIds = uniqueIds(Array.isArray(pendingAuthorIdsRaw) ? pendingAuthorIdsRaw : []);
+  const authorIds = uniqueIds([...(Array.isArray(snapshot?.authorIds) ? snapshot.authorIds : []), ...pendingAuthorIds]);
+  if (!workId || authorIds.length === 0 || pendingAuthorIds.length === 0) return null;
+
+  const imageCount = Number(snapshot?.imageCount);
+  return {
+    workId,
+    title: asString(snapshot?.title).trim(),
+    completedDate: normalizeYmd(snapshot?.completedDate) || asString(snapshot?.completedDate).trim(),
+    classroom: asString(snapshot?.classroom).trim(),
+    imageCount: Number.isFinite(imageCount) ? Math.max(0, Math.floor(imageCount)) : 0,
+    authorIds,
+    pendingAuthorIds,
+    queuedAt: asString(snapshot?.queuedAt).trim() || new Date().toISOString(),
   };
 }
 
@@ -1666,14 +1710,28 @@ async function loadPendingWorkNotificationBatch(env) {
         invalidKeys.push(key);
         continue;
       }
+      const authorIds = uniqueIds(Array.isArray(parsed?.authorIds) ? parsed.authorIds : []);
+      const hasPendingAuthorIdsField = Array.isArray(parsed?.pendingAuthorIds);
+      const pendingAuthorIdsRaw = uniqueIds(hasPendingAuthorIdsField ? parsed.pendingAuthorIds : authorIds);
+      const mergedAuthorIds = uniqueIds([...authorIds, ...pendingAuthorIdsRaw]);
+      const pendingAuthorIds =
+        pendingAuthorIdsRaw.length > 0 ? pendingAuthorIdsRaw.filter((id) => mergedAuthorIds.includes(id)) : [];
+      if (mergedAuthorIds.length === 0 || pendingAuthorIds.length === 0) {
+        invalidKeys.push(key);
+        continue;
+      }
+
       validKeys.push(key);
       items.push({
+        key,
         title: asString(parsed?.title).trim(),
         completedDate: normalizeYmd(parsed?.completedDate) || asString(parsed?.completedDate).trim(),
         classroom: asString(parsed?.classroom).trim(),
         queuedAt: asString(parsed?.queuedAt).trim(),
         imageCount: Math.max(0, Number.isFinite(Number(parsed?.imageCount)) ? Math.floor(Number(parsed?.imageCount)) : 0),
-        authorIds: uniqueIds(Array.isArray(parsed?.authorIds) ? parsed.authorIds : []),
+        authorIds: mergedAuthorIds,
+        pendingAuthorIds,
+        pendingAuthorIdsDerived: !hasPendingAuthorIdsField,
         workId,
       });
     }
@@ -1748,10 +1806,30 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       skippedNoEmail: 0,
       skippedOptOut: 0,
       skippedNotFound: 0,
+      workPendingAuthorIds: [],
     };
   }
 
   const works = await enrichUploadBatchWorksWithNotionAuthors(env, normalizedWorks);
+  const pendingAuthorIdsByWorkId = new Map(
+    works
+      .map((work) => {
+        const workId = asString(work?.workId).trim();
+        if (!workId) return null;
+        const pendingAuthorIds = uniqueIds(Array.isArray(work?.pendingAuthorIds) ? work.pendingAuthorIds : work.authorIds);
+        if (pendingAuthorIds.length === 0) return null;
+        return [workId, new Set(pendingAuthorIds)];
+      })
+      .filter(Boolean),
+  );
+  const serializeWorkPendingAuthorIds = () =>
+    Array.from(pendingAuthorIdsByWorkId.entries())
+      .map(([workId, pendingAuthorIdSet]) => ({
+        workId,
+        pendingAuthorIds: Array.from(pendingAuthorIdSet.values()),
+      }))
+      .filter((entry) => entry.workId);
+
   const config = getUploadNotificationConfig(env);
   if (!config.enabled) {
     await writeUploadNotificationWorkStatuses(
@@ -1783,6 +1861,7 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       skippedNoEmail: 0,
       skippedOptOut: 0,
       skippedNotFound: 0,
+      workPendingAuthorIds: serializeWorkPendingAuthorIds(),
     };
   }
 
@@ -1805,7 +1884,7 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       .filter(Boolean),
   );
 
-  const authorIds = uniqueIds(works.flatMap((work) => work.authorIds || []));
+  const authorIds = uniqueIds(Array.from(pendingAuthorIdsByWorkId.values()).flatMap((set) => Array.from(set.values())));
   if (authorIds.length === 0) {
     await writeUploadNotificationWorkStatuses(
       env,
@@ -1834,6 +1913,7 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       skippedNoEmail: 0,
       skippedOptOut: 0,
       skippedNotFound: 0,
+      workPendingAuthorIds: serializeWorkPendingAuthorIds(),
     };
   }
 
@@ -1866,12 +1946,14 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       skippedNoEmail: recipientsResult.skippedNoEmail ?? 0,
       skippedOptOut: recipientsResult.skippedOptOut ?? 0,
       skippedNotFound: recipientsResult.skippedNotFound ?? authorIds.length,
+      workPendingAuthorIds: serializeWorkPendingAuthorIds(),
     };
   }
 
   const worksByAuthorId = new Map();
   for (const work of works) {
-    for (const authorId of work.authorIds) {
+    const pendingAuthorIds = uniqueIds(Array.isArray(work?.pendingAuthorIds) ? work.pendingAuthorIds : []);
+    for (const authorId of pendingAuthorIds) {
       if (!worksByAuthorId.has(authorId)) worksByAuthorId.set(authorId, []);
       worksByAuthorId.get(authorId).push(work);
     }
@@ -1908,6 +1990,7 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       skippedNoEmail: recipientsResult.skippedNoEmail,
       skippedOptOut: recipientsResult.skippedOptOut,
       skippedNotFound: recipientsResult.skippedNotFound,
+      workPendingAuthorIds: serializeWorkPendingAuthorIds(),
     };
   }
 
@@ -1920,20 +2003,20 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
   const attemptStartedAt = new Date().toISOString();
   for (const recipient of recipients) {
     const authorIdsForRecipient = uniqueIds(Array.isArray(recipient.authorIds) ? recipient.authorIds : []);
-    const workSignatureSet = new Set();
+    const workIdSetForRecipient = new Set();
     const worksForRecipient = [];
     for (const authorId of authorIdsForRecipient) {
       const worksForAuthor = worksByAuthorId.get(authorId) || [];
       for (const work of worksForAuthor) {
-        const signature = `${work.title}|${work.completedDate}|${work.classroom}|${work.imageCount}|${(work.authorIds || []).join(",")}`;
-        if (workSignatureSet.has(signature)) continue;
-        workSignatureSet.add(signature);
+        const workId = asString(work?.workId).trim();
+        if (!workId || workIdSetForRecipient.has(workId)) continue;
+        workIdSetForRecipient.add(workId);
         worksForRecipient.push(work);
       }
     }
     if (worksForRecipient.length === 0) continue;
     const content = buildUploadBatchNotificationContent(env, recipient, worksForRecipient);
-    const workIdsForRecipient = uniqueIds(worksForRecipient.map((work) => asString(work?.workId).trim()).filter(Boolean));
+    const workIdsForRecipient = Array.from(workIdSetForRecipient.values());
     workIdsForRecipient.forEach((workId) => {
       const stats = deliveryStatsByWorkId.get(workId);
       if (!stats) return;
@@ -1955,6 +2038,9 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
         const stats = deliveryStatsByWorkId.get(workId);
         if (!stats) return;
         stats.sentRecipients += 1;
+        const pendingAuthorIdSet = pendingAuthorIdsByWorkId.get(workId);
+        if (!pendingAuthorIdSet) return;
+        authorIdsForRecipient.forEach((authorId) => pendingAuthorIdSet.delete(authorId));
       });
     } catch (error) {
       failed += 1;
@@ -2000,6 +2086,7 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
     skippedNoEmail: recipientsResult.skippedNoEmail,
     skippedOptOut: recipientsResult.skippedOptOut,
     skippedNotFound: recipientsResult.skippedNotFound,
+    workPendingAuthorIds: serializeWorkPendingAuthorIds(),
   };
 }
 
@@ -2052,25 +2139,73 @@ async function handleNotifyStudentsAfterGalleryUpdate(env) {
     );
   }
 
-  // Keep pending items when notification infra is not configured or when delivery was incomplete.
   const reason = asString(notification?.reason).trim();
   const keepPendingForConfigIssues = new Set(["disabled", "not_configured", "invalid_from_email"]).has(reason);
-  const hasDeliveryFailure = Number(notification?.failed) > 0;
   const notAttempted = notification?.attempted === false;
-  const isTerminalNoop = new Set(["no_items", "no_authors"]).has(reason);
-  const isRecoverableNotAttempted = notAttempted && !isTerminalNoop;
-  const shouldKeepPending = keepPendingForConfigIssues || hasDeliveryFailure || isRecoverableNotAttempted;
-  const shouldDeletePending = !shouldKeepPending;
-  if (shouldDeletePending) {
+  const clearAllForTerminalReason = new Set(["no_items", "no_authors", "no_recipients"]).has(reason);
+  const keepPendingForRecoverableNotAttempted = notAttempted && !clearAllForTerminalReason;
+
+  if (clearAllForTerminalReason) {
     await deleteKvKeys(env.STAR_KV, loaded.validKeys);
+    return okResponse({
+      notification,
+      pendingWorks: 0,
+      processedWorks: loaded.validKeys.length,
+      cleanedInvalid: loaded.invalidKeys.length,
+      queueCleared: true,
+    });
   }
 
+  if (keepPendingForConfigIssues || keepPendingForRecoverableNotAttempted) {
+    return okResponse({
+      notification,
+      pendingWorks: loaded.validKeys.length,
+      processedWorks: loaded.validKeys.length,
+      cleanedInvalid: loaded.invalidKeys.length,
+      queueCleared: false,
+    });
+  }
+
+  const remainingPendingByWorkId = new Map(
+    (Array.isArray(notification?.workPendingAuthorIds) ? notification.workPendingAuthorIds : [])
+      .map((entry) => {
+        const workId = asString(entry?.workId).trim();
+        if (!workId) return null;
+        return [workId, uniqueIds(Array.isArray(entry?.pendingAuthorIds) ? entry.pendingAuthorIds : [])];
+      })
+      .filter(Boolean),
+  );
+
+  const keysToDelete = [];
+  const itemsToUpsert = [];
+  for (const item of loaded.items) {
+    const workId = asString(item?.workId).trim();
+    const key = asString(item?.key).trim() || `${UPLOAD_NOTIFY_PENDING_WORK_PREFIX}${workId}`;
+    if (!workId || !key) continue;
+
+    const pendingAuthorIds = remainingPendingByWorkId.get(workId) || [];
+    const nextItem = buildPendingWorkNotificationItemFromSnapshot(item, pendingAuthorIds);
+    if (!nextItem) {
+      keysToDelete.push(key);
+      continue;
+    }
+    itemsToUpsert.push({ key, value: JSON.stringify(nextItem) });
+  }
+
+  if (keysToDelete.length > 0) {
+    await deleteKvKeys(env.STAR_KV, keysToDelete);
+  }
+  if (itemsToUpsert.length > 0) {
+    await Promise.all(itemsToUpsert.map((entry) => env.STAR_KV.put(entry.key, entry.value)));
+  }
+
+  const pendingWorks = itemsToUpsert.length;
   return okResponse({
     notification,
-    pendingWorks: shouldDeletePending ? 0 : loaded.validKeys.length,
+    pendingWorks,
     processedWorks: loaded.validKeys.length,
     cleanedInvalid: loaded.invalidKeys.length,
-    queueCleared: shouldDeletePending,
+    queueCleared: pendingWorks === 0,
   });
 }
 
