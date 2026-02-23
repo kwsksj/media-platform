@@ -2888,6 +2888,9 @@ function resolveNotificationSyncLabel(work) {
 	const stateValue = normalizeNotificationSyncState(work?.notificationState);
 	const reason = trimText(work?.notificationReason || "");
 	const pending = Boolean(work?.notificationPending);
+	if (["disabled", "not_configured", "invalid_from_email"].includes(reason)) {
+		return { label: "通知: 設定未完了", tone: "warn" };
+	}
 	if (pending) {
 		if (["retry_pending", "failed", "partial"].includes(stateValue)) return { label: "通知: 再送待ち", tone: "warn" };
 		if (["queued", "unknown"].includes(stateValue)) return { label: "通知: 送信待ち", tone: "pending" };
@@ -2897,9 +2900,6 @@ function resolveNotificationSyncLabel(work) {
 	if (stateValue === "partial") return { label: "通知: 一部送信", tone: "warn" };
 	if (stateValue === "no_recipients") return { label: "通知: 対象なし", tone: "warn" };
 	if (stateValue === "no_authors") return { label: "通知: 作者なし", tone: "warn" };
-	if (["disabled", "not_configured", "invalid_from_email"].includes(reason)) {
-		return { label: "通知: 設定未完了", tone: "warn" };
-	}
 	return { label: "通知: 未判定", tone: "neutral" };
 }
 
@@ -2919,9 +2919,11 @@ function toSyncToneClass(tone) {
 function mergeCurationWorkSyncStatus(work, syncStatus) {
 	const status = syncStatus && typeof syncStatus === "object" ? syncStatus : null;
 	const notification = status?.notification && typeof status.notification === "object" ? status.notification : null;
+	const galleryReflected =
+		status && typeof status.galleryReflected === "boolean" ? status.galleryReflected : null;
 	return {
 		...work,
-		galleryReflected: status ? Boolean(status.galleryReflected) : null,
+		galleryReflected,
 		notificationPending: status ? Boolean(status.pending) : false,
 		notificationState: notification ? trimText(notification.notificationState || notification.rawState || "") : "",
 		notificationReason: notification ? trimText(notification.reason || "") : "",
