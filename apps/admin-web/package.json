@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build:admin-indexes": "node ./scripts/build-admin-indexes.mjs",
+    "test:tags-index-refresh-nonblocking": "node ./scripts/test-tags-index-refresh-nonblocking.mjs",
     "test:upload-queue-smoke": "node ./scripts/test-upload-queue-smoke.mjs",
     "upload:admin-indexes": "bash ./scripts/upload-admin-indexes.sh",
     "upload:admin-html": "bash ./scripts/upload-admin-html.sh",

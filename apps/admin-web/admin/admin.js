@@ -40,6 +40,7 @@ const state = {
 		syncStatusLoaded: false,
 	},
 };
+let schemaLoadSequence = 0;
 
 function readStoredAdminToken() {
 	try {
@@ -1376,6 +1377,7 @@ async function loadGalleryUpdatedAt() {
 }
 
 async function loadSchemaAndIndexes() {
+	const loadSequence = ++schemaLoadSequence;
 	state.tagsIndexLoaded = false;
 	const tasks = [
 		apiFetch("/admin/notion/schema").then((d) => (state.schema = d)),
@@ -1406,13 +1408,15 @@ async function loadSchemaAndIndexes() {
 		state.tagsSearch = buildTagSearchList(state.tagsIndex);
 	}
 
-	const autoRefresh = await refreshTagsIndexOnUiOpen();
-	if (!bannerText && autoRefresh.warning) {
-		bannerText = autoRefresh.warning;
-		bannerType = "warn";
-	}
-
 	setBanner(bannerText, { type: bannerType });
+
+	// Avoid blocking initial render with expensive tags-index regeneration.
+	void refreshTagsIndexOnUiOpen().then((autoRefresh) => {
+		if (loadSequence !== schemaLoadSequence) return;
+		if (!bannerText && autoRefresh.warning) {
+			setBanner(autoRefresh.warning, { type: "warn" });
+		}
+	});
 }
 
 function populateSelect(select, { items, placeholder = "" }) {
