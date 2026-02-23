@@ -1239,11 +1239,6 @@ function resolveUploadNotificationLinks(env) {
 function appendUploadNotificationGuideText(lines, links) {
   lines.push(
     "",
-    "【表示名について】",
-    "作品ギャラリーでの生徒表示名は、「よやく・きろく」ページのニックネーム設定を使います。",
-    "ニックネーム未設定の場合は、一般公開ページではランダム名、登録生徒向けページでは登録名の頭文字２文字で表示されます。",
-    "表示名を変更したい場合は、「よやく・きろく」ページでニックネームを設定してください。",
-    "",
     "【ログインして見る】",
     "「よやく・きろく」ページでログイン後、【さくひんギャラリー】ボタンから、",
     "「ご自身の作品」と「みんなの作品」を分けて見られます。",
@@ -1252,34 +1247,36 @@ function appendUploadNotificationGuideText(lines, links) {
     "【一般公開ページ（ログイン不要）】",
     "ログインなしで見られる生徒作品ページはこちらです。",
     links.publicGalleryUrl,
+    "",
+    "【表示名について】",
+    "作品ギャラリーでの生徒表示名は、「よやく・きろく」ページのニックネーム設定を使います。",
+    "ニックネーム未設定の場合は、一般公開ページではランダム名、登録生徒向けページでは登録名の頭文字２文字で表示されます。",
+    "表示名を変更したい場合は、「よやく・きろく」ページでニックネームを設定してください。",
   );
 }
 
 function buildUploadNotificationGuideHtml(links) {
   return [
-    "<p><strong>【表示名について】</strong><br>作品ギャラリーでの生徒表示名は、「よやく・きろく」ページのニックネーム設定を使います。<br>ニックネーム未設定の場合は、一般公開ページではランダム名、登録生徒向けページでは登録名の頭文字２文字で表示されます。<br>表示名を変更したい場合は、「よやく・きろく」ページでニックネームを設定してください。</p>",
     `<p><strong>【ログインして見る】</strong><br>「よやく・きろく」ページでログイン後、【さくひんギャラリー】ボタンから、<br>「ご自身の作品」と「みんなの作品」を分けて見られます。<br><a href="${escapeHtml(links.bookingUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(links.bookingUrl)}</a></p>`,
     `<p><strong>【一般公開ページ（ログイン不要）】</strong><br>ログインなしで見られる生徒作品ページはこちらです。<br><a href="${escapeHtml(links.publicGalleryUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(links.publicGalleryUrl)}</a></p>`,
+    "<p><strong>【表示名について】</strong><br>作品ギャラリーでの生徒表示名は、「よやく・きろく」ページのニックネーム設定を使います。<br>ニックネーム未設定の場合は、一般公開ページではランダム名、登録生徒向けページでは登録名の頭文字２文字で表示されます。<br>表示名を変更したい場合は、「よやく・きろく」ページでニックネームを設定してください。</p>",
   ].join("");
 }
 
 function appendUploadNotificationCountNoteText(lines) {
   lines.push(
     "",
-    "※掲載件数について",
+    "【掲載件数について】",
     "1つの作品に複数の作者を設定したり、個別写真と集合写真を別々に登録することがあるため、",
     "掲載件数は実際の作品数と一致しない場合があります。",
   );
 }
 
 function buildUploadNotificationCountNoteHtml() {
-  return "<p><strong>※掲載件数について</strong><br>1つの作品に複数の作者を設定したり、個別写真と集合写真を別々に登録することがあるため、<br>掲載件数は実際の作品数と一致しない場合があります。</p>";
+  return "<p><strong>【掲載件数について】</strong><br>1つの作品に複数の作者を設定したり、個別写真と集合写真を別々に登録することがあるため、<br>掲載件数は実際の作品数と一致しない場合があります。</p>";
 }
 
 function buildRecipientSalutation(recipient) {
-  const authorIds = uniqueIds(Array.isArray(recipient?.authorIds) ? recipient.authorIds : []);
-  if (authorIds.length > 1) return "生徒のみなさま";
-
   let base = asString(recipient?.name).trim();
   if (base.endsWith("様")) {
     base = base.slice(0, -1).trim();
@@ -1314,8 +1311,8 @@ function buildUploadNotificationContent(env, payload, recipient) {
     `教室: ${classroom}`,
     `枚数: ${imageCount}枚`,
   ];
-  appendUploadNotificationCountNoteText(lines);
   appendUploadNotificationGuideText(lines, links);
+  appendUploadNotificationCountNoteText(lines);
   lines.push("", "このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。");
   const text = lines.join("\n");
 
@@ -1329,8 +1326,8 @@ function buildUploadNotificationContent(env, payload, recipient) {
     `<p>${escapeHtml(salutation)}</p>`,
     "<p>生徒作品ギャラリーに、あなたが作者として登録された作品写真を掲載しました！</p>",
     `<ul>${htmlDetails.join("")}</ul>`,
-    buildUploadNotificationCountNoteHtml(),
     buildUploadNotificationGuideHtml(links),
+    buildUploadNotificationCountNoteHtml(),
     "<p>このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。</p>",
   ].join("");
 
@@ -1465,8 +1462,8 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
     ...safeWorks.slice(0, 10).map((work, index) => formatWorkLine(work, index)),
   ];
   if (safeWorks.length > 10) lines.push(`- ほか ${safeWorks.length - 10}件`);
-  appendUploadNotificationCountNoteText(lines);
   appendUploadNotificationGuideText(lines, links);
+  appendUploadNotificationCountNoteText(lines);
   lines.push("", "このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。");
   const text = lines.join("\n");
 
@@ -1488,8 +1485,8 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
     "<p>生徒作品ギャラリーに、あなたが作者として登録された作品写真を掲載しました！</p>",
     `<p>今回の掲載登録件数: ${safeWorks.length}件</p>`,
     `<ul>${htmlWorkItems.join("")}</ul>`,
-    buildUploadNotificationCountNoteHtml(),
     buildUploadNotificationGuideHtml(links),
+    buildUploadNotificationCountNoteHtml(),
     "<p>このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。</p>",
   ].join("");
 
