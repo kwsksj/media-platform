@@ -1323,13 +1323,13 @@ function buildUploadNotificationContent(env, payload, recipient) {
     `<li><strong>枚数:</strong> ${imageCount}枚</li>`,
   ];
   const html = [
-    `<p>${escapeHtml(salutation)}</p>`,
-    "<p>生徒作品ギャラリーに、あなたが作者として登録された作品写真を掲載しました！</p>",
-    `<ul>${htmlDetails.join("")}</ul>`,
-    buildUploadNotificationGuideHtml(links),
-    buildUploadNotificationCountNoteHtml(),
-    "<p>このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。</p>",
-  ].join("");
+		`<p>${escapeHtml(salutation)}</p>`,
+		"<p>生徒作品ギャラリーに、あなたが作者として登録された作品写真を掲載しました！</p>",
+		`<ul>${htmlDetails.join("")}</ul>`,
+		"<p>このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。</p>",
+		buildUploadNotificationGuideHtml(links),
+		buildUploadNotificationCountNoteHtml(),
+	].join("");
 
   return { subject, text, html };
 }
