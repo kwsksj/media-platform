@@ -2733,6 +2733,56 @@ async function handleNotionUpdateTag(request, env) {
   };
 
   const directTagId = asString(payload.id).trim();
+  const bulkParentIds = uniqueIds(Array.isArray(payload.parentIds) ? payload.parentIds : []).filter(Boolean);
+  const bulkChildIds = uniqueIds(Array.isArray(payload.childIds) ? payload.childIds : []).filter(Boolean);
+  const hasBulkRelationUpdate = bulkParentIds.length > 0 || bulkChildIds.length > 0;
+  if (!directTagId && hasBulkRelationUpdate) {
+    if (bulkParentIds.length === 0 || bulkChildIds.length === 0) return badRequest("missing parentIds or childIds");
+
+    const overlap = bulkParentIds.filter((id) => bulkChildIds.includes(id));
+    if (overlap.length > 0) return badRequest("parentIds and childIds must be disjoint");
+
+    const updatedChildren = [];
+    for (const childId of bulkChildIds) {
+      const updatedChild = await patchTagRelations({
+        id: childId,
+        addParentIds: bulkParentIds,
+      });
+      if (!updatedChild.ok) {
+        return jsonResponse(
+          { ok: false, error: updatedChild.error || "failed to update child tag relation", detail: updatedChild.detail || null },
+          500,
+        );
+      }
+      updatedChildren.push(updatedChild.tag);
+    }
+
+    const updatedParents = [];
+    if (childrenProp) {
+      for (const parentId of bulkParentIds) {
+        const updatedParent = await patchTagRelations({
+          id: parentId,
+          addChildIds: bulkChildIds,
+        });
+        if (!updatedParent.ok) {
+          return jsonResponse(
+            { ok: false, error: updatedParent.error || "failed to update parent tag relation", detail: updatedParent.detail || null },
+            500,
+          );
+        }
+        updatedParents.push(updatedParent.tag);
+      }
+    }
+
+    return okResponse(
+      await withTagsIndex({
+        parent_ids: bulkParentIds,
+        child_ids: bulkChildIds,
+        parents: updatedParents,
+        children: updatedChildren,
+      }),
+    );
+  }
   if (directTagId) {
     const addParentIds = Array.isArray(payload.addParentIds) ? payload.addParentIds : [];
     const addChildIds = Array.isArray(payload.addChildIds) ? payload.addChildIds : [];
