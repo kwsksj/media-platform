@@ -51,15 +51,15 @@ NOTION_WORKS_AUTHOR_PROP = "作者"
 # NOTION_STUDENTS_NOTIFY_OPT_IN_PROP = "作品通知希望" # 未指定時は全員通知
 
 # 生徒向けアップロード通知メール（任意）
-# UPLOAD_NOTIFY_ENABLED = "true"
-# UPLOAD_NOTIFY_FROM_EMAIL = "noreply@example.com"
-# UPLOAD_NOTIFY_FROM_NAME = "木彫り教室"
-# UPLOAD_NOTIFY_REPLY_TO = "support@example.com"
-# UPLOAD_NOTIFY_BCC = "owner@example.com"
+UPLOAD_NOTIFY_ENABLED = "true"
+UPLOAD_NOTIFY_FROM_EMAIL = "notice@mail.kibori-class.net"
+UPLOAD_NOTIFY_FROM_NAME = "川崎誠二 木彫り教室"
+UPLOAD_NOTIFY_REPLY_TO = "shiawasenahito3000@gmail.com"
+UPLOAD_NOTIFY_BCC = "shiawasenahito3000@gmail.com"
 # UPLOAD_NOTIFY_SUBJECT = "作品画像を登録しました"
-# UPLOAD_NOTIFY_RESERVATION_APP_URL = "https://example.com/reservation"
-# UPLOAD_NOTIFY_GALLERY_URL = "https://example.com/gallery.html"
-# UPLOAD_NOTIFY_RESEND_MIN_INTERVAL_MS = "600" # 送信間隔（ms）。Resendの2req/sec制限対策
+UPLOAD_NOTIFY_RESERVATION_APP_URL = "https://www.kibori-class.net/booking"
+UPLOAD_NOTIFY_GALLERY_URL = "https://www.kibori-class.net/gallery"
+UPLOAD_NOTIFY_RESEND_MIN_INTERVAL_MS = "1000" # 送信間隔（ms）。Resendの2req/sec制限対策
 # UPLOAD_NOTIFY_RESEND_RATE_LIMIT_RETRIES = "2" # 429時の再試行回数
 # UPLOAD_NOTIFY_RESEND_RATE_LIMIT_RETRY_MS = "1500" # 429時の最小待機時間（ms）
 

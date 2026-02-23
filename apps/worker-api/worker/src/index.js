@@ -1515,7 +1515,7 @@ function getUploadNotificationConfig(env) {
   const replyToRaw = getEnvString(env, "UPLOAD_NOTIFY_REPLY_TO");
   const replyTo = isLikelyEmail(replyToRaw) ? replyToRaw : "";
   const bcc = parseEmailList(getEnvString(env, "UPLOAD_NOTIFY_BCC"));
-  const minIntervalMs = getEnvInteger(env, "UPLOAD_NOTIFY_RESEND_MIN_INTERVAL_MS", 600, { min: 0, max: 60000 });
+  const minIntervalMs = getEnvInteger(env, "UPLOAD_NOTIFY_RESEND_MIN_INTERVAL_MS", 1000, { min: 0, max: 60000 });
   const rateLimitRetryMs = getEnvInteger(env, "UPLOAD_NOTIFY_RESEND_RATE_LIMIT_RETRY_MS", 1500, { min: 250, max: 120000 });
   const rateLimitRetries = getEnvInteger(env, "UPLOAD_NOTIFY_RESEND_RATE_LIMIT_RETRIES", 2, { min: 0, max: 10 });
 
