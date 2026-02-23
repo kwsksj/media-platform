@@ -1301,13 +1301,13 @@ function buildUploadNotificationContent(env, payload, recipient) {
   const imageCount = Number.isFinite(Number(imageCountRaw)) ? Math.max(0, Math.floor(Number(imageCountRaw))) : 0;
   const links = resolveUploadNotificationLinks(env);
   const subjectOverride = getEnvString(env, "UPLOAD_NOTIFY_SUBJECT");
-  const subject = subjectOverride || `【木彫り教室】「${title}」を生徒作品ギャラリーに追加しました`;
+  const subject = subjectOverride || `「${title}」を生徒作品ギャラリーに掲載しました！`;
   const salutation = buildRecipientSalutation(recipient);
 
   const lines = [
     salutation,
     "",
-    "生徒作品ギャラリーに、あなたが作者として登録された作品写真を追加しました。",
+    "生徒作品ギャラリーに、あなたが作者として登録された作品写真を掲載しました！",
     "",
     `作品名: ${title}`,
     `完成日: ${completedDate}`,
@@ -1327,7 +1327,7 @@ function buildUploadNotificationContent(env, payload, recipient) {
   ];
   const html = [
     `<p>${escapeHtml(salutation)}</p>`,
-    "<p>生徒作品ギャラリーに、あなたが作者として登録された作品写真を追加しました。</p>",
+    "<p>生徒作品ギャラリーに、あなたが作者として登録された作品写真を掲載しました！</p>",
     `<ul>${htmlDetails.join("")}</ul>`,
     buildUploadNotificationCountNoteHtml(),
     buildUploadNotificationGuideHtml(links),
@@ -1446,7 +1446,7 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
   const salutation = buildRecipientSalutation(recipient);
   const links = resolveUploadNotificationLinks(env);
   const subjectOverride = getEnvString(env, "UPLOAD_NOTIFY_SUBJECT");
-  const subject = subjectOverride || `【木彫り教室】生徒作品ギャラリーに${safeWorks.length}件の作品写真を追加しました`;
+  const subject = subjectOverride || `生徒作品ギャラリーに${safeWorks.length}件の作品写真を掲載しました！`;
 
   const formatWorkLine = (work, index) => {
     const title = asString(work?.title).trim() || `作品${index + 1}`;
@@ -1459,7 +1459,7 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
   const lines = [
     salutation,
     "",
-    "生徒作品ギャラリーに、あなたが作者として登録された作品写真を追加しました。",
+    "生徒作品ギャラリーに、あなたが作者として登録された作品写真を掲載しました！",
     `今回の掲載登録件数: ${safeWorks.length}件`,
     "",
     ...safeWorks.slice(0, 10).map((work, index) => formatWorkLine(work, index)),
@@ -1485,7 +1485,7 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
 
   const html = [
     `<p>${escapeHtml(salutation)}</p>`,
-    "<p>生徒作品ギャラリーに、あなたが作者として登録された作品写真を追加しました。</p>",
+    "<p>生徒作品ギャラリーに、あなたが作者として登録された作品写真を掲載しました！</p>",
     `<p>今回の掲載登録件数: ${safeWorks.length}件</p>`,
     `<ul>${htmlWorkItems.join("")}</ul>`,
     buildUploadNotificationCountNoteHtml(),
