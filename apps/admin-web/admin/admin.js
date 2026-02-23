@@ -36,6 +36,8 @@ const state = {
 		works: [],
 		filtered: [],
 		currentIndex: -1,
+		syncSnapshotAt: "",
+		syncStatusLoaded: false,
 	},
 };
 
@@ -2878,6 +2880,93 @@ function applyCurationFilters() {
 	renderCurationGrid();
 }
 
+function normalizeNotificationSyncState(value) {
+	return trimText(value || "").toLowerCase();
+}
+
+function resolveNotificationSyncLabel(work) {
+	const stateValue = normalizeNotificationSyncState(work?.notificationState);
+	const reason = trimText(work?.notificationReason || "");
+	const pending = Boolean(work?.notificationPending);
+	if (["disabled", "not_configured", "invalid_from_email"].includes(reason)) {
+		return { label: "通知: 設定未完了", tone: "warn" };
+	}
+	if (pending) {
+		if (["retry_pending", "failed", "partial"].includes(stateValue)) return { label: "通知: 再送待ち", tone: "warn" };
+		if (["queued", "unknown"].includes(stateValue)) return { label: "通知: 送信待ち", tone: "pending" };
+		return { label: "通知: キュー保持中", tone: "pending" };
+	}
+	if (stateValue === "sent") return { label: "通知: 送信済み", tone: "ok" };
+	if (stateValue === "partial") return { label: "通知: 一部送信", tone: "warn" };
+	if (stateValue === "no_recipients") return { label: "通知: 対象なし", tone: "warn" };
+	if (stateValue === "no_authors") return { label: "通知: 作者なし", tone: "warn" };
+	return { label: "通知: 未判定", tone: "neutral" };
+}
+
+function resolveGallerySyncLabel(work) {
+	if (work?.galleryReflected === true) return { label: "ギャラリー: 反映済み", tone: "ok" };
+	if (work?.galleryReflected === false) return { label: "ギャラリー: 未反映", tone: "pending" };
+	return { label: "ギャラリー: 未判定", tone: "neutral" };
+}
+
+function toSyncToneClass(tone) {
+	if (tone === "ok") return "chip--sync-ok";
+	if (tone === "warn") return "chip--sync-warn";
+	if (tone === "pending") return "chip--sync-pending";
+	return "chip--sync-neutral";
+}
+
+function mergeCurationWorkSyncStatus(work, syncStatus) {
+	const status = syncStatus && typeof syncStatus === "object" ? syncStatus : null;
+	const notification = status?.notification && typeof status.notification === "object" ? status.notification : null;
+	const galleryReflected =
+		status && typeof status.galleryReflected === "boolean" ? status.galleryReflected : null;
+	return {
+		...work,
+		galleryReflected,
+		notificationPending: status ? Boolean(status.pending) : false,
+		notificationState: notification ? trimText(notification.notificationState || notification.rawState || "") : "",
+		notificationReason: notification ? trimText(notification.reason || "") : "",
+		notificationUpdatedAt: notification ? trimText(notification.updatedAt || "") : "",
+	};
+}
+
+async function fetchCurationWorkSyncStatus(workIds) {
+	const ids = Array.isArray(workIds) ? [...new Set(workIds.map(trimText).filter(Boolean))] : [];
+	if (ids.length === 0) {
+		return {
+			statusByWorkId: new Map(),
+			pendingCount: 0,
+			galleryLoaded: false,
+			notificationStatusLoaded: true,
+			notificationStatusReason: "",
+			snapshotAt: "",
+		};
+	}
+	const res = await apiFetch("/admin/curation/work-sync-status", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ workIds: ids }),
+	});
+	const statusByWorkId = new Map(
+		(Array.isArray(res?.statuses) ? res.statuses : [])
+			.map((entry) => {
+				const workId = trimText(entry?.workId);
+				if (!workId) return null;
+				return [workId, entry];
+			})
+			.filter(Boolean),
+	);
+	return {
+		statusByWorkId,
+		pendingCount: Number(res?.pendingCount) || 0,
+		galleryLoaded: Boolean(res?.galleryLoaded),
+		notificationStatusLoaded: Boolean(res?.notificationStatusLoaded),
+		notificationStatusReason: trimText(res?.notificationStatusReason),
+		snapshotAt: trimText(res?.snapshotAt),
+	};
+}
+
 function renderWorkCard(work, index) {
 	const coverUrl = work.images?.[0]?.url || "";
 	const title = work.title || "（無題）";
@@ -2896,6 +2985,22 @@ function renderWorkCard(work, index) {
 			el("span", { text: work.classroom || "-" }),
 		]),
 	);
+	const syncFlags = el("div", { class: "work-card__flags" });
+	const gallerySync = resolveGallerySyncLabel(work);
+	const notificationSync = resolveNotificationSyncLabel(work);
+	syncFlags.appendChild(
+		el("span", {
+			class: `chip chip--sync ${toSyncToneClass(gallerySync.tone)}`,
+			text: gallerySync.label,
+		}),
+	);
+	syncFlags.appendChild(
+		el("span", {
+			class: `chip chip--sync ${toSyncToneClass(notificationSync.tone)}`,
+			text: notificationSync.label,
+		}),
+	);
+	meta.appendChild(syncFlags);
 	card.appendChild(meta);
 
 	card.addEventListener("click", () => openWorkModal(index));
@@ -2926,13 +3031,35 @@ function renderCurationGrid() {
 	state.curation.filtered.forEach((w, idx) => {
 		root.appendChild(renderWorkCard(w, idx));
 	});
-	qs("#curation-status").textContent = `${state.curation.filtered.length}件（全${state.curation.works.length}件）`;
+	const reflectedCount = state.curation.filtered.filter((work) => work.galleryReflected === true).length;
+	const pendingNotifyCount = state.curation.filtered.filter((work) => work.notificationPending).length;
+	const sentNotifyCount = state.curation.filtered.filter((work) => normalizeNotificationSyncState(work.notificationState) === "sent").length;
+	const syncSuffix = state.curation.syncSnapshotAt ? ` / 同期: ${formatIso(state.curation.syncSnapshotAt)}` : "";
+	const syncWarn = state.curation.syncStatusLoaded ? "" : " / 同期状態: 一部未取得";
+	qs("#curation-status").textContent =
+		`${state.curation.filtered.length}件（全${state.curation.works.length}件）` +
+		` / 反映済${reflectedCount}件 / 通知送信済${sentNotifyCount}件 / 通知待ち${pendingNotifyCount}件` +
+		syncSuffix +
+		syncWarn;
 }
 
 async function loadCurationQueue() {
 	qs("#curation-status").textContent = "読み込み中…";
 	try {
-		state.curation.works = await fetchAllWorksForCuration();
+		let works = await fetchAllWorksForCuration();
+		state.curation.syncSnapshotAt = "";
+		state.curation.syncStatusLoaded = false;
+		try {
+			const sync = await fetchCurationWorkSyncStatus(works.map((work) => work.id));
+			works = works.map((work) => mergeCurationWorkSyncStatus(work, sync.statusByWorkId.get(trimText(work.id))));
+			state.curation.syncSnapshotAt = sync.snapshotAt || "";
+			state.curation.syncStatusLoaded = Boolean(sync.galleryLoaded && sync.notificationStatusLoaded);
+		} catch (syncErr) {
+			console.error("failed to load curation sync status", syncErr);
+			works = works.map((work) => mergeCurationWorkSyncStatus(work, null));
+			showToast("同期状態の取得に失敗しました（作品一覧は表示しています）");
+		}
+		state.curation.works = works;
 		state.curation.filtered = [...state.curation.works];
 
 		const classroomSelect = qs("#curation-classroom");
@@ -3488,18 +3615,55 @@ function initCuration() {
 
 function initHeaderActions() {
 	const triggerBtn = qs("#trigger-gallery-update");
-	triggerBtn.addEventListener("click", async () => {
-		if (!confirm("ギャラリーを更新しますか？（反映まで1〜2分かかります）")) return;
-		triggerBtn.disabled = true;
-		try {
-			await apiFetch("/admin/trigger-gallery-update", { method: "POST" });
-			showToast("更新をリクエストしました（1〜2分後に反映）");
-		} catch (err) {
-			showToast(`更新に失敗: ${err.message}`);
-		} finally {
-			triggerBtn.disabled = false;
-		}
-	});
+	if (triggerBtn) {
+		triggerBtn.addEventListener("click", async () => {
+			if (!confirm("ギャラリーを更新しますか？（反映まで1〜2分かかります）")) return;
+			triggerBtn.disabled = true;
+			try {
+				await apiFetch("/admin/trigger-gallery-update", { method: "POST" });
+				showToast("更新をリクエストしました（1〜2分後に反映）");
+			} catch (err) {
+				showToast(`更新に失敗: ${err.message}`);
+			} finally {
+				triggerBtn.disabled = false;
+			}
+		});
+	}
+
+	const notifyBtn = qs("#trigger-student-notify");
+	if (notifyBtn) {
+		notifyBtn.addEventListener("click", async () => {
+			if (!confirm("通知キューに溜まっている作品を送信しますか？")) return;
+			notifyBtn.disabled = true;
+			try {
+				const res = await apiFetch("/admin/notify/students-after-gallery-update", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({}),
+				});
+				const notification = res?.notification || {};
+				const sent = Number(notification?.sent) || 0;
+				const failed = Number(notification?.failed) || 0;
+				const recipients = Number(notification?.recipients) || 0;
+				const processed = Number(res?.processedWorks) || 0;
+				const pending = Number(res?.pendingWorks) || 0;
+				const reason = trimText(notification?.reason);
+
+				if (reason === "no_items") {
+					showToast("通知キューは空です");
+				} else if (failed > 0) {
+					showToast(`通知送信を実行: 送信${sent}件 / 失敗${failed}件 / 対象受信者${recipients}件（未処理キュー${pending}件）`);
+				} else {
+					showToast(`通知送信を実行: 送信${sent}件 / 対象受信者${recipients}件 / 処理作品${processed}件`);
+				}
+				await loadCurationQueue();
+			} catch (err) {
+				showToast(`通知送信に失敗: ${err.message}`);
+			} finally {
+				notifyBtn.disabled = false;
+			}
+		});
+	}
 }
 
 function initToolsActions() {

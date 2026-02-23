@@ -5,6 +5,7 @@ const CORS_HEADERS = {
   "Access-Control-Max-Age": "86400",
 };
 const UPLOAD_NOTIFY_PENDING_WORK_PREFIX = "upload_notify:pending:work:";
+const UPLOAD_NOTIFY_STATUS_WORK_PREFIX = "upload_notify:status:work:";
 
 function withCors(headers = {}) {
   return { ...CORS_HEADERS, ...headers };
@@ -94,6 +95,16 @@ function getEnvString(env, key, fallback = "") {
   const value = env?.[key];
   if (typeof value !== "string") return fallback;
   return value.trim();
+}
+
+function getEnvInteger(env, key, fallback, { min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const raw = getEnvString(env, key, "");
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  const value = Math.floor(parsed);
+  if (value < min || value > max) return fallback;
+  return value;
 }
 
 function getBearerToken(request) {
@@ -1057,6 +1068,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
       skippedOptOut: 0,
       skippedNotFound: 0,
       reason: "no_authors",
+      terminalSkippedAuthorIds: [],
     };
   }
 
@@ -1069,6 +1081,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
       skippedOptOut: 0,
       skippedNotFound: ids.length,
       reason: "students_db_not_found",
+      terminalSkippedAuthorIds: [],
     };
   }
 
@@ -1081,6 +1094,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
       skippedOptOut: 0,
       skippedNotFound: ids.length,
       reason: "students_db_fetch_failed",
+      terminalSkippedAuthorIds: [],
     };
   }
 
@@ -1107,6 +1121,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
   let skippedNotFound = 0;
   let retryableFetchErrors = 0;
   const recipients = [];
+  const terminalSkippedAuthorIdSet = new Set();
 
   const pageResults = await Promise.all(
     ids.map(async (id) => {
@@ -1119,6 +1134,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
     if (!entry.res.ok) {
       if (Number(entry.res.status) === 404) {
         skippedNotFound += 1;
+        terminalSkippedAuthorIdSet.add(entry.id);
       } else {
         retryableFetchErrors += 1;
       }
@@ -1130,6 +1146,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
       const optInValue = extractBooleanLikeProperty(getPageProperty(page, notifyOptInProp));
       if (optInValue === false) {
         skippedOptOut += 1;
+        terminalSkippedAuthorIdSet.add(entry.id);
         continue;
       }
     }
@@ -1144,6 +1161,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
     }
     if (!email) {
       skippedNoEmail += 1;
+      terminalSkippedAuthorIdSet.add(entry.id);
       continue;
     }
 
@@ -1172,6 +1190,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
       skippedOptOut,
       skippedNotFound,
       reason: "students_page_fetch_failed",
+      terminalSkippedAuthorIds: [],
     };
   }
 
@@ -1198,6 +1217,7 @@ async function collectStudentNotificationRecipients(env, authorIds) {
     skippedOptOut,
     skippedNotFound,
     reason: "",
+    terminalSkippedAuthorIds: Array.from(terminalSkippedAuthorIdSet.values()),
   };
 }
 
@@ -1243,6 +1263,19 @@ function buildUploadNotificationGuideHtml(links) {
   ].join("");
 }
 
+function appendUploadNotificationCountNoteText(lines) {
+  lines.push(
+    "",
+    "※掲載件数について",
+    "1つの作品に複数の作者を設定したり、個別写真と集合写真を別々に登録することがあるため、",
+    "掲載件数は実際の作品数と一致しない場合があります。",
+  );
+}
+
+function buildUploadNotificationCountNoteHtml() {
+  return "<p><strong>※掲載件数について</strong><br>1つの作品に複数の作者を設定したり、個別写真と集合写真を別々に登録することがあるため、<br>掲載件数は実際の作品数と一致しない場合があります。</p>";
+}
+
 function buildRecipientSalutation(recipient) {
   const authorIds = uniqueIds(Array.isArray(recipient?.authorIds) ? recipient.authorIds : []);
   if (authorIds.length > 1) return "生徒のみなさま";
@@ -1268,19 +1301,20 @@ function buildUploadNotificationContent(env, payload, recipient) {
   const imageCount = Number.isFinite(Number(imageCountRaw)) ? Math.max(0, Math.floor(Number(imageCountRaw))) : 0;
   const links = resolveUploadNotificationLinks(env);
   const subjectOverride = getEnvString(env, "UPLOAD_NOTIFY_SUBJECT");
-  const subject = subjectOverride || `【木彫り教室】「${title}」を生徒作品ギャラリーに掲載しました！`;
+  const subject = subjectOverride || `【木彫り教室】「${title}」を生徒作品ギャラリーに追加しました`;
   const salutation = buildRecipientSalutation(recipient);
 
   const lines = [
     salutation,
     "",
-    "生徒作品ギャラリーに、あなたの作品を掲載しました！",
+    "生徒作品ギャラリーに、あなたが作者として登録された作品写真を追加しました。",
     "",
     `作品名: ${title}`,
     `完成日: ${completedDate}`,
     `教室: ${classroom}`,
     `枚数: ${imageCount}枚`,
   ];
+  appendUploadNotificationCountNoteText(lines);
   appendUploadNotificationGuideText(lines, links);
   lines.push("", "このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。");
   const text = lines.join("\n");
@@ -1293,8 +1327,9 @@ function buildUploadNotificationContent(env, payload, recipient) {
   ];
   const html = [
     `<p>${escapeHtml(salutation)}</p>`,
-    "<p>生徒作品ギャラリーに、あなたの作品を掲載しました！</p>",
+    "<p>生徒作品ギャラリーに、あなたが作者として登録された作品写真を追加しました。</p>",
     `<ul>${htmlDetails.join("")}</ul>`,
+    buildUploadNotificationCountNoteHtml(),
     buildUploadNotificationGuideHtml(links),
     "<p>このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。</p>",
   ].join("");
@@ -1311,12 +1346,19 @@ function normalizeUploadBatchNotificationItems(itemsRaw) {
     const title = asString(raw?.title).trim();
     const completedDate = normalizeYmd(raw?.completedDate) || asString(raw?.completedDate).trim();
     const classroom = asString(raw?.classroom).trim();
+    const workId = asString(raw?.workId).trim();
+    const queuedAt = asString(raw?.queuedAt).trim();
     const imageCountRaw = Number(raw?.imageCount);
     const imageCount = Number.isFinite(imageCountRaw) ? Math.max(0, Math.floor(imageCountRaw)) : 0;
-    const authorIds = uniqueIds(Array.isArray(raw?.authorIds) ? raw.authorIds : []);
+    const authorIdsRaw = uniqueIds(Array.isArray(raw?.authorIds) ? raw.authorIds : []);
+    const pendingAuthorIdsRaw = uniqueIds(Array.isArray(raw?.pendingAuthorIds) ? raw.pendingAuthorIds : []);
+    const authorIds = uniqueIds([...authorIdsRaw, ...pendingAuthorIdsRaw]);
     if (authorIds.length === 0) continue;
+    const pendingAuthorIds = pendingAuthorIdsRaw.length > 0 ? [...pendingAuthorIdsRaw] : [...authorIds];
+    if (pendingAuthorIds.length === 0) continue;
+    const pendingAuthorIdsDerived = Boolean(raw?.pendingAuthorIdsDerived) || isSameIdSet(pendingAuthorIds, authorIds);
 
-    const signature = `${title}|${completedDate}|${classroom}|${imageCount}|${authorIds.join(",")}`;
+    const signature = `${workId}|${title}|${completedDate}|${classroom}|${imageCount}|${authorIds.join(",")}|${pendingAuthorIds.join(",")}`;
     if (seen.has(signature)) continue;
     seen.add(signature);
 
@@ -1324,11 +1366,65 @@ function normalizeUploadBatchNotificationItems(itemsRaw) {
       title,
       completedDate,
       classroom,
+      workId,
+      queuedAt,
       imageCount,
       authorIds,
+      pendingAuthorIds,
+      pendingAuthorIdsDerived,
     });
   }
   return normalized;
+}
+
+function resolveAuthorIdsFromWorkPage(env, page) {
+  const worksProps = getWorksProps(env);
+  if (!worksProps.author) return [];
+  const relation = page?.properties?.[worksProps.author]?.relation;
+  if (!Array.isArray(relation)) return [];
+  return uniqueIds(relation.map((entry) => asString(entry?.id)));
+}
+
+async function enrichUploadBatchWorksWithNotionAuthors(env, worksRaw) {
+  if (!Array.isArray(worksRaw) || worksRaw.length === 0) return [];
+
+  const works = worksRaw
+    .map((work) => {
+      const authorIds = uniqueIds(Array.isArray(work?.authorIds) ? work.authorIds : []);
+      const pendingAuthorIdsRaw = uniqueIds(Array.isArray(work?.pendingAuthorIds) ? work.pendingAuthorIds : []);
+      const mergedAuthorIds = uniqueIds([...authorIds, ...pendingAuthorIdsRaw]);
+      if (mergedAuthorIds.length === 0) return null;
+      const pendingAuthorIds =
+        pendingAuthorIdsRaw.length > 0 ? pendingAuthorIdsRaw.filter((id) => mergedAuthorIds.includes(id)) : [...mergedAuthorIds];
+      if (pendingAuthorIds.length === 0) return null;
+      return {
+        ...work,
+        authorIds: mergedAuthorIds,
+        pendingAuthorIds,
+        pendingAuthorIdsDerived: Boolean(work?.pendingAuthorIdsDerived),
+      };
+    })
+    .filter(Boolean);
+
+  const targets = works.filter((work) => work.workId);
+  const batchSize = 20;
+  for (let offset = 0; offset < targets.length; offset += batchSize) {
+    const batch = targets.slice(offset, offset + batchSize);
+    const pages = await Promise.all(batch.map((work) => fetchWorkPage(env, work.workId)));
+    for (let index = 0; index < batch.length; index += 1) {
+      const work = batch[index];
+      const previousAuthorIds = [...work.authorIds];
+      const previousPendingAuthorIds = [...work.pendingAuthorIds];
+      const resolvedAuthorIds = resolveAuthorIdsFromWorkPage(env, pages[index]);
+      if (resolvedAuthorIds.length === 0) continue;
+      work.authorIds = resolvedAuthorIds;
+      const preservedPendingAuthorIds = previousPendingAuthorIds.filter((authorId) => resolvedAuthorIds.includes(authorId));
+      const newlyAddedAuthorIds = resolvedAuthorIds.filter((authorId) => !previousAuthorIds.includes(authorId));
+      work.pendingAuthorIds = uniqueIds([...preservedPendingAuthorIds, ...newlyAddedAuthorIds]);
+    }
+  }
+
+  return works;
 }
 
 function buildUploadBatchNotificationContent(env, recipient, works) {
@@ -1350,7 +1446,7 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
   const salutation = buildRecipientSalutation(recipient);
   const links = resolveUploadNotificationLinks(env);
   const subjectOverride = getEnvString(env, "UPLOAD_NOTIFY_SUBJECT");
-  const subject = subjectOverride || `【木彫り教室】生徒作品ギャラリーに${safeWorks.length}件の作品を掲載しました！`;
+  const subject = subjectOverride || `【木彫り教室】生徒作品ギャラリーに${safeWorks.length}件の作品写真を追加しました`;
 
   const formatWorkLine = (work, index) => {
     const title = asString(work?.title).trim() || `作品${index + 1}`;
@@ -1363,12 +1459,13 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
   const lines = [
     salutation,
     "",
-    "生徒作品ギャラリーに、あなたの作品を掲載しました！",
-    `今回の掲載件数: ${safeWorks.length}件`,
+    "生徒作品ギャラリーに、あなたが作者として登録された作品写真を追加しました。",
+    `今回の掲載登録件数: ${safeWorks.length}件`,
     "",
     ...safeWorks.slice(0, 10).map((work, index) => formatWorkLine(work, index)),
   ];
   if (safeWorks.length > 10) lines.push(`- ほか ${safeWorks.length - 10}件`);
+  appendUploadNotificationCountNoteText(lines);
   appendUploadNotificationGuideText(lines, links);
   lines.push("", "このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。");
   const text = lines.join("\n");
@@ -1388,9 +1485,10 @@ function buildUploadBatchNotificationContent(env, recipient, works) {
 
   const html = [
     `<p>${escapeHtml(salutation)}</p>`,
-    "<p>生徒作品ギャラリーに、あなたの作品を掲載しました！</p>",
-    `<p>今回の掲載件数: ${safeWorks.length}件</p>`,
+    "<p>生徒作品ギャラリーに、あなたが作者として登録された作品写真を追加しました。</p>",
+    `<p>今回の掲載登録件数: ${safeWorks.length}件</p>`,
     `<ul>${htmlWorkItems.join("")}</ul>`,
+    buildUploadNotificationCountNoteHtml(),
     buildUploadNotificationGuideHtml(links),
     "<p>このメールには返信できます。作品タイトルなどの変更希望があれば、このメールに返信してお知らせください。</p>",
   ].join("");
@@ -1417,6 +1515,9 @@ function getUploadNotificationConfig(env) {
   const replyToRaw = getEnvString(env, "UPLOAD_NOTIFY_REPLY_TO");
   const replyTo = isLikelyEmail(replyToRaw) ? replyToRaw : "";
   const bcc = parseEmailList(getEnvString(env, "UPLOAD_NOTIFY_BCC"));
+  const minIntervalMs = getEnvInteger(env, "UPLOAD_NOTIFY_RESEND_MIN_INTERVAL_MS", 600, { min: 0, max: 60000 });
+  const rateLimitRetryMs = getEnvInteger(env, "UPLOAD_NOTIFY_RESEND_RATE_LIMIT_RETRY_MS", 1500, { min: 250, max: 120000 });
+  const rateLimitRetries = getEnvInteger(env, "UPLOAD_NOTIFY_RESEND_RATE_LIMIT_RETRIES", 2, { min: 0, max: 10 });
 
   return {
     enabled: true,
@@ -1425,7 +1526,41 @@ function getUploadNotificationConfig(env) {
     from: resolveFromAddress(fromEmail, fromName),
     replyTo,
     bcc,
+    minIntervalMs,
+    rateLimitRetryMs,
+    rateLimitRetries,
   };
+}
+
+function resolveRetryDelayMsFromResponse(response, fallbackMs = 1500) {
+  const fallback = Number.isFinite(Number(fallbackMs))
+    ? Math.max(250, Math.floor(Number(fallbackMs)))
+    : 1500;
+
+  const retryAfterRaw = asString(response?.headers?.get("retry-after")).trim();
+  if (retryAfterRaw) {
+    if (/^\d+(\.\d+)?$/.test(retryAfterRaw)) {
+      const seconds = Number(retryAfterRaw);
+      if (Number.isFinite(seconds) && seconds >= 0) {
+        return Math.max(fallback, Math.ceil(seconds * 1000));
+      }
+    }
+    const retryAt = Date.parse(retryAfterRaw);
+    if (!Number.isNaN(retryAt)) {
+      return Math.max(fallback, Math.max(0, retryAt - Date.now()));
+    }
+  }
+
+  const rateResetRaw = asString(response?.headers?.get("x-ratelimit-reset")).trim();
+  if (/^\d+(\.\d+)?$/.test(rateResetRaw)) {
+    const resetSeconds = Number(rateResetRaw);
+    if (Number.isFinite(resetSeconds) && resetSeconds > 0) {
+      const waitMs = Math.ceil((resetSeconds - Date.now() / 1000) * 1000);
+      if (waitMs > 0) return Math.max(fallback, waitMs);
+    }
+  }
+
+  return fallback;
 }
 
 async function sendUploadNotificationWithResend(config, recipientEmail, content) {
@@ -1439,27 +1574,40 @@ async function sendUploadNotificationWithResend(config, recipientEmail, content)
   if (config.replyTo) payload.reply_to = config.replyTo;
   if (config.bcc.length > 0) payload.bcc = config.bcc;
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
+  const rateLimitRetries = Number.isFinite(Number(config?.rateLimitRetries))
+    ? Math.max(0, Math.floor(Number(config.rateLimitRetries)))
+    : 0;
+  const maxAttempts = rateLimitRetries + 1;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) return;
+
     const detail = await response.text().catch(() => "");
+    const shouldRetryRateLimit = response.status === 429 && attempt + 1 < maxAttempts;
+    if (shouldRetryRateLimit) {
+      const waitMs = resolveRetryDelayMsFromResponse(response, config?.rateLimitRetryMs);
+      await sleep(waitMs);
+      continue;
+    }
+
     throw new Error(`resend_error:${response.status}${detail ? ` ${detail.slice(0, 240)}` : ""}`);
   }
 }
 
 function buildPendingWorkNotificationItem(workId, payload) {
-  const authorIds =
-    Array.isArray(payload?.authorIds) && payload.authorIds.length > 0
-      ? payload.authorIds
-      : payload?.authorId
-        ? [payload.authorId]
-        : [];
+  const authorIds = [
+    ...(Array.isArray(payload?.authorIds) ? payload.authorIds : []),
+    ...(payload?.authorId ? [payload.authorId] : []),
+  ];
   const uniqueAuthorIds = uniqueIds(authorIds);
   const imageCount = Array.isArray(payload?.images) ? payload.images.length : 0;
   return {
@@ -1469,7 +1617,27 @@ function buildPendingWorkNotificationItem(workId, payload) {
     classroom: asString(payload?.classroom).trim(),
     imageCount: Math.max(0, Number.isFinite(Number(imageCount)) ? Math.floor(Number(imageCount)) : 0),
     authorIds: uniqueAuthorIds,
+    pendingAuthorIds: [...uniqueAuthorIds],
     queuedAt: new Date().toISOString(),
+  };
+}
+
+function buildPendingWorkNotificationItemFromSnapshot(snapshot, pendingAuthorIdsRaw) {
+  const workId = asString(snapshot?.workId).trim();
+  const pendingAuthorIds = uniqueIds(Array.isArray(pendingAuthorIdsRaw) ? pendingAuthorIdsRaw : []);
+  const authorIds = uniqueIds([...(Array.isArray(snapshot?.authorIds) ? snapshot.authorIds : []), ...pendingAuthorIds]);
+  if (!workId || authorIds.length === 0 || pendingAuthorIds.length === 0) return null;
+
+  const imageCount = Number(snapshot?.imageCount);
+  return {
+    workId,
+    title: asString(snapshot?.title).trim(),
+    completedDate: normalizeYmd(snapshot?.completedDate) || asString(snapshot?.completedDate).trim(),
+    classroom: asString(snapshot?.classroom).trim(),
+    imageCount: Number.isFinite(imageCount) ? Math.max(0, Math.floor(imageCount)) : 0,
+    authorIds,
+    pendingAuthorIds,
+    queuedAt: asString(snapshot?.queuedAt).trim() || new Date().toISOString(),
   };
 }
 
@@ -1484,6 +1652,16 @@ async function queuePendingWorkNotification(env, workId, payload) {
 
   const key = `${UPLOAD_NOTIFY_PENDING_WORK_PREFIX}${item.workId}`;
   await env.STAR_KV.put(key, JSON.stringify(item));
+  await writeUploadNotificationWorkStatus(env, item.workId, {
+    notificationState: "queued",
+    reason: "queued",
+    queuedAt: item.queuedAt,
+    lastAttemptAt: "",
+    lastSentAt: "",
+    targetRecipients: 0,
+    sentRecipients: 0,
+    failedRecipients: 0,
+  });
   return { queued: true, reason: "", key };
 }
 
@@ -1542,13 +1720,28 @@ async function loadPendingWorkNotificationBatch(env) {
         invalidKeys.push(key);
         continue;
       }
+      const authorIds = uniqueIds(Array.isArray(parsed?.authorIds) ? parsed.authorIds : []);
+      const hasPendingAuthorIdsField = Array.isArray(parsed?.pendingAuthorIds);
+      const pendingAuthorIdsRaw = uniqueIds(hasPendingAuthorIdsField ? parsed.pendingAuthorIds : authorIds);
+      const mergedAuthorIds = uniqueIds([...authorIds, ...pendingAuthorIdsRaw]);
+      const pendingAuthorIds = pendingAuthorIdsRaw.length > 0 ? [...pendingAuthorIdsRaw] : [];
+      if (mergedAuthorIds.length === 0 || pendingAuthorIds.length === 0) {
+        invalidKeys.push(key);
+        continue;
+      }
+      const pendingAuthorIdsDerived = !hasPendingAuthorIdsField || isSameIdSet(pendingAuthorIds, mergedAuthorIds);
+
       validKeys.push(key);
       items.push({
+        key,
         title: asString(parsed?.title).trim(),
         completedDate: normalizeYmd(parsed?.completedDate) || asString(parsed?.completedDate).trim(),
         classroom: asString(parsed?.classroom).trim(),
+        queuedAt: asString(parsed?.queuedAt).trim(),
         imageCount: Math.max(0, Number.isFinite(Number(parsed?.imageCount)) ? Math.floor(Number(parsed?.imageCount)) : 0),
-        authorIds: uniqueIds(Array.isArray(parsed?.authorIds) ? parsed.authorIds : []),
+        authorIds: mergedAuthorIds,
+        pendingAuthorIds,
+        pendingAuthorIdsDerived,
         workId,
       });
     }
@@ -1562,25 +1755,56 @@ async function deleteKvKeys(kv, keys) {
   await Promise.all(keys.map((key) => kv.delete(key)));
 }
 
-async function notifyStudentsOnUploadBatch(env, itemsRaw) {
-  const config = getUploadNotificationConfig(env);
-  if (!config.enabled) {
-    return {
-      enabled: false,
-      attempted: false,
-      reason: config.reason,
-      works: 0,
-      recipients: 0,
-      sent: 0,
-      failed: 0,
-      skippedNoEmail: 0,
-      skippedOptOut: 0,
-      skippedNotFound: 0,
-    };
-  }
+function uploadNotifyStatusKey(workId) {
+  return `${UPLOAD_NOTIFY_STATUS_WORK_PREFIX}${asString(workId).trim()}`;
+}
 
-  const works = normalizeUploadBatchNotificationItems(itemsRaw);
-  if (works.length === 0) {
+async function writeUploadNotificationWorkStatus(env, workId, patch) {
+  if (!env.STAR_KV) return false;
+  const id = asString(workId).trim();
+  if (!id) return false;
+  const payload = {
+    workId: id,
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    await env.STAR_KV.put(uploadNotifyStatusKey(id), JSON.stringify(payload));
+    return true;
+  } catch (error) {
+    console.error("failed to write upload notification work status", {
+      workId: id,
+      message: asString(error?.message),
+    });
+    return false;
+  }
+}
+
+async function writeUploadNotificationWorkStatuses(env, updates) {
+  if (!env.STAR_KV || !Array.isArray(updates) || updates.length === 0) return;
+  await Promise.all(
+    updates.map(async (entry) => {
+      const workId = asString(entry?.workId).trim();
+      if (!workId) return;
+      await writeUploadNotificationWorkStatus(env, workId, entry.patch || {});
+    }),
+  );
+}
+
+function deriveUploadNotificationStateFromDelivery(stats) {
+  const targetRecipients = Number(stats?.targetRecipients) || 0;
+  const sentRecipients = Number(stats?.sentRecipients) || 0;
+  const failedRecipients = Number(stats?.failedRecipients) || 0;
+  if (sentRecipients > 0 && failedRecipients > 0) return "partial";
+  if (sentRecipients > 0) return "sent";
+  if (failedRecipients > 0) return "failed";
+  if (targetRecipients === 0) return "no_recipients";
+  return "queued";
+}
+
+async function notifyStudentsOnUploadBatch(env, itemsRaw) {
+  const normalizedWorks = normalizeUploadBatchNotificationItems(itemsRaw);
+  if (normalizedWorks.length === 0) {
     return {
       enabled: true,
       attempted: false,
@@ -1592,11 +1816,102 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       skippedNoEmail: 0,
       skippedOptOut: 0,
       skippedNotFound: 0,
+      workPendingAuthorIds: [],
     };
   }
 
-  const authorIds = uniqueIds(works.flatMap((work) => work.authorIds || []));
+  const works = await enrichUploadBatchWorksWithNotionAuthors(env, normalizedWorks);
+  const pendingAuthorIdsByWorkId = new Map(
+    works
+      .map((work) => {
+        const workId = asString(work?.workId).trim();
+        if (!workId) return null;
+        const pendingAuthorIds = uniqueIds(Array.isArray(work?.pendingAuthorIds) ? work.pendingAuthorIds : work.authorIds);
+        if (pendingAuthorIds.length === 0) return null;
+        return [workId, new Set(pendingAuthorIds)];
+      })
+      .filter(Boolean),
+  );
+  const serializeWorkPendingAuthorIds = () =>
+    Array.from(pendingAuthorIdsByWorkId.entries())
+      .map(([workId, pendingAuthorIdSet]) => ({
+        workId,
+        pendingAuthorIds: Array.from(pendingAuthorIdSet.values()),
+      }))
+      .filter((entry) => entry.workId);
+
+  const config = getUploadNotificationConfig(env);
+  if (!config.enabled) {
+    await writeUploadNotificationWorkStatuses(
+      env,
+      works
+        .map((work) => ({
+          workId: work.workId,
+          patch: {
+            notificationState: "queued",
+            reason: config.reason,
+            queuedAt: asString(work.queuedAt).trim(),
+            lastAttemptAt: "",
+            lastSentAt: "",
+            targetRecipients: 0,
+            sentRecipients: 0,
+            failedRecipients: 0,
+          },
+        }))
+        .filter((entry) => entry.workId),
+    );
+    return {
+      enabled: false,
+      attempted: false,
+      reason: config.reason,
+      works: works.length,
+      recipients: 0,
+      sent: 0,
+      failed: 0,
+      skippedNoEmail: 0,
+      skippedOptOut: 0,
+      skippedNotFound: 0,
+      workPendingAuthorIds: serializeWorkPendingAuthorIds(),
+    };
+  }
+
+  const deliveryStatsByWorkId = new Map(
+    works
+      .map((work) => {
+        const workId = asString(work?.workId).trim();
+        if (!workId) return null;
+        return [
+          workId,
+          {
+            workId,
+            queuedAt: asString(work?.queuedAt).trim(),
+            targetRecipients: 0,
+            sentRecipients: 0,
+            failedRecipients: 0,
+          },
+        ];
+      })
+      .filter(Boolean),
+  );
+
+  const authorIds = uniqueIds(Array.from(pendingAuthorIdsByWorkId.values()).flatMap((set) => Array.from(set.values())));
   if (authorIds.length === 0) {
+    await writeUploadNotificationWorkStatuses(
+      env,
+      Array.from(deliveryStatsByWorkId.values()).map((stats) => ({
+        workId: stats.workId,
+        patch: {
+          notificationState: "no_authors",
+          reason: "no_authors",
+          queuedAt: stats.queuedAt,
+          lastAttemptAt: "",
+          lastSentAt: "",
+          targetRecipients: 0,
+          sentRecipients: 0,
+          failedRecipients: 0,
+        },
+      })),
+    );
     return {
       enabled: true,
       attempted: false,
@@ -1608,11 +1923,28 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       skippedNoEmail: 0,
       skippedOptOut: 0,
       skippedNotFound: 0,
+      workPendingAuthorIds: serializeWorkPendingAuthorIds(),
     };
   }
 
   const recipientsResult = await collectStudentNotificationRecipients(env, authorIds);
   if (!recipientsResult.ok) {
+    await writeUploadNotificationWorkStatuses(
+      env,
+      Array.from(deliveryStatsByWorkId.values()).map((stats) => ({
+        workId: stats.workId,
+        patch: {
+          notificationState: "queued",
+          reason: recipientsResult.reason || "recipients_resolve_failed",
+          queuedAt: stats.queuedAt,
+          lastAttemptAt: "",
+          lastSentAt: "",
+          targetRecipients: 0,
+          sentRecipients: 0,
+          failedRecipients: 0,
+        },
+      })),
+    );
     return {
       enabled: true,
       attempted: false,
@@ -1624,12 +1956,26 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       skippedNoEmail: recipientsResult.skippedNoEmail ?? 0,
       skippedOptOut: recipientsResult.skippedOptOut ?? 0,
       skippedNotFound: recipientsResult.skippedNotFound ?? authorIds.length,
+      workPendingAuthorIds: serializeWorkPendingAuthorIds(),
     };
+  }
+
+  const terminalSkippedAuthorIds = uniqueIds(
+    Array.isArray(recipientsResult?.terminalSkippedAuthorIds) ? recipientsResult.terminalSkippedAuthorIds : [],
+  );
+  if (terminalSkippedAuthorIds.length > 0) {
+    for (const pendingAuthorIdSet of pendingAuthorIdsByWorkId.values()) {
+      terminalSkippedAuthorIds.forEach((authorId) => pendingAuthorIdSet.delete(authorId));
+    }
   }
 
   const worksByAuthorId = new Map();
   for (const work of works) {
-    for (const authorId of work.authorIds) {
+    const workId = asString(work?.workId).trim();
+    const pendingAuthorIds = workId
+      ? uniqueIds(Array.from(pendingAuthorIdsByWorkId.get(workId)?.values() || []))
+      : uniqueIds(Array.isArray(work?.pendingAuthorIds) ? work.pendingAuthorIds : []);
+    for (const authorId of pendingAuthorIds) {
       if (!worksByAuthorId.has(authorId)) worksByAuthorId.set(authorId, []);
       worksByAuthorId.get(authorId).push(work);
     }
@@ -1639,6 +1985,22 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
     (Array.isArray(recipient.authorIds) ? recipient.authorIds : []).some((authorId) => worksByAuthorId.has(authorId)),
   );
   if (recipients.length === 0) {
+    await writeUploadNotificationWorkStatuses(
+      env,
+      Array.from(deliveryStatsByWorkId.values()).map((stats) => ({
+        workId: stats.workId,
+        patch: {
+          notificationState: "no_recipients",
+          reason: "no_recipients",
+          queuedAt: stats.queuedAt,
+          lastAttemptAt: new Date().toISOString(),
+          lastSentAt: "",
+          targetRecipients: 0,
+          sentRecipients: 0,
+          failedRecipients: 0,
+        },
+      })),
+    );
     return {
       enabled: true,
       attempted: true,
@@ -1650,31 +2012,65 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       skippedNoEmail: recipientsResult.skippedNoEmail,
       skippedOptOut: recipientsResult.skippedOptOut,
       skippedNotFound: recipientsResult.skippedNotFound,
+      workPendingAuthorIds: serializeWorkPendingAuthorIds(),
     };
   }
 
   let sent = 0;
   let failed = 0;
+  const minIntervalMs = Number.isFinite(Number(config?.minIntervalMs))
+    ? Math.max(0, Math.floor(Number(config.minIntervalMs)))
+    : 600;
+  let nextSendAt = 0;
+  const attemptStartedAt = new Date().toISOString();
   for (const recipient of recipients) {
     const authorIdsForRecipient = uniqueIds(Array.isArray(recipient.authorIds) ? recipient.authorIds : []);
-    const workSignatureSet = new Set();
+    const workIdSetForRecipient = new Set();
     const worksForRecipient = [];
     for (const authorId of authorIdsForRecipient) {
       const worksForAuthor = worksByAuthorId.get(authorId) || [];
       for (const work of worksForAuthor) {
-        const signature = `${work.title}|${work.completedDate}|${work.classroom}|${work.imageCount}|${(work.authorIds || []).join(",")}`;
-        if (workSignatureSet.has(signature)) continue;
-        workSignatureSet.add(signature);
+        const workId = asString(work?.workId).trim();
+        if (!workId || workIdSetForRecipient.has(workId)) continue;
+        workIdSetForRecipient.add(workId);
         worksForRecipient.push(work);
       }
     }
     if (worksForRecipient.length === 0) continue;
     const content = buildUploadBatchNotificationContent(env, recipient, worksForRecipient);
+    const workIdsForRecipient = Array.from(workIdSetForRecipient.values());
+    workIdsForRecipient.forEach((workId) => {
+      const stats = deliveryStatsByWorkId.get(workId);
+      if (!stats) return;
+      stats.targetRecipients += 1;
+    });
+
+    const waitMs = nextSendAt - Date.now();
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+    if (minIntervalMs > 0) {
+      nextSendAt = Date.now() + minIntervalMs;
+    }
+
     try {
       await sendUploadNotificationWithResend(config, recipient.email, content);
       sent += 1;
+      workIdsForRecipient.forEach((workId) => {
+        const stats = deliveryStatsByWorkId.get(workId);
+        if (!stats) return;
+        stats.sentRecipients += 1;
+        const pendingAuthorIdSet = pendingAuthorIdsByWorkId.get(workId);
+        if (!pendingAuthorIdSet) return;
+        authorIdsForRecipient.forEach((authorId) => pendingAuthorIdSet.delete(authorId));
+      });
     } catch (error) {
       failed += 1;
+      workIdsForRecipient.forEach((workId) => {
+        const stats = deliveryStatsByWorkId.get(workId);
+        if (!stats) return;
+        stats.failedRecipients += 1;
+      });
       console.error("student upload batch notification failed", {
         authorIds: authorIdsForRecipient,
         works: worksForRecipient.length,
@@ -1682,6 +2078,24 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
       });
     }
   }
+
+  const updates = Array.from(deliveryStatsByWorkId.values()).map((stats) => {
+    const notificationState = deriveUploadNotificationStateFromDelivery(stats);
+    return {
+      workId: stats.workId,
+      patch: {
+        notificationState,
+        reason: notificationState,
+        queuedAt: stats.queuedAt,
+        lastAttemptAt: attemptStartedAt,
+        lastSentAt: notificationState === "sent" || notificationState === "partial" ? new Date().toISOString() : "",
+        targetRecipients: stats.targetRecipients,
+        sentRecipients: stats.sentRecipients,
+        failedRecipients: stats.failedRecipients,
+      },
+    };
+  });
+  await writeUploadNotificationWorkStatuses(env, updates);
 
   return {
     enabled: true,
@@ -1694,6 +2108,7 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
     skippedNoEmail: recipientsResult.skippedNoEmail,
     skippedOptOut: recipientsResult.skippedOptOut,
     skippedNotFound: recipientsResult.skippedNotFound,
+    workPendingAuthorIds: serializeWorkPendingAuthorIds(),
   };
 }
 
@@ -1746,25 +2161,247 @@ async function handleNotifyStudentsAfterGalleryUpdate(env) {
     );
   }
 
-  // Keep pending items when notification infra is not configured or when delivery was incomplete.
   const reason = asString(notification?.reason).trim();
   const keepPendingForConfigIssues = new Set(["disabled", "not_configured", "invalid_from_email"]).has(reason);
-  const hasDeliveryFailure = Number(notification?.failed) > 0;
   const notAttempted = notification?.attempted === false;
-  const isTerminalNoop = new Set(["no_items", "no_authors"]).has(reason);
-  const isRecoverableNotAttempted = notAttempted && !isTerminalNoop;
-  const shouldKeepPending = keepPendingForConfigIssues || hasDeliveryFailure || isRecoverableNotAttempted;
-  const shouldDeletePending = !shouldKeepPending;
-  if (shouldDeletePending) {
+  const clearAllForTerminalReason = new Set(["no_items", "no_authors", "no_recipients"]).has(reason);
+  const keepPendingForRecoverableNotAttempted = notAttempted && !clearAllForTerminalReason;
+
+  if (clearAllForTerminalReason) {
     await deleteKvKeys(env.STAR_KV, loaded.validKeys);
+    return okResponse({
+      notification,
+      pendingWorks: 0,
+      processedWorks: loaded.validKeys.length,
+      cleanedInvalid: loaded.invalidKeys.length,
+      queueCleared: true,
+    });
   }
 
+  if (keepPendingForConfigIssues || keepPendingForRecoverableNotAttempted) {
+    return okResponse({
+      notification,
+      pendingWorks: loaded.validKeys.length,
+      processedWorks: loaded.validKeys.length,
+      cleanedInvalid: loaded.invalidKeys.length,
+      queueCleared: false,
+    });
+  }
+
+  const remainingPendingByWorkId = new Map(
+    (Array.isArray(notification?.workPendingAuthorIds) ? notification.workPendingAuthorIds : [])
+      .map((entry) => {
+        const workId = asString(entry?.workId).trim();
+        if (!workId) return null;
+        return [workId, uniqueIds(Array.isArray(entry?.pendingAuthorIds) ? entry.pendingAuthorIds : [])];
+      })
+      .filter(Boolean),
+  );
+
+  const keysToDelete = [];
+  const itemsToUpsert = [];
+  for (const item of loaded.items) {
+    const workId = asString(item?.workId).trim();
+    const key = asString(item?.key).trim() || `${UPLOAD_NOTIFY_PENDING_WORK_PREFIX}${workId}`;
+    if (!workId || !key) continue;
+
+    const pendingAuthorIds = remainingPendingByWorkId.get(workId) || [];
+    const nextItem = buildPendingWorkNotificationItemFromSnapshot(item, pendingAuthorIds);
+    if (!nextItem) {
+      keysToDelete.push(key);
+      continue;
+    }
+    itemsToUpsert.push({ key, value: JSON.stringify(nextItem) });
+  }
+
+  if (keysToDelete.length > 0) {
+    await deleteKvKeys(env.STAR_KV, keysToDelete);
+  }
+  if (itemsToUpsert.length > 0) {
+    await Promise.all(itemsToUpsert.map((entry) => env.STAR_KV.put(entry.key, entry.value)));
+  }
+
+  const pendingWorks = itemsToUpsert.length;
   return okResponse({
     notification,
-    pendingWorks: shouldDeletePending ? 0 : loaded.validKeys.length,
+    pendingWorks,
     processedWorks: loaded.validKeys.length,
     cleanedInvalid: loaded.invalidKeys.length,
-    queueCleared: shouldDeletePending,
+    queueCleared: pendingWorks === 0,
+  });
+}
+
+function parsePendingNotificationWorkIdFromKey(key) {
+  const name = asString(key);
+  if (!name.startsWith(UPLOAD_NOTIFY_PENDING_WORK_PREFIX)) return "";
+  return asString(name.slice(UPLOAD_NOTIFY_PENDING_WORK_PREFIX.length)).trim();
+}
+
+async function loadUploadNotificationStatusByWorkIds(env, workIdsRaw) {
+  const workIds = uniqueIds(Array.isArray(workIdsRaw) ? workIdsRaw : []);
+  if (workIds.length === 0) {
+    return {
+      ok: true,
+      reason: "",
+      pendingWorkIdSet: new Set(),
+      statusByWorkId: new Map(),
+    };
+  }
+  if (!env.STAR_KV) {
+    return {
+      ok: false,
+      reason: "kv_not_configured",
+      pendingWorkIdSet: new Set(),
+      statusByWorkId: new Map(),
+    };
+  }
+
+  const pendingKeys = await listKvKeysByPrefix(env.STAR_KV, UPLOAD_NOTIFY_PENDING_WORK_PREFIX);
+  const pendingWorkIdSet = new Set(pendingKeys.map(parsePendingNotificationWorkIdFromKey).filter(Boolean));
+
+  const statusByWorkId = new Map();
+  const batchSize = 50;
+  for (let offset = 0; offset < workIds.length; offset += batchSize) {
+    const batch = workIds.slice(offset, offset + batchSize);
+    const rawValues = await Promise.all(batch.map((workId) => env.STAR_KV.get(uploadNotifyStatusKey(workId))));
+    for (let i = 0; i < batch.length; i += 1) {
+      const workId = batch[i];
+      const raw = rawValues[i];
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") continue;
+        statusByWorkId.set(workId, parsed);
+      } catch {
+        // ignore malformed records
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    reason: "",
+    pendingWorkIdSet,
+    statusByWorkId,
+  };
+}
+
+async function loadGalleryWorkIdSetForAdmin(env) {
+  const result = {
+    ok: false,
+    reason: "gallery_not_found",
+    workIdSet: new Set(),
+  };
+
+  let galleryPayload = null;
+
+  const galleryUrl = getEnvString(env, "GALLERY_JSON_URL");
+  if (galleryUrl) {
+    try {
+      const res = await fetch(galleryUrl, { method: "GET" });
+      if (res.ok) {
+        const parsed = await res.json().catch(() => null);
+        if (parsed) {
+          galleryPayload = parsed;
+          result.ok = true;
+          result.reason = "";
+        }
+      }
+    } catch {
+      // try R2 fallback
+    }
+  }
+
+  if (!galleryPayload && env.GALLERY_R2) {
+    const key = getEnvString(env, "GALLERY_JSON_KEY", "gallery.json");
+    try {
+      const obj = await env.GALLERY_R2.get(key);
+      if (obj) {
+        const text = await obj.text();
+        const parsed = JSON.parse(text);
+        if (parsed) {
+          galleryPayload = parsed;
+          result.ok = true;
+          result.reason = "";
+        }
+      }
+    } catch {
+      result.reason = "gallery_parse_failed";
+    }
+  }
+
+  const worksArray = Array.isArray(galleryPayload?.works)
+    ? galleryPayload.works
+    : Array.isArray(galleryPayload)
+      ? galleryPayload
+      : [];
+  for (const work of worksArray) {
+    const workId = asString(work?.id).trim();
+    if (!workId) continue;
+    result.workIdSet.add(workId);
+  }
+  return result;
+}
+
+function deriveUiNotificationState(rawState, pending) {
+  const base = asString(rawState).trim();
+  if (pending) {
+    if (base === "failed" || base === "partial") return "retry_pending";
+    return "queued";
+  }
+  return base || "unknown";
+}
+
+async function handleAdminCurationWorkSyncStatus(request, env) {
+  const payload = await readJson(request);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return badRequest("invalid json");
+
+  const workIds = uniqueIds(Array.isArray(payload.workIds) ? payload.workIds : []);
+  if (workIds.length === 0) {
+    return okResponse({
+      statuses: [],
+      pendingCount: 0,
+      galleryLoaded: false,
+      notificationStatusLoaded: true,
+      snapshotAt: new Date().toISOString(),
+    });
+  }
+
+  const [notificationSnapshot, gallerySnapshot] = await Promise.all([
+    loadUploadNotificationStatusByWorkIds(env, workIds),
+    loadGalleryWorkIdSetForAdmin(env),
+  ]);
+
+  const statuses = workIds.map((workId) => {
+    const pending = notificationSnapshot.pendingWorkIdSet.has(workId);
+    const rawStatus = notificationSnapshot.statusByWorkId.get(workId);
+    const rawState = asString(rawStatus?.notificationState).trim();
+    return {
+      workId,
+      pending,
+      galleryReflected: gallerySnapshot.ok ? gallerySnapshot.workIdSet.has(workId) : null,
+      notification: {
+        notificationState: deriveUiNotificationState(rawState, pending),
+        rawState,
+        reason: asString(rawStatus?.reason).trim(),
+        queuedAt: asString(rawStatus?.queuedAt).trim(),
+        lastAttemptAt: asString(rawStatus?.lastAttemptAt).trim(),
+        lastSentAt: asString(rawStatus?.lastSentAt).trim(),
+        targetRecipients: Number(rawStatus?.targetRecipients) || 0,
+        sentRecipients: Number(rawStatus?.sentRecipients) || 0,
+        failedRecipients: Number(rawStatus?.failedRecipients) || 0,
+        updatedAt: asString(rawStatus?.updatedAt).trim(),
+      },
+    };
+  });
+
+  return okResponse({
+    statuses,
+    pendingCount: statuses.filter((row) => row.pending).length,
+    galleryLoaded: gallerySnapshot.ok,
+    notificationStatusLoaded: notificationSnapshot.ok,
+    notificationStatusReason: notificationSnapshot.reason || "",
+    snapshotAt: new Date().toISOString(),
   });
 }
 
@@ -2935,6 +3572,10 @@ export default {
 
     if (pathname === "/admin/notify/students-after-gallery-update" && request.method === "POST") {
       return handleNotifyStudentsAfterGalleryUpdate(env);
+    }
+
+    if (pathname === "/admin/curation/work-sync-status" && request.method === "POST") {
+      return handleAdminCurationWorkSyncStatus(request, env);
     }
 
     if (pathname === "/admin/notion/tag" && request.method === "POST") {

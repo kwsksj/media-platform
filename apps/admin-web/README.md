@@ -30,6 +30,8 @@ npm run tag-recalc:apply
 - `POST /admin/notion/work` / `PATCH /admin/notion/work`
 - `POST /admin/image/split` / `POST /admin/image/move` / `POST /admin/image/merge`
 - `POST /admin/trigger-gallery-update`
+- `POST /admin/notify/students-after-gallery-update`
+- `POST /admin/curation/work-sync-status`
 - `POST /admin/tag-recalc`
 
 ## Notes

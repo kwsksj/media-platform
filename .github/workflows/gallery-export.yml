@@ -117,9 +117,16 @@ jobs:
 
       - name: Notify students after gallery update
         env:
+          AUTO_NOTIFY_AFTER_GALLERY_UPDATE: ${{ vars.AUTO_NOTIFY_AFTER_GALLERY_UPDATE }}
           WORKER_ADMIN_BASE_URL: ${{ secrets.WORKER_ADMIN_BASE_URL }}
           WORKER_ADMIN_API_TOKEN: ${{ secrets.ADMIN_API_TOKEN }}
         run: |
+          AUTO_NOTIFY="$(echo "${AUTO_NOTIFY_AFTER_GALLERY_UPDATE:-}" | tr '[:upper:]' '[:lower:]')"
+          if [ "$AUTO_NOTIFY" != "true" ]; then
+            echo "Skip notification: auto notify disabled (set repository variable AUTO_NOTIFY_AFTER_GALLERY_UPDATE=true to enable)"
+            exit 0
+          fi
+
           if [ -z "$WORKER_ADMIN_BASE_URL" ] || [ -z "$WORKER_ADMIN_API_TOKEN" ]; then
             echo "Skip notification: WORKER_ADMIN_BASE_URL or ADMIN_API_TOKEN is not set"
             exit 0
