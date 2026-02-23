@@ -40,6 +40,7 @@ const state = {
 		syncStatusLoaded: false,
 	},
 };
+let schemaLoadSequence = 0;
 
 function readStoredAdminToken() {
 	try {
@@ -488,16 +489,25 @@ function ensureAuthorOption(selectEl, record) {
 	return true;
 }
 
-function tagsFreshnessWarning() {
-	const generatedAt = state.tagsIndex?.generated_at;
-	if (!generatedAt) return "";
-	const t = new Date(generatedAt).getTime();
-	if (Number.isNaN(t)) return "";
-	const ageMs = Date.now() - t;
-	if (ageMs > 24 * 60 * 60 * 1000) {
-		return `タグインデックスが古い可能性があります（generated_at: ${formatIso(generatedAt)}）`;
+async function refreshTagsIndexOnUiOpen() {
+	const hasAdminToken = Boolean(getPersistedAdminToken());
+	if (!hasAdminToken) return { warning: "" };
+
+	try {
+		await apiFetch("/admin/trigger-tags-index-update", { method: "POST" });
+	} catch (err) {
+		return { warning: `タグインデックス自動更新に失敗しました（${err.message}）` };
 	}
-	return "";
+
+	try {
+		const latest = await apiFetch("/tags-index");
+		state.tagsIndex = latest?.data || null;
+		state.tagsIndexLoaded = Boolean(state.tagsIndex);
+		state.tagsSearch = state.tagsIndex ? buildTagSearchList(state.tagsIndex) : [];
+		return { warning: "" };
+	} catch (err) {
+		return { warning: `タグインデックス再取得に失敗しました（${err.message}）` };
+	}
 }
 
 function resolveMergedTagId(tagId) {
@@ -809,34 +819,51 @@ async function createTagFromUi(rawName, { parentIds = [], childIds = [] } = {}) 
 	return { id: createdTag.id || id, created: true, parentIds: createdTag.parents, childIds: createdTag.children };
 }
 
-async function addTagParentChildRelation(parentIdRaw, childIdRaw) {
-	const parentId = resolveMergedTagId(trimText(parentIdRaw));
-	const childId = resolveMergedTagId(trimText(childIdRaw));
-	if (!parentId || !childId) throw new Error("親タグ・子タグを選択してください");
-	if (parentId === childId) throw new Error("親タグと子タグに同じタグは設定できません");
+async function addTagParentChildRelations(parentIdsRaw, childIdsRaw) {
+	const parentIds = normalizeTagIdList(
+		(Array.isArray(parentIdsRaw) ? parentIdsRaw : []).map((id) => resolveMergedTagId(trimText(id))).filter(Boolean),
+	);
+	const childIds = normalizeTagIdList(
+		(Array.isArray(childIdsRaw) ? childIdsRaw : []).map((id) => resolveMergedTagId(trimText(id))).filter(Boolean),
+	);
+	if (parentIds.length === 0 || childIds.length === 0) throw new Error("親タグ・子タグを1件以上選択してください");
+
+	const childIdSet = new Set(childIds);
+	const overlap = parentIds.filter((id) => childIdSet.has(id));
+	if (overlap.length > 0) {
+		const name = state.tagsById.get(overlap[0])?.name || overlap[0];
+		throw new Error(`親タグと子タグに同じタグは設定できません（${name}）`);
+	}
 
 	const updated = await apiFetch("/admin/notion/tag", {
 		method: "PATCH",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
-			parentId,
-			childId,
+			parentIds,
+			childIds,
 		}),
 	});
 
-	const childTag = normalizeTagForState(updated?.child, state.tagsById.get(childId) || { id: childId });
-	if (childTag.id) upsertTagSearchEntry(childTag);
-
-	const parentChildren = normalizeTagIdList(updated?.parent?.children);
-	if (parentChildren.includes(childId)) {
-		const parentTag = normalizeTagForState(
-			{ id: parentId, children: parentChildren },
-			state.tagsById.get(parentId) || { id: parentId },
-		);
-		if (parentTag.id) upsertTagSearchEntry(parentTag);
+	const nextTagsIndex = updated?.tags_index;
+	if (nextTagsIndex && typeof nextTagsIndex === "object" && Array.isArray(nextTagsIndex.tags)) {
+		state.tagsIndex = nextTagsIndex;
+		state.tagsIndexLoaded = true;
+		state.tagsSearch = buildTagSearchList(nextTagsIndex);
+		return { parentIds, childIds };
 	}
 
-	return { parentId, childId };
+	const updatedParents = Array.isArray(updated?.parents) ? updated.parents : [];
+	const updatedChildren = Array.isArray(updated?.children) ? updated.children : [];
+	updatedParents.forEach((raw) => {
+		const tag = normalizeTagForState(raw, state.tagsById.get(trimText(raw?.id)) || {});
+		if (tag.id) upsertTagSearchEntry(tag);
+	});
+	updatedChildren.forEach((raw) => {
+		const tag = normalizeTagForState(raw, state.tagsById.get(trimText(raw?.id)) || {});
+		if (tag.id) upsertTagSearchEntry(tag);
+	});
+
+	return { parentIds, childIds };
 }
 
 async function updateTagAliases(tagIdRaw, aliasesRaw) {
@@ -934,6 +961,28 @@ function renderPickedTagChip(root, { id, roleLabel, onClear }) {
 	root.appendChild(chip);
 }
 
+function renderPickedTagChips(root, { ids, roleLabel, onRemove }) {
+	root.innerHTML = "";
+	const list = normalizeTagIdList(Array.isArray(ids) ? ids : []);
+	if (list.length === 0) {
+		root.appendChild(el("div", { class: "subnote", text: `${roleLabel}: 未選択` }));
+		return;
+	}
+
+	list.forEach((id) => {
+		const name = state.tagsById.get(id)?.name || id;
+		const chip = el("span", { class: "chip chip--tag-selected" }, [el("span", { text: name })]);
+		const remove = el("button", { type: "button", text: "×" });
+		remove.addEventListener("click", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			onRemove?.(id);
+		});
+		chip.appendChild(remove);
+		root.appendChild(chip);
+	});
+}
+
 function bindTagPickerInput({ inputEl, suggestRoot, onPick, getRelatedTagIds = () => [], onCreated = null, clearOnPick = false }) {
 	const renderSuggest = () => {
 		const q = trimText(inputEl.value);
@@ -1005,23 +1054,27 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 	root.appendChild(
 		el("div", { class: "tag-relation-editor__header" }, [
 			el("div", { class: "subnote", text: "タグ設定（タグDB）" }),
-			createHelpToggle("親/子の検索候補から新規タグを作成して関係追加できます。選択したタグの別名もここで編集できます。", {
-				ariaLabel: "タグ親子設定の説明を表示",
-			}),
+			createHelpToggle(
+				"親/子の検索候補から新規タグを作成して関係追加できます。親/子は複数選択して一括追加できます。選択したタグの別名もここで編集できます。",
+				{
+					ariaLabel: "タグ親子設定の説明を表示",
+				},
+			),
 		]),
 	);
 
-	let parentTagId = "";
-	let childTagId = "";
+	let parentTagIds = [];
+	let childTagIds = [];
 	let aliasTagId = "";
 
-	const pickFromRelated = (targetRoot, { selectedId, onPick, roleLabel }) => {
+	const pickFromRelated = (targetRoot, { selectedIds, onToggle, roleLabel }) => {
 		targetRoot.innerHTML = "";
 		const relatedIds = normalizeTagIdList(getRelatedTagIds());
 		if (relatedIds.length === 0) {
 			targetRoot.appendChild(el("div", { class: "subnote", text: "現在選択中タグなし" }));
 			return;
 		}
+		const selectedSet = new Set(normalizeTagIdList(selectedIds));
 		targetRoot.appendChild(el("div", { class: "subnote", text: `${roleLabel}候補（現在選択中タグ）` }));
 		const chips = el("div", { class: "chips" });
 		relatedIds.forEach((id) => {
@@ -1029,10 +1082,10 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 			if (!tag) return;
 			const chip = el("button", {
 				type: "button",
-				class: `chip chip--tag-selected tag-relation-editor__candidate${id === selectedId ? " is-active" : ""}`,
+				class: `chip chip--tag-selected tag-relation-editor__candidate${selectedSet.has(id) ? " is-active" : ""}`,
 			});
 			chip.appendChild(el("span", { text: tag.name || id }));
-			chip.addEventListener("click", () => onPick(id));
+			chip.addEventListener("click", () => onToggle(id));
 			chips.appendChild(chip);
 		});
 		if (!chips.children.length) {
@@ -1067,38 +1120,42 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 	const aliasCurrent = el("div", { class: "subnote" });
 
 	const refreshPicked = () => {
-		renderPickedTagChip(parentPicked, {
-			id: parentTagId,
+		renderPickedTagChips(parentPicked, {
+			ids: parentTagIds,
 			roleLabel: "親",
-			onClear: () => {
-				parentTagId = "";
-				parentInput.value = "";
+			onRemove: (id) => {
+				parentTagIds = parentTagIds.filter((x) => x !== id);
 				refreshPicked();
 			},
 		});
-		renderPickedTagChip(childPicked, {
-			id: childTagId,
+		renderPickedTagChips(childPicked, {
+			ids: childTagIds,
 			roleLabel: "子",
-			onClear: () => {
-				childTagId = "";
-				childInput.value = "";
+			onRemove: (id) => {
+				childTagIds = childTagIds.filter((x) => x !== id);
 				refreshPicked();
 			},
 		});
 		pickFromRelated(parentCandidates, {
-			selectedId: parentTagId,
-			onPick: (id) => {
-				parentTagId = id;
-				parentInput.value = state.tagsById.get(id)?.name || "";
+			selectedIds: parentTagIds,
+			onToggle: (id) => {
+				parentTagIds = parentTagIds.includes(id)
+					? parentTagIds.filter((x) => x !== id)
+					: normalizeTagIdList([...parentTagIds, id]);
+				parentInput.value = "";
+				parentSuggest.innerHTML = "";
 				refreshPicked();
 			},
 			roleLabel: "親",
 		});
 		pickFromRelated(childCandidates, {
-			selectedId: childTagId,
-			onPick: (id) => {
-				childTagId = id;
-				childInput.value = state.tagsById.get(id)?.name || "";
+			selectedIds: childTagIds,
+			onToggle: (id) => {
+				childTagIds = childTagIds.includes(id)
+					? childTagIds.filter((x) => x !== id)
+					: normalizeTagIdList([...childTagIds, id]);
+				childInput.value = "";
+				childSuggest.innerHTML = "";
 				refreshPicked();
 			},
 			roleLabel: "子",
@@ -1133,21 +1190,23 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 		inputEl: parentInput,
 		suggestRoot: parentSuggest,
 		onPick: (id) => {
-			parentTagId = id;
+			parentTagIds = normalizeTagIdList([...parentTagIds, id]);
 			refreshPicked();
 		},
 		onCreated: (id) => onTagAdded?.(id),
 		getRelatedTagIds,
+		clearOnPick: true,
 	});
 	const childBinder = bindTagPickerInput({
 		inputEl: childInput,
 		suggestRoot: childSuggest,
 		onPick: (id) => {
-			childTagId = id;
+			childTagIds = normalizeTagIdList([...childTagIds, id]);
 			refreshPicked();
 		},
 		onCreated: (id) => onTagAdded?.(id),
 		getRelatedTagIds,
+		clearOnPick: true,
 	});
 	const aliasBinder = bindTagPickerInput({
 		inputEl: aliasTargetInput,
@@ -1161,13 +1220,19 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 		getRelatedTagIds,
 	});
 
-	const addRelationBtn = el("button", { type: "button", class: "btn", text: "親子関係を追加" });
+	const addRelationBtn = el("button", { type: "button", class: "btn", text: "親子関係を一括追加" });
 	addRelationBtn.addEventListener("click", async () => {
 		addRelationBtn.disabled = true;
 		try {
-			const result = await addTagParentChildRelation(parentTagId, childTagId);
+			const result = await addTagParentChildRelations(parentTagIds, childTagIds);
 			showToast("タグの親子関係を追加しました");
 			onRelationAdded?.(result);
+			parentTagIds = [];
+			childTagIds = [];
+			parentInput.value = "";
+			childInput.value = "";
+			parentBinder.clearSuggest();
+			childBinder.clearSuggest();
 			refreshPicked();
 		} catch (err) {
 			showToast(`親子関係の追加に失敗: ${err.message}`);
@@ -1216,13 +1281,14 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 		refreshContext: () => {
 			refreshPicked();
 			refreshAliasEditor();
-			parentBinder.renderSuggest();
-			childBinder.renderSuggest();
-			aliasBinder.renderSuggest();
+			parentBinder.clearSuggest();
+			childBinder.clearSuggest();
+			if (document.activeElement === aliasTargetInput) aliasBinder.renderSuggest();
+			else aliasBinder.clearSuggest();
 		},
 		resetSelection: () => {
-			parentTagId = "";
-			childTagId = "";
+			parentTagIds = [];
+			childTagIds = [];
 			aliasTagId = "";
 			parentInput.value = "";
 			childInput.value = "";
@@ -1311,6 +1377,7 @@ async function loadGalleryUpdatedAt() {
 }
 
 async function loadSchemaAndIndexes() {
+	const loadSequence = ++schemaLoadSequence;
 	state.tagsIndexLoaded = false;
 	const tasks = [
 		apiFetch("/admin/notion/schema").then((d) => (state.schema = d)),
@@ -1324,9 +1391,9 @@ async function loadSchemaAndIndexes() {
 
 	const results = await Promise.allSettled(tasks);
 	const errors = results.filter((r) => r.status === "rejected").map((r) => r.reason?.message).filter(Boolean);
-	if (errors.length > 0) {
-		setBanner(`一部データの取得に失敗しました：${errors.join(" / ")}`);
-	}
+	let bannerText = "";
+	let bannerType = "warn";
+	if (errors.length > 0) bannerText = `一部データの取得に失敗しました：${errors.join(" / ")}`;
 
 	if (state.studentsIndex?.students) {
 		for (const s of state.studentsIndex.students) {
@@ -1339,9 +1406,17 @@ async function loadSchemaAndIndexes() {
 
 	if (state.tagsIndex) {
 		state.tagsSearch = buildTagSearchList(state.tagsIndex);
-		const warn = tagsFreshnessWarning();
-		if (warn) setBanner(warn);
 	}
+
+	setBanner(bannerText, { type: bannerType });
+
+	// Avoid blocking initial render with expensive tags-index regeneration.
+	void refreshTagsIndexOnUiOpen().then((autoRefresh) => {
+		if (loadSequence !== schemaLoadSequence) return;
+		if (!bannerText && autoRefresh.warning) {
+			setBanner(autoRefresh.warning, { type: "warn" });
+		}
+	});
 }
 
 function populateSelect(select, { items, placeholder = "" }) {
