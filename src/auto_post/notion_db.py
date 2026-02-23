@@ -152,11 +152,12 @@ class NotionDB:
         else:
             logger.warning("Unsupported property type for %s: %s", prop_name, prop_type)
 
-    def _get_or_create_tag_page(self, tag_name: str) -> str | None:
-        """Find or create a page in the Keywords database."""
-        if not self.tags_database_id:
+    def _get_or_create_tag_page(self, tag_name: str, database_id: str | None = None) -> str | None:
+        """Find or create a tag page in the specified or configured tags database."""
+        target_database_id = database_id or self.tags_database_id
+        if not target_database_id:
             return None
-        return self._get_or_create_page_by_title(self.tags_database_id, tag_name)
+        return self._get_or_create_page_by_title(target_database_id, tag_name)
 
 
 
@@ -218,24 +219,32 @@ class NotionDB:
                 if tag:
                     tag_names.add(tag.strip())
 
-        # Link to Keywords DB (Relation) - ONLY if tags_database_id is configured
+        # Write tags according to the Notion property type.
         relation_used = False
-        if self.tags_database_id:
+        tag_prop_type = self._get_property_type("タグ") if self._is_property_valid("タグ") else None
+
+        # Prefer the actual relation target configured in Notion schema.
+        # Fallback to TAGS_DATABASE_ID for backward compatibility.
+        relation_db_id = None
+        if tag_prop_type == "relation":
+            relation_db_id = self._get_relation_database_id("タグ") or self.tags_database_id
+        elif tag_prop_type is None and self.tags_database_id:
+            relation_db_id = self.tags_database_id
+
+        if relation_db_id and tag_names:
             relation_ids = []
             for tag_name in tag_names:
-                tag_id = self._get_or_create_tag_page(tag_name)
+                tag_id = self._get_or_create_tag_page(tag_name, relation_db_id)
                 if tag_id:
                     relation_ids.append({"id": tag_id})
 
             if relation_ids:
-                # User wants "Tag" column to be the Relation.
-                # Assuming user has set "タグ" as Relation type in Notion.
                 properties["タグ"] = {"relation": relation_ids}
                 relation_used = True
 
-        # Fallback/Alternative: Write to Multi-select "タグ" property
-        # Only if Relation mechanism wasn't used (to avoid overwriting/type error)
-        if not relation_used and tag_names and self._is_property_valid("タグ"):
+        # Fallback/Alternative: Write to Multi-select only when property type is multi_select.
+        # This avoids type mismatch errors when "タグ" is relation.
+        if not relation_used and tag_names and tag_prop_type == "multi_select":
             ms_options = [{"name": t} for t in tag_names]
             properties["タグ"] = {"multi_select": ms_options}
 
@@ -707,9 +716,11 @@ class NotionDB:
              current_ms_names = {opt["name"] for opt in page["properties"]["タグ"]["multi_select"]}
 
         # Prepare new tag
+        tag_prop_type = page["properties"].get("タグ", {}).get("type")
+        relation_db_id = self._get_relation_database_id("タグ") or self.tags_database_id
         relation_used = False
-        if self.tags_database_id:
-            tag_id = self._get_or_create_tag_page(classroom)
+        if tag_prop_type == "relation" and relation_db_id:
+            tag_id = self._get_or_create_tag_page(classroom, relation_db_id)
             if tag_id:
                 # Check if already exists
                 if not any(r["id"] == tag_id for r in current_relation_ids):
@@ -719,7 +730,7 @@ class NotionDB:
                 relation_used = True
 
         # Fallback to Multi-select
-        if not relation_used and self._is_property_valid("タグ"):
+        if not relation_used and tag_prop_type == "multi_select":
              current_ms_names.add(classroom)
              ms_options = [{"name": t} for t in current_ms_names]
              properties["タグ"] = {"multi_select": ms_options}
