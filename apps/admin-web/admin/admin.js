@@ -843,6 +843,14 @@ async function addTagParentChildRelations(parentIdsRaw, childIdsRaw) {
 		}),
 	});
 
+	const nextTagsIndex = updated?.tags_index;
+	if (nextTagsIndex && typeof nextTagsIndex === "object" && Array.isArray(nextTagsIndex.tags)) {
+		state.tagsIndex = nextTagsIndex;
+		state.tagsIndexLoaded = true;
+		state.tagsSearch = buildTagSearchList(nextTagsIndex);
+		return { parentIds, childIds };
+	}
+
 	const updatedParents = Array.isArray(updated?.parents) ? updated.parents : [];
 	const updatedChildren = Array.isArray(updated?.children) ? updated.children : [];
 	updatedParents.forEach((raw) => {
