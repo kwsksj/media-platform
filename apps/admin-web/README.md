@@ -32,6 +32,7 @@ npm run tag-recalc:apply
 - `POST /admin/trigger-gallery-update`
 - `POST /admin/notify/students-after-gallery-update`
 - `POST /admin/curation/work-sync-status`
+- `POST /admin/curation/delete-images` / `POST /admin/curation/delete-work`
 - `POST /admin/tag-recalc`
 
 ## Notes

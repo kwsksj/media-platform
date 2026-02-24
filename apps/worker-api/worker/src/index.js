@@ -6,6 +6,7 @@ const CORS_HEADERS = {
 };
 const UPLOAD_NOTIFY_PENDING_WORK_PREFIX = "upload_notify:pending:work:";
 const UPLOAD_NOTIFY_STATUS_WORK_PREFIX = "upload_notify:status:work:";
+const UPLOAD_NOTIFY_DISABLED_WORK_PREFIX = "upload_notify:disabled:work:";
 
 function withCors(headers = {}) {
   return { ...CORS_HEADERS, ...headers };
@@ -1756,6 +1757,111 @@ function uploadNotifyStatusKey(workId) {
   return `${UPLOAD_NOTIFY_STATUS_WORK_PREFIX}${asString(workId).trim()}`;
 }
 
+function uploadNotifyDisabledKey(workId) {
+  return `${UPLOAD_NOTIFY_DISABLED_WORK_PREFIX}${asString(workId).trim()}`;
+}
+
+function isUploadNotificationDisabledStoredValue(value) {
+  const raw = asString(value).trim();
+  if (!raw) return false;
+  if (isFalsyString(raw)) return false;
+  if (isTruthyString(raw)) return true;
+  return raw === "1";
+}
+
+async function setUploadNotificationDisabledByWorkId(env, workId, disabled) {
+  if (!env.STAR_KV) return { ok: false, reason: "kv_not_configured" };
+  const id = asString(workId).trim();
+  if (!id) return { ok: false, reason: "missing_work_id" };
+
+  try {
+    const key = uploadNotifyDisabledKey(id);
+    if (disabled) {
+      await env.STAR_KV.put(key, "1");
+      await env.STAR_KV.delete(`${UPLOAD_NOTIFY_PENDING_WORK_PREFIX}${id}`);
+      await writeUploadNotificationWorkStatus(env, id, {
+        notificationState: "disabled",
+        reason: "work_notify_disabled",
+        queuedAt: "",
+        lastAttemptAt: new Date().toISOString(),
+        lastSentAt: "",
+        targetRecipients: 0,
+        sentRecipients: 0,
+        failedRecipients: 0,
+      });
+      return { ok: true, reason: "", disabled: true, workId: id };
+    }
+
+    await env.STAR_KV.delete(key);
+    return { ok: true, reason: "", disabled: false, workId: id };
+  } catch (error) {
+    console.error("failed to update work notification disable flag", {
+      workId: id,
+      disabled: Boolean(disabled),
+      message: asString(error?.message),
+    });
+    return { ok: false, reason: "kv_write_failed" };
+  }
+}
+
+async function loadUploadNotificationDisabledByWorkIds(env, workIdsRaw) {
+  const workIds = uniqueIds(Array.isArray(workIdsRaw) ? workIdsRaw : []);
+  if (workIds.length === 0) {
+    return {
+      ok: true,
+      reason: "",
+      disabledWorkIdSet: new Set(),
+    };
+  }
+  if (!env.STAR_KV) {
+    return {
+      ok: false,
+      reason: "kv_not_configured",
+      disabledWorkIdSet: new Set(),
+    };
+  }
+
+  const disabledWorkIdSet = new Set();
+  const batchSize = 50;
+  for (let offset = 0; offset < workIds.length; offset += batchSize) {
+    const batch = workIds.slice(offset, offset + batchSize);
+    const rawValues = await Promise.all(batch.map((workId) => env.STAR_KV.get(uploadNotifyDisabledKey(workId))));
+    for (let i = 0; i < batch.length; i += 1) {
+      const workId = batch[i];
+      const raw = rawValues[i];
+      if (!isUploadNotificationDisabledStoredValue(raw)) continue;
+      disabledWorkIdSet.add(workId);
+    }
+  }
+
+  return {
+    ok: true,
+    reason: "",
+    disabledWorkIdSet,
+  };
+}
+
+async function clearUploadNotificationTrackingForWork(env, workId) {
+  const id = asString(workId).trim();
+  if (!id) return { ok: false, reason: "missing_work_id" };
+  if (!env.STAR_KV) return { ok: false, reason: "kv_not_configured" };
+
+  try {
+    await deleteKvKeys(env.STAR_KV, [
+      `${UPLOAD_NOTIFY_PENDING_WORK_PREFIX}${id}`,
+      uploadNotifyStatusKey(id),
+      uploadNotifyDisabledKey(id),
+    ]);
+    return { ok: true, reason: "", workId: id };
+  } catch (error) {
+    console.error("failed to clear work notification tracking", {
+      workId: id,
+      message: asString(error?.message),
+    });
+    return { ok: false, reason: "kv_delete_failed", workId: id };
+  }
+}
+
 async function writeUploadNotificationWorkStatus(env, workId, patch) {
   if (!env.STAR_KV) return false;
   const id = asString(workId).trim();
@@ -1818,8 +1924,51 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
   }
 
   const works = await enrichUploadBatchWorksWithNotionAuthors(env, normalizedWorks);
+  const workIds = uniqueIds(works.map((work) => asString(work?.workId).trim()));
+  const disabledSnapshot = await loadUploadNotificationDisabledByWorkIds(env, workIds);
+  const disabledWorkIdSet = disabledSnapshot.disabledWorkIdSet;
+  const disabledWorks = works.filter((work) => disabledWorkIdSet.has(asString(work?.workId).trim()));
+  const activeWorks = works.filter((work) => !disabledWorkIdSet.has(asString(work?.workId).trim()));
+
+  if (disabledWorks.length > 0) {
+    await writeUploadNotificationWorkStatuses(
+      env,
+      disabledWorks
+        .map((work) => ({
+          workId: asString(work?.workId).trim(),
+          patch: {
+            notificationState: "disabled",
+            reason: "work_notify_disabled",
+            queuedAt: asString(work?.queuedAt).trim(),
+            lastAttemptAt: new Date().toISOString(),
+            lastSentAt: "",
+            targetRecipients: 0,
+            sentRecipients: 0,
+            failedRecipients: 0,
+          },
+        }))
+        .filter((entry) => entry.workId),
+    );
+  }
+
+  if (activeWorks.length === 0) {
+    return {
+      enabled: true,
+      attempted: true,
+      reason: "work_notify_disabled",
+      works: works.length,
+      recipients: 0,
+      sent: 0,
+      failed: 0,
+      skippedNoEmail: 0,
+      skippedOptOut: 0,
+      skippedNotFound: 0,
+      workPendingAuthorIds: [],
+    };
+  }
+
   const pendingAuthorIdsByWorkId = new Map(
-    works
+    activeWorks
       .map((work) => {
         const workId = asString(work?.workId).trim();
         if (!workId) return null;
@@ -1841,7 +1990,7 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
   if (!config.enabled) {
     await writeUploadNotificationWorkStatuses(
       env,
-      works
+      activeWorks
         .map((work) => ({
           workId: work.workId,
           patch: {
@@ -1873,7 +2022,7 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
   }
 
   const deliveryStatsByWorkId = new Map(
-    works
+    activeWorks
       .map((work) => {
         const workId = asString(work?.workId).trim();
         if (!workId) return null;
@@ -1967,7 +2116,7 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
   }
 
   const worksByAuthorId = new Map();
-  for (const work of works) {
+  for (const work of activeWorks) {
     const workId = asString(work?.workId).trim();
     const pendingAuthorIds = workId
       ? uniqueIds(Array.from(pendingAuthorIdsByWorkId.get(workId)?.values() || []))
@@ -2364,20 +2513,23 @@ async function handleAdminCurationWorkSyncStatus(request, env) {
     });
   }
 
-  const [notificationSnapshot, gallerySnapshot] = await Promise.all([
+  const [notificationSnapshot, gallerySnapshot, disabledSnapshot] = await Promise.all([
     loadUploadNotificationStatusByWorkIds(env, workIds),
     loadGalleryWorkIdSetForAdmin(env),
+    loadUploadNotificationDisabledByWorkIds(env, workIds),
   ]);
 
   const statuses = workIds.map((workId) => {
     const pending = notificationSnapshot.pendingWorkIdSet.has(workId);
     const rawStatus = notificationSnapshot.statusByWorkId.get(workId);
     const rawState = asString(rawStatus?.notificationState).trim();
+    const notificationDisabled = disabledSnapshot.disabledWorkIdSet.has(workId);
     return {
       workId,
       pending,
       galleryReflected: gallerySnapshot.ok ? gallerySnapshot.workIdSet.has(workId) : null,
       notification: {
+        notificationDisabled,
         notificationState: deriveUiNotificationState(rawState, pending),
         rawState,
         reason: asString(rawStatus?.reason).trim(),
@@ -2396,8 +2548,8 @@ async function handleAdminCurationWorkSyncStatus(request, env) {
     statuses,
     pendingCount: statuses.filter((row) => row.pending).length,
     galleryLoaded: gallerySnapshot.ok,
-    notificationStatusLoaded: notificationSnapshot.ok,
-    notificationStatusReason: notificationSnapshot.reason || "",
+    notificationStatusLoaded: Boolean(notificationSnapshot.ok && disabledSnapshot.ok),
+    notificationStatusReason: notificationSnapshot.reason || disabledSnapshot.reason || "",
     snapshotAt: new Date().toISOString(),
   });
 }
@@ -2425,13 +2577,26 @@ async function handleNotionCreateWork(request, env) {
     return jsonResponse({ ok: false, error: "failed to create notion page", detail: res.data }, 500);
   }
   const workId = asString(res.data?.id);
+  const notificationDisabled = Boolean(payload.notificationDisabled);
+  let notificationPreferenceReason = "";
+  if (notificationDisabled) {
+    const updated = await setUploadNotificationDisabledByWorkId(env, workId, true);
+    if (!updated.ok) {
+      notificationPreferenceReason = updated.reason || "notification_pref_not_saved";
+    }
+  }
   const notificationMode = asString(payload.notificationMode).trim().toLowerCase();
-  const shouldQueueNotification = !["skip", "off", "none", "disabled", "false", "0"].includes(notificationMode);
+  const shouldQueueNotification =
+    !notificationDisabled && !["skip", "off", "none", "disabled", "false", "0"].includes(notificationMode);
 
   let notification = {
     queued: 0,
     attempted: false,
-    reason: shouldQueueNotification ? "not_queued" : "skipped_by_request",
+    reason: shouldQueueNotification
+      ? "not_queued"
+      : notificationDisabled
+        ? notificationPreferenceReason || "work_notify_disabled"
+        : "skipped_by_request",
   };
   if (shouldQueueNotification) {
     const queued = await queuePendingWorkNotification(env, workId, payload);
@@ -2442,7 +2607,7 @@ async function handleNotionCreateWork(request, env) {
     };
   }
 
-  return okResponse({ id: workId, notification }, 201);
+  return okResponse({ id: workId, notification, notificationDisabled }, 201);
 }
 
 async function handleNotionUpdateWork(request, env) {
@@ -2450,6 +2615,8 @@ async function handleNotionUpdateWork(request, env) {
   if (!payload || typeof payload !== "object") return badRequest("invalid json");
   const id = asString(payload.id).trim();
   if (!id) return badRequest("missing id");
+  const hasNotificationDisabled = Object.prototype.hasOwnProperty.call(payload, "notificationDisabled");
+  const notificationDisabled = Boolean(payload.notificationDisabled);
 
   const props = pickWorkProperties(env, payload);
   const body = {};
@@ -2457,18 +2624,43 @@ async function handleNotionUpdateWork(request, env) {
 
   if ("archived" in payload) body.archived = Boolean(payload.archived);
 
-  if (Object.keys(body).length === 0) return badRequest("no updates");
+  if (Object.keys(body).length === 0 && !hasNotificationDisabled) return badRequest("no updates");
 
-  const res = await notionFetch(env, `/pages/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(body),
-  });
+  let notionUpdated = false;
+  if (Object.keys(body).length > 0) {
+    const res = await notionFetch(env, `/pages/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
 
-  if (!res.ok) {
-    return jsonResponse({ ok: false, error: "failed to update notion page", detail: res.data }, 500);
+    if (!res.ok) {
+      return jsonResponse({ ok: false, error: "failed to update notion page", detail: res.data }, 500);
+    }
+    notionUpdated = true;
   }
 
-  return okResponse({ id });
+  if (hasNotificationDisabled) {
+    const updated = await setUploadNotificationDisabledByWorkId(env, id, notificationDisabled);
+    if (!updated.ok) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: "failed to update work notification preference",
+          reason: updated.reason || "",
+          notionUpdated,
+        },
+        500,
+      );
+    }
+  }
+
+  if (payload.archived === true) {
+    await clearUploadNotificationTrackingForWork(env, id);
+  }
+
+  const response = { id };
+  if (hasNotificationDisabled) response.notificationDisabled = notificationDisabled;
+  return okResponse(response);
 }
 
 async function handleNotionCreateTag(request, env) {
@@ -2918,10 +3110,221 @@ async function handleR2Delete(request, env) {
   return okResponse({ deleted: keys.length });
 }
 
+function safeDecodeUrlPath(pathname) {
+  const raw = asString(pathname);
+  if (!raw) return "";
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function extractR2KeyFromPublicUrl(rawUrl, baseUrl) {
+  const urlText = asString(rawUrl).trim();
+  const baseText = asString(baseUrl).trim();
+  if (!urlText || !baseText) return "";
+
+  let targetUrl;
+  let publicBaseUrl;
+  try {
+    targetUrl = new URL(urlText);
+    publicBaseUrl = new URL(baseText);
+  } catch {
+    return "";
+  }
+
+  if (targetUrl.origin !== publicBaseUrl.origin) return "";
+
+  const basePath = safeDecodeUrlPath(publicBaseUrl.pathname).replace(/\/+$/, "");
+  const targetPath = safeDecodeUrlPath(targetUrl.pathname).replace(/^\/+/, "");
+  if (!targetPath) return "";
+
+  if (!basePath) return targetPath;
+
+  const normalizedBasePath = basePath.replace(/^\/+/, "");
+  if (targetPath === normalizedBasePath) return "";
+  if (!targetPath.startsWith(`${normalizedBasePath}/`)) return "";
+  return targetPath.slice(normalizedBasePath.length + 1);
+}
+
+function collectRelatedR2Keys(imageKey) {
+  const key = asString(imageKey).trim().replace(/^\/+/, "");
+  if (!key) return [];
+  const out = new Set([key]);
+  if (key.startsWith("photos/")) {
+    out.add(`photos-light/${key.slice("photos/".length)}`);
+  } else if (key.startsWith("photos-light/")) {
+    out.add(`photos/${key.slice("photos-light/".length)}`);
+  }
+  return Array.from(out.values());
+}
+
+function collectR2KeysFromImageUrls(imageUrls, baseUrl) {
+  const keys = new Set();
+  const urls = Array.isArray(imageUrls) ? imageUrls : [];
+  for (const rawUrl of urls) {
+    const key = extractR2KeyFromPublicUrl(rawUrl, baseUrl);
+    if (!key) continue;
+    collectRelatedR2Keys(key).forEach((entry) => keys.add(entry));
+  }
+  return Array.from(keys.values());
+}
+
+async function listR2KeysByPrefix(r2, prefix) {
+  const targetPrefix = asString(prefix).trim();
+  if (!r2 || !targetPrefix) return [];
+
+  const keys = [];
+  let cursor = undefined;
+  while (true) {
+    const listed = await r2.list({ prefix: targetPrefix, cursor, limit: 1000 });
+    const objects = Array.isArray(listed?.objects) ? listed.objects : [];
+    keys.push(...objects.map((obj) => asString(obj?.key).trim()).filter(Boolean));
+    if (!listed?.truncated) break;
+    const nextCursor = asString(listed?.cursor).trim();
+    if (!nextCursor) break;
+    cursor = nextCursor;
+  }
+  return uniqueIds(keys);
+}
+
+async function deleteR2KeysSafely(env, keysRaw) {
+  if (!env.GALLERY_R2) return { deleted: 0, failed: 0, deletedKeys: [], failedKeys: uniqueIds(keysRaw) };
+
+  const keys = uniqueIds(Array.isArray(keysRaw) ? keysRaw : []);
+  if (keys.length === 0) return { deleted: 0, failed: 0, deletedKeys: [], failedKeys: [] };
+
+  const results = await Promise.all(
+    keys.map(async (key) => {
+      try {
+        await env.GALLERY_R2.delete(key);
+        return { key, ok: true };
+      } catch {
+        return { key, ok: false };
+      }
+    }),
+  );
+
+  const deletedKeys = results.filter((entry) => entry.ok).map((entry) => entry.key);
+  const failedKeys = results.filter((entry) => !entry.ok).map((entry) => entry.key);
+  return {
+    deleted: deletedKeys.length,
+    failed: failedKeys.length,
+    deletedKeys,
+    failedKeys,
+  };
+}
+
 async function fetchWorkPage(env, workId) {
   const res = await notionFetch(env, `/pages/${workId}`, { method: "GET" });
   if (!res.ok) return null;
   return res.data;
+}
+
+async function handleCurationDeleteImages(request, env) {
+  const worksProps = getWorksProps(env);
+
+  const payload = await readJson(request);
+  if (!payload || typeof payload !== "object") return badRequest("invalid json");
+
+  const workId = asString(payload.workId).trim();
+  const imageUrls = uniqueIds(Array.isArray(payload.imageUrls) ? payload.imageUrls : []);
+  const archiveIfEmpty = payload.archiveIfEmpty !== false;
+  if (!workId || imageUrls.length === 0) return badRequest("missing params");
+
+  const workPage = await fetchWorkPage(env, workId);
+  if (!workPage) return jsonResponse({ ok: false, error: "work not found" }, 404);
+  const work = simplifyWorkFromNotionPage(env, workPage);
+
+  const selected = work.images.filter((img) => imageUrls.includes(asString(img?.url).trim()));
+  if (selected.length === 0) return badRequest("no matching images");
+  const remaining = work.images.filter((img) => !imageUrls.includes(asString(img?.url).trim()));
+
+  const updateRes = await notionFetch(env, `/pages/${workId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      properties: {
+        [worksProps.images || "画像"]: notionExternalFiles(remaining),
+      },
+    }),
+  });
+  if (!updateRes.ok) {
+    return jsonResponse({ ok: false, error: "failed to update work images", detail: updateRes.data }, 500);
+  }
+
+  let archived = false;
+  if (archiveIfEmpty && remaining.length === 0) {
+    const archiveRes = await notionFetch(env, `/pages/${workId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ archived: true }),
+    });
+    if (!archiveRes.ok) {
+      return jsonResponse({ ok: false, error: "failed to archive empty work", detail: archiveRes.data }, 500);
+    }
+    archived = true;
+  }
+
+  const baseUrl = getEnvString(env, "R2_PUBLIC_BASE_URL");
+  const selectedUrls = selected.map((img) => asString(img?.url).trim()).filter(Boolean);
+  const keysFromImages = collectR2KeysFromImageUrls(selectedUrls, baseUrl);
+  const thumbKeys = await listR2KeysByPrefix(env.GALLERY_R2, `thumbs/${workId}-`);
+  const deletedR2 = await deleteR2KeysSafely(env, [...keysFromImages, ...thumbKeys]);
+
+  if (archived) {
+    await clearUploadNotificationTrackingForWork(env, workId);
+  }
+
+  return okResponse({
+    workId,
+    removedImages: selected.length,
+    remainingImages: remaining.length,
+    archived,
+    r2Deleted: deletedR2.deleted,
+    r2Failed: deletedR2.failed,
+    r2FailedKeys: deletedR2.failedKeys,
+  });
+}
+
+async function handleCurationDeleteWork(request, env) {
+  const payload = await readJson(request);
+  if (!payload || typeof payload !== "object") return badRequest("invalid json");
+
+  const workId = asString(payload.workId).trim();
+  const deleteR2 = payload.deleteR2 !== false;
+  if (!workId) return badRequest("missing workId");
+
+  const workPage = await fetchWorkPage(env, workId);
+  if (!workPage) return jsonResponse({ ok: false, error: "work not found" }, 404);
+  const work = simplifyWorkFromNotionPage(env, workPage);
+
+  const archiveRes = await notionFetch(env, `/pages/${workId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ archived: true }),
+  });
+  if (!archiveRes.ok) {
+    return jsonResponse({ ok: false, error: "failed to archive work", detail: archiveRes.data }, 500);
+  }
+
+  let r2Deleted = { deleted: 0, failed: 0, failedKeys: [] };
+  if (deleteR2) {
+    const baseUrl = getEnvString(env, "R2_PUBLIC_BASE_URL");
+    const imageUrls = work.images.map((img) => asString(img?.url).trim()).filter(Boolean);
+    const keysFromImages = collectR2KeysFromImageUrls(imageUrls, baseUrl);
+    const thumbKeys = await listR2KeysByPrefix(env.GALLERY_R2, `thumbs/${workId}-`);
+    r2Deleted = await deleteR2KeysSafely(env, [...keysFromImages, ...thumbKeys]);
+  }
+
+  await clearUploadNotificationTrackingForWork(env, workId);
+
+  return okResponse({
+    workId,
+    archived: true,
+    removedImages: work.images.length,
+    r2Deleted: r2Deleted.deleted,
+    r2Failed: r2Deleted.failed,
+    r2FailedKeys: r2Deleted.failedKeys,
+  });
 }
 
 async function handleImageSplit(request, env) {
@@ -3038,10 +3441,13 @@ async function handleImageMove(request, env) {
   }
 
   if (archiveSourceIfEmpty && remaining.length === 0) {
-    await notionFetch(env, `/pages/${sourceWorkId}`, {
+    const archiveRes = await notionFetch(env, `/pages/${sourceWorkId}`, {
       method: "PATCH",
       body: JSON.stringify({ archived: true }),
     });
+    if (archiveRes.ok) {
+      await clearUploadNotificationTrackingForWork(env, sourceWorkId);
+    }
   }
 
   return okResponse({ moved: moving.length, sourceRemaining: remaining.length });
@@ -3103,6 +3509,7 @@ async function handleImageMerge(request, env) {
         }),
       ),
     );
+    await Promise.all(sources.map(({ id }) => clearUploadNotificationTrackingForWork(env, id)));
   }
 
   return okResponse({ mergedSources: sources.length, targetImageCount: nextImages.length });
@@ -3623,6 +4030,14 @@ export default {
 
     if (pathname === "/admin/curation/work-sync-status" && request.method === "POST") {
       return handleAdminCurationWorkSyncStatus(request, env);
+    }
+
+    if (pathname === "/admin/curation/delete-images" && request.method === "POST") {
+      return handleCurationDeleteImages(request, env);
+    }
+
+    if (pathname === "/admin/curation/delete-work" && request.method === "POST") {
+      return handleCurationDeleteWork(request, env);
     }
 
     if (pathname === "/admin/notion/tag" && request.method === "POST") {

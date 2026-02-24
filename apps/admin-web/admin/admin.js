@@ -2963,6 +2963,10 @@ function resolveNotificationSyncLabel(work) {
 	const stateValue = normalizeNotificationSyncState(work?.notificationState);
 	const reason = trimText(work?.notificationReason || "");
 	const pending = Boolean(work?.notificationPending);
+	const notificationDisabled = Boolean(work?.notificationDisabled);
+	if (notificationDisabled) {
+		return { label: "通知: OFF", tone: "neutral" };
+	}
 	if (["disabled", "not_configured", "invalid_from_email"].includes(reason)) {
 		return { label: "通知: 設定未完了", tone: "warn" };
 	}
@@ -2996,10 +3000,12 @@ function mergeCurationWorkSyncStatus(work, syncStatus) {
 	const notification = status?.notification && typeof status.notification === "object" ? status.notification : null;
 	const galleryReflected =
 		status && typeof status.galleryReflected === "boolean" ? status.galleryReflected : null;
+	const notificationDisabled = notification ? Boolean(notification.notificationDisabled) : false;
 	return {
 		...work,
 		galleryReflected,
-		notificationPending: status ? Boolean(status.pending) : false,
+		notificationPending: status ? Boolean(status.pending) && !notificationDisabled : false,
+		notificationDisabled,
 		notificationState: notification ? trimText(notification.notificationState || notification.rawState || "") : "",
 		notificationReason: notification ? trimText(notification.reason || "") : "",
 		notificationUpdatedAt: notification ? trimText(notification.updatedAt || "") : "",
@@ -3303,6 +3309,8 @@ function renderWorkModal(work, index) {
 
 	const readyCb = el("input", { type: "checkbox" });
 	readyCb.checked = Boolean(work.ready);
+	const notifyDisabledCb = el("input", { type: "checkbox" });
+	notifyDisabledCb.checked = Boolean(work.notificationDisabled);
 
 	const authorSelect = el("select", { class: "input author-select-native", "aria-hidden": "true" });
 	authorSelect.multiple = true;
@@ -3547,6 +3555,79 @@ function renderWorkModal(work, index) {
 		}
 	});
 
+	const syncCurrentWorkImagesToState = () => {
+		const nextImages = Array.isArray(work.images) ? [...work.images] : [];
+		const idxAll = state.curation.works.findIndex((w) => w.id === work.id);
+		if (idxAll >= 0) {
+			state.curation.works[idxAll] = {
+				...state.curation.works[idxAll],
+				images: nextImages,
+			};
+		}
+		const idxFiltered = state.curation.filtered.findIndex((w) => w.id === work.id);
+		if (idxFiltered >= 0) {
+			state.curation.filtered[idxFiltered] = {
+				...state.curation.filtered[idxFiltered],
+				images: nextImages,
+			};
+		}
+		renderCurationGrid();
+	};
+
+	const deleteSelectedBtn = el("button", { type: "button", class: "btn", text: "選択画像を完全削除" });
+	deleteSelectedBtn.addEventListener("click", async () => {
+		const urls = getSelectedOrCurrentUrls();
+		if (urls.length === 0) return showToast("削除する画像が選択されていません");
+		if (!confirm(`選択画像 ${urls.length}枚を削除しますか？（R2とNotionの参照を削除）`)) return;
+
+		deleteSelectedBtn.disabled = true;
+		try {
+			const res = await apiFetch("/admin/curation/delete-images", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ workId: work.id, imageUrls: urls, archiveIfEmpty: true }),
+			});
+			const removed = Number(res?.removedImages) || 0;
+			const r2Deleted = Number(res?.r2Deleted) || 0;
+			showToast(`画像を削除しました（画像${removed}枚 / R2 ${r2Deleted}件）`);
+			if (res?.archived) {
+				close();
+				await loadCurationQueue();
+				return;
+			}
+			work.images = (work.images || []).filter((img) => !urls.includes(trimText(img?.url)));
+			urls.forEach((u) => selectedUrls.delete(u));
+			syncCurrentWorkImagesToState();
+			rebuildViewer();
+		} catch (err) {
+			showToast(`画像削除に失敗: ${err.message}`);
+		} finally {
+			deleteSelectedBtn.disabled = false;
+		}
+	});
+
+	const deleteWorkBtn = el("button", { type: "button", class: "btn btn--danger", text: "この作品を完全削除" });
+	deleteWorkBtn.addEventListener("click", async () => {
+		if (!confirm("この作品を削除しますか？（Notionアーカイブ / R2削除 / 通知キュー削除）")) return;
+
+		deleteWorkBtn.disabled = true;
+		try {
+			const res = await apiFetch("/admin/curation/delete-work", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ workId: work.id, deleteR2: true }),
+			});
+			const r2Deleted = Number(res?.r2Deleted) || 0;
+			showToast(`作品を削除しました（R2 ${r2Deleted}件）`);
+			close();
+			await loadCurationQueue();
+		} catch (err) {
+			showToast(`作品削除に失敗: ${err.message}`);
+		} finally {
+			deleteWorkBtn.disabled = false;
+		}
+	});
+
 	const modalAuthorLabelId = `curation-author-label-${index}`;
 
 	const info = el("div", {}, [
@@ -3580,27 +3661,38 @@ function renderWorkModal(work, index) {
 				el("span", { text: "整備済として確定（公開OK）" }),
 			]),
 		]),
-			el("div", { class: "split-actions" }, [
-				createHelpToggle("画像セットの分割・移動・統合を行えます。", {
-					ariaLabel: "画像セット操作の説明を表示",
-				}),
-				el("div", { class: "viewer-actions" }, [splitBtn]),
-				el("div", { class: "form-row" }, [
-					el("label", { class: "label", text: "移動" }),
+		el("div", { class: "form-row" }, [
+			el("label", { class: "checkbox" }, [
+				notifyDisabledCb,
+				el("span", { text: "この作品は通知しない（通知キューから除外）" }),
+			]),
+		]),
+		el("div", { class: "split-actions" }, [
+			createHelpToggle("画像セットの分割・移動・統合を行えます。", {
+				ariaLabel: "画像セット操作の説明を表示",
+			}),
+			el("div", { class: "viewer-actions" }, [splitBtn]),
+			el("div", { class: "form-row" }, [
+				el("label", { class: "label", text: "移動" }),
 				moveQuery,
 				moveResults,
 				movePicked,
 				moveBtn,
-				]),
-				el("div", { class: "form-row" }, [
-					el("label", { class: "label", text: "統合（この作品に集約）" }),
-					createHelpToggle("統合元は既定でアーカイブされます（★キーを温存）。", {
-						ariaLabel: "統合時の説明を表示",
-					}),
-					mergeQuery,
-					mergeResults,
-					mergeSourcesRoot,
+			]),
+			el("div", { class: "form-row" }, [
+				el("label", { class: "label", text: "統合（この作品に集約）" }),
+				createHelpToggle("統合元は既定でアーカイブされます（★キーを温存）。", {
+					ariaLabel: "統合時の説明を表示",
+				}),
+				mergeQuery,
+				mergeResults,
+				mergeSourcesRoot,
 				mergeBtn,
+			]),
+			el("div", { class: "form-row" }, [
+				el("label", { class: "label", text: "削除" }),
+				el("div", { class: "viewer-actions" }, [deleteSelectedBtn, deleteWorkBtn]),
+				el("div", { class: "subnote", text: "削除後はギャラリー更新（JSON再生成）を実行してください。" }),
 			]),
 		]),
 	]);
@@ -3639,6 +3731,7 @@ function renderWorkModal(work, index) {
 			caption: captionInput.value.trim(),
 			tagIds,
 			ready: forceReady ? true : readyCb.checked,
+			notificationDisabled: notifyDisabledCb.checked,
 		};
 
 		try {
@@ -3655,6 +3748,10 @@ function renderWorkModal(work, index) {
 				authorIds: payload.authorIds || [],
 				tagIds,
 				ready: payload.ready,
+				notificationDisabled: Boolean(payload.notificationDisabled),
+				notificationPending: payload.notificationDisabled ? false : Boolean(work.notificationPending),
+				notificationState: payload.notificationDisabled ? "disabled" : work.notificationState,
+				notificationReason: payload.notificationDisabled ? "work_notify_disabled" : work.notificationReason,
 			};
 			const idxAll = state.curation.works.findIndex((w) => w.id === work.id);
 			if (idxAll >= 0) state.curation.works[idxAll] = nextWork;
