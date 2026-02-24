@@ -3153,9 +3153,26 @@ function collectRelatedR2Keys(imageKey) {
   if (!key) return [];
   const out = new Set([key]);
   if (key.startsWith("photos/")) {
-    out.add(`photos-light/${key.slice("photos/".length)}`);
+    const suffix = key.slice("photos/".length);
+    out.add(`photos-light/${suffix}`);
+    // Legacy compatibility: older exports may have used images-light/ or images/.
+    out.add(`images-light/${suffix}`);
+    out.add(`images/${suffix}`);
   } else if (key.startsWith("photos-light/")) {
-    out.add(`photos/${key.slice("photos-light/".length)}`);
+    const suffix = key.slice("photos-light/".length);
+    out.add(`photos/${suffix}`);
+    out.add(`images-light/${suffix}`);
+    out.add(`images/${suffix}`);
+  } else if (key.startsWith("images-light/")) {
+    const suffix = key.slice("images-light/".length);
+    out.add(`photos/${suffix}`);
+    out.add(`photos-light/${suffix}`);
+    out.add(`images/${suffix}`);
+  } else if (key.startsWith("images/")) {
+    const suffix = key.slice("images/".length);
+    out.add(`images-light/${suffix}`);
+    out.add(`photos/${suffix}`);
+    out.add(`photos-light/${suffix}`);
   }
   return Array.from(out.values());
 }

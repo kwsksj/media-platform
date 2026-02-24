@@ -19,7 +19,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 # プロジェクトルートをパスに追加
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -74,12 +74,13 @@ def _url_to_r2_key(url: str, public_url: str) -> str | None:
     """画像URLからR2キーを抽出する。"""
     if not url:
         return None
-    if public_url and url.startswith(public_url):
+    public_url = (public_url or "").rstrip("/")
+    if public_url and url.startswith(f"{public_url}/"):
         key = url[len(public_url):].lstrip("/")
-        return key if key else None
+        return unquote(key) if key else None
     parsed = urlparse(url)
-    path = parsed.path.lstrip("/")
-    if path.startswith("photos/"):
+    path = unquote(parsed.path.lstrip("/"))
+    if path.startswith(("photos/", "photos-light/", "images-light/", "images/")):
         return path
     return None
 

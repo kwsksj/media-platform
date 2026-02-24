@@ -126,12 +126,22 @@ auto-post export-gallery-json --no-upload --no-thumbs --no-light
 
 - `Daily Gallery Export` (`.github/workflows/gallery-export.yml`)
   - 毎日 16:10 JST (07:10 UTC)
+- `Image Link Health Check` (`.github/workflows/image-link-health.yml`)
+  - 毎週日曜 16:35 JST (07:35 UTC) に実行
 - `Daily Auto Post` (`.github/workflows/schedule.yml`)
   - 毎日 16:42 JST (07:42 UTC)
 - `Catch-up Post` (`.github/workflows/catchup.yml`)
   - 手動実行のみ
 - `Monthly Schedule Post` (`.github/workflows/monthly-schedule.yml`)
   - 毎月25日 16:00 JST (07:00 UTC)
+
+### 画像リンク健全性チェックのオプション設定
+
+GitHub Repository Variables:
+
+- `IMAGE_LINK_CHECK_SKIP_HTTP`: `true` でHTTP疎通チェックを省略（任意）
+- `IMAGE_LINK_CHECK_INCLUDE_ARCHIVED`: `true` で archived ページを含める（任意）
+- `IMAGE_LINK_CHECK_MAX_DETAILS`: レポート詳細件数（任意、既定 `60`）
 
 ## ドキュメント
 

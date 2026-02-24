@@ -49,7 +49,13 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 USER_AGENT = "media-platform-link-check/1.0"
-KNOWN_R2_PREFIXES = ("photos/", "thumbs/", "images-light/")
+KNOWN_R2_PREFIXES = (
+    "photos/",
+    "photos-light/",
+    "images/",
+    "images-light/",
+    "thumbs/",
+)
 
 
 @dataclass
