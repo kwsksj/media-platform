@@ -3151,29 +3151,17 @@ function extractR2KeyFromPublicUrl(rawUrl, baseUrl) {
 function collectRelatedR2Keys(imageKey) {
   const key = asString(imageKey).trim().replace(/^\/+/, "");
   if (!key) return [];
-  const out = new Set([key]);
-  if (key.startsWith("photos/")) {
-    const suffix = key.slice("photos/".length);
-    out.add(`photos-light/${suffix}`);
-    // Legacy compatibility: older exports may have used images-light/ or images/.
-    out.add(`images-light/${suffix}`);
-    out.add(`images/${suffix}`);
-  } else if (key.startsWith("photos-light/")) {
-    const suffix = key.slice("photos-light/".length);
-    out.add(`photos/${suffix}`);
-    out.add(`images-light/${suffix}`);
-    out.add(`images/${suffix}`);
-  } else if (key.startsWith("images-light/")) {
-    const suffix = key.slice("images-light/".length);
-    out.add(`photos/${suffix}`);
-    out.add(`photos-light/${suffix}`);
-    out.add(`images/${suffix}`);
-  } else if (key.startsWith("images/")) {
-    const suffix = key.slice("images/".length);
-    out.add(`images-light/${suffix}`);
-    out.add(`photos/${suffix}`);
-    out.add(`photos-light/${suffix}`);
+
+  const prefixes = ["photos/", "photos-light/", "images/", "images-light/"];
+  let suffix = null;
+  for (const prefix of prefixes) {
+    if (!key.startsWith(prefix)) continue;
+    suffix = key.slice(prefix.length);
+    break;
   }
+  if (!suffix) return [key];
+
+  const out = new Set(prefixes.map((prefix) => `${prefix}${suffix}`));
   return Array.from(out.values());
 }
 
