@@ -3293,6 +3293,11 @@ function renderWorkModal(work, index) {
 	};
 
 	const titleInput = el("input", { class: "input", type: "text", value: work.title || "" });
+	const completedDateInput = el("input", { class: "input", type: "date", value: work.completedDate || "" });
+	const classroomSelect = el("select", { class: "input" });
+	const classrooms = Array.from(new Set(state.curation.works.map((w) => w.classroom).filter(Boolean))).sort((a, b) => a.localeCompare(b, "ja"));
+	populateSelect(classroomSelect, { placeholder: "未選択", items: classrooms.map((v) => ({ value: v })) });
+	classroomSelect.value = work.classroom || "";
 	const captionInput = el("textarea", { class: "input", rows: "3" });
 	captionInput.value = work.caption || "";
 
@@ -3307,7 +3312,6 @@ function renderWorkModal(work, index) {
 	}
 	setSelectedAuthorIds(authorSelect, Array.isArray(work.authorIds) ? work.authorIds : []);
 
-	const authorCandidates = getAuthorCandidatesForWork(work);
 	const authorSelected = el("div", { class: "chips", hidden: true });
 	const authorCandidateNotes = el("div", { class: "candidate-notes" });
 	const authorSearchInput = el("input", {
@@ -3320,6 +3324,12 @@ function renderWorkModal(work, index) {
 	const authorSearchResults = el("div", { class: "suggest" });
 
 	const syncModalAuthorUi = () => {
+		const tempWork = {
+			...work,
+			completedDate: completedDateInput.value,
+			classroom: classroomSelect.value,
+		};
+		const authorCandidates = getAuthorCandidatesForWork(tempWork);
 		syncAuthorPickerUi({
 			selectEl: authorSelect,
 			selectedRoot: authorSelected,
@@ -3328,6 +3338,8 @@ function renderWorkModal(work, index) {
 		});
 	};
 
+	completedDateInput.addEventListener("change", syncModalAuthorUi);
+	classroomSelect.addEventListener("change", syncModalAuthorUi);
 	authorSelect.addEventListener("change", syncModalAuthorUi);
 	bindAuthorSearchInput({
 		inputEl: authorSearchInput,
@@ -3540,6 +3552,14 @@ function renderWorkModal(work, index) {
 	const info = el("div", {}, [
 		el("div", { class: "form-row" }, [el("label", { class: "label", text: "作品名" }), titleControls]),
 		el("div", { class: "form-row" }, [
+			el("div", { class: "inline-controls" }, [
+				el("label", { class: "label", text: "完成日" }),
+				completedDateInput,
+				el("label", { class: "label", style: "margin-left: 1rem;", text: "教室" }),
+				classroomSelect,
+			]),
+		]),
+		el("div", { class: "form-row" }, [
 			el("div", { id: modalAuthorLabelId, class: "label", text: "作者" }),
 			authorSelect,
 			el("div", { class: "author-picker", role: "group", "aria-labelledby": modalAuthorLabelId }, [
@@ -3613,11 +3633,12 @@ function renderWorkModal(work, index) {
 		const payload = {
 			id: work.id,
 			title: titleInput.value.trim(),
+			completedDate: completedDateInput.value.trim(),
+			classroom: classroomSelect.value,
 			authorIds: getSelectedAuthorIds(authorSelect),
 			caption: captionInput.value.trim(),
 			tagIds,
 			ready: forceReady ? true : readyCb.checked,
-			images: work.images || [],
 		};
 
 		try {
