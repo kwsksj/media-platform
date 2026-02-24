@@ -726,6 +726,16 @@ def check_notion(ctx):
 # ============================================================================
 
 
+def _create_schedule_lookup(config):
+    """Create a ScheduleLookup instance for date-based classroom detection."""
+    try:
+        from .schedule_lookup import ScheduleLookup
+        return ScheduleLookup(config)
+    except Exception as e:
+        logger.warning(f"Could not create ScheduleLookup: {e}")
+        return None
+
+
 @main.command()
 @click.argument("folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option("--threshold", "-t", default=10, help="Time gap threshold in minutes (default: 10)")
@@ -767,7 +777,8 @@ def export_groups(ctx, folder: Path, output: Path, threshold: int, max_per_group
 def import_groups(ctx, grouping_file: Path, student: str | None, start_date: datetime | None, dry_run: bool):
     """Import photos using an edited grouping file."""
     config = Config.load(ctx.obj.get("env_file"))
-    importer = Importer(config)
+    schedule_lookup = _create_schedule_lookup(config)
+    importer = Importer(config, schedule_lookup=schedule_lookup)
 
     stats = importer.import_from_file(
         grouping_file,
@@ -795,7 +806,8 @@ def import_groups(ctx, grouping_file: Path, student: str | None, start_date: dat
 def import_direct(ctx, folder: Path, threshold: int, max_per_group: int, student: str | None, start_date: datetime | None, dry_run: bool):
     """Import photos directly from folder without manual review."""
     config = Config.load(ctx.obj.get("env_file"))
-    importer = Importer(config)
+    schedule_lookup = _create_schedule_lookup(config)
+    importer = Importer(config, schedule_lookup=schedule_lookup)
 
     if not dry_run:
         click.confirm(
@@ -857,7 +869,8 @@ def organize(ctx, folder: Path, threshold: int, dry_run: bool, copy: bool, outpu
 def import_folders(ctx, folder: Path, student: str | None, start_date: datetime | None, dry_run: bool):
     """Import each subfolder as a separate work (Work Name = Folder Name)."""
     config = Config.load(ctx.obj.get("env_file"))
-    importer = Importer(config)
+    schedule_lookup = _create_schedule_lookup(config)
+    importer = Importer(config, schedule_lookup=schedule_lookup)
 
     if not dry_run:
         click.confirm(

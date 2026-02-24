@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class Importer:
     """Handles importing photos from local folders to R2 and Notion."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, schedule_lookup=None):
         self.config = config
         self.notion = NotionDB(
             config.notion.token,
@@ -32,6 +32,7 @@ class Importer:
             config.notion.tags_database_id
         )
         self.r2 = R2Storage(config.r2)
+        self.schedule_lookup = schedule_lookup
 
     def preview_groups(
         self,
@@ -196,11 +197,12 @@ class Importer:
 
                     effective_student = student_name or group.student_name
 
-                    # Prepare location info
+                    # Determine classroom from schedule data
                     classroom = None
-                    if group.location:
+                    if self.schedule_lookup and group.timestamp:
+                        classroom = self.schedule_lookup.lookup_classroom(group.timestamp)
+                    if not classroom and group.location:
                         classroom = group.location.classroom
-                        # venue is removed as per user request
 
                     page_id = self.notion.add_work(
                         work_name=group.work_name,

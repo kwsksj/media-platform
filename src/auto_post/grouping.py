@@ -175,9 +175,7 @@ def get_photo_metadata(photo_path: Path) -> tuple[datetime | None, LocationTag |
 
     # Try filename parsing for timestamp
     ts = parse_filename_timestamp(photo_path.name)
-
-    # Try EXIF for location if not found in JSON
-    # This is expensive so we do it last or if needed
+    # Fallback EXIF location is used by update-locations and as schedule fallback.
     loc = get_location_for_file(photo_path)
 
     if ts:
@@ -194,15 +192,13 @@ def get_photo_metadata(photo_path: Path) -> tuple[datetime | None, LocationTag |
 def scan_photos(folder: Path) -> list[PhotoInfo]:
     """
     Scan folder for images and extract metadata.
-    Handles duplicate filtering (preferring edited versions).
+    All images are included (no edit-preference filtering).
     """
     if not folder.exists():
         logger.error(f"Folder not found: {folder}")
         return []
 
-    all_files = {}  # Map path -> PhotoInfo
-    edited_stems = set()
-    edited_keywords = ["-edited", "編集済み"]
+    photos = []
 
     for path in folder.rglob("*"):
         if path.suffix.lower() in IMAGE_EXTENSIONS:
@@ -214,34 +210,13 @@ def scan_photos(folder: Path) -> list[PhotoInfo]:
 
             if timestamp:
                 info = PhotoInfo(path=path, timestamp=timestamp, location=location, has_json=has_json)
-                all_files[path] = info
-
-                # Identify edited files
-                for keyword in edited_keywords:
-                    if keyword in path.stem:
-                        base_stem = path.stem.replace(f"-{keyword}", "").replace(f" {keyword}", "").replace(keyword, "")
-                        edited_stems.add(base_stem.strip(" -_"))
-                        break
+                photos.append(info)
             else:
                 logger.warning(f"Could not determine timestamp for: {path}")
 
-    # Second pass: build final list, filtering out originals if edited exists
-    photos = []
-
-    for path, info in all_files.items():
-        stem = path.stem
-
-        if stem in edited_stems:
-            has_keyword = any(k in stem for k in edited_keywords)
-            if not has_keyword:
-                logger.info(f"Skipping original {path.name} in favor of edited version")
-                continue
-
-        photos.append(info)
-
     # Sort by timestamp
     photos.sort()
-    logger.info(f"Found {len(photos)} photos in {folder} (after filtering duplicates)")
+    logger.info(f"Found {len(photos)} photos in {folder}")
     return photos
 
 
