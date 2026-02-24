@@ -35,6 +35,7 @@ npx wrangler deploy --dry-run
 `POST /admin/notify/students-after-gallery-update` で同一生徒を1通に集約して通知できます。
 整備モードUI向けに `POST /admin/curation/work-sync-status` で
 作品ごとの「通知キュー状態 / 送信状態 / gallery反映状態」を取得できます。
+作品単位の通知OFFは `PATCH /admin/notion/work` の `notificationDisabled` で設定します（KV保存）。
 
 - Vars
   - `UPLOAD_NOTIFY_ENABLED`（`false` のとき通知無効）

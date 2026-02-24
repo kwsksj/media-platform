@@ -1,0 +1,101 @@
+name: Image Link Health Check
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Runs every Sunday at 16:35 JST (07:35 UTC)
+    - cron: "35 7 * * 0"
+  workflow_dispatch:
+    inputs:
+      skip_http:
+        description: "Skip HTTP checks (R2 key existence only)"
+        required: false
+        type: boolean
+        default: false
+      include_archived:
+        description: "Include archived Notion pages"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Run image link check
+        id: link_check
+        continue-on-error: true
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          TAGS_DATABASE_ID: ${{ secrets.TAGS_DATABASE_ID }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+          INPUT_SKIP_HTTP: ${{ github.event.inputs.skip_http }}
+          INPUT_INCLUDE_ARCHIVED: ${{ github.event.inputs.include_archived }}
+          VAR_SKIP_HTTP: ${{ vars.IMAGE_LINK_CHECK_SKIP_HTTP }}
+          VAR_INCLUDE_ARCHIVED: ${{ vars.IMAGE_LINK_CHECK_INCLUDE_ARCHIVED }}
+          VAR_MAX_DETAILS: ${{ vars.IMAGE_LINK_CHECK_MAX_DETAILS }}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+
+          normalize_bool() {
+            case "$(echo "$1" | tr '[:upper:]' '[:lower:]' | xargs)" in
+              1|true|yes|on|enabled) echo "true" ;;
+              *) echo "false" ;;
+            esac
+          }
+
+          skip_http="$(normalize_bool "${INPUT_SKIP_HTTP:-${VAR_SKIP_HTTP:-false}}")"
+          include_archived="$(normalize_bool "${INPUT_INCLUDE_ARCHIVED:-${VAR_INCLUDE_ARCHIVED:-false}}")"
+          max_details="${VAR_MAX_DETAILS:-60}"
+          if ! [[ "${max_details}" =~ ^[0-9]+$ ]]; then
+            max_details="60"
+          fi
+
+          cmd=(python scripts/check_image_links.py --output reports/image_link_report.json --max-details "${max_details}")
+          if [ "${skip_http}" = "true" ]; then
+            cmd+=(--skip-http)
+          fi
+          if [ "${include_archived}" = "true" ]; then
+            cmd+=(--include-archived)
+          fi
+
+          echo "Running: ${cmd[*]}"
+          "${cmd[@]}"
+
+      - name: Upload image link report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-link-report
+          path: reports/image_link_report.json
+          if-no-files-found: warn
+
+      - name: Mark job failed when broken links detected
+        if: steps.link_check.outcome == 'failure'
+        run: |
+          echo "Image link check failed. See logs and artifact: image-link-report" >&2
+          exit 1

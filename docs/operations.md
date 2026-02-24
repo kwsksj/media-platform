@@ -10,6 +10,8 @@
 
 - `Daily Gallery Export` (`.github/workflows/gallery-export.yml`)
   - Schedule: 毎日 16:10 JST (07:10 UTC)
+- `Image Link Health Check` (`.github/workflows/image-link-health.yml`)
+  - Schedule: 毎週日曜 16:35 JST (07:35 UTC)
 - `Daily Auto Post` (`.github/workflows/schedule.yml`)
   - Schedule: 毎日 16:42 JST (07:42 UTC)
 - `Monthly Schedule Post` (`.github/workflows/monthly-schedule.yml`)
@@ -19,8 +21,17 @@
 
 - `Catch-up Post` (`.github/workflows/catchup.yml`)
 - `Daily Gallery Export` の手動再実行
+- `Image Link Health Check` の手動再実行
 - `Daily Auto Post` の手動再実行
 - `Monthly Schedule Post` の手動再実行
+
+## Image Link Health Check Optional Settings
+
+GitHub Repository Variables:
+
+- `IMAGE_LINK_CHECK_SKIP_HTTP`: `true` でHTTPチェック省略（optional）
+- `IMAGE_LINK_CHECK_INCLUDE_ARCHIVED`: `true` でarchivedページを含める（optional）
+- `IMAGE_LINK_CHECK_MAX_DETAILS`: 出力詳細件数（default: `60`）
 
 ## Local Runbook (Make)
 
