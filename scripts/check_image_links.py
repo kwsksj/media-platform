@@ -91,7 +91,7 @@ def _url_to_r2_key(url: str, public_url: str) -> str | None:
     public_url = (public_url or "").rstrip("/")
     if public_url and url.startswith(f"{public_url}/"):
         key = url[len(public_url):].lstrip("/")
-        return key if key else None
+        return urllib.parse.unquote(key) if key else None
 
     parsed = urllib.parse.urlparse(url)
     path = parsed.path.lstrip("/")
@@ -99,12 +99,12 @@ def _url_to_r2_key(url: str, public_url: str) -> str | None:
         return None
 
     if path.startswith(KNOWN_R2_PREFIXES):
-        return path
+        return urllib.parse.unquote(path)
 
     if public_url:
         pub = urllib.parse.urlparse(public_url)
         if parsed.netloc and parsed.netloc == pub.netloc:
-            return path
+            return urllib.parse.unquote(path)
 
     return None
 
