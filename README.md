@@ -41,6 +41,7 @@ make setup-python-dev
 make help
 make recommend-checks
 make check-required
+make check-required-strict
 make check-changed-python
 make check-fast
 make check-monorepo
@@ -56,6 +57,7 @@ make pre-commit-install
 
 `.vscode/tasks.json` を同梱しているため、VSCode では `Run Task` から
 `Check Changed Python` / `Check Fast` / `Publish Dry Run` を直接実行できます。
+`check-required-strict` は、マージ前に cross-cutting な変更を強めに検証したいときに使います。
 
 ```bash
 # 投稿 dry-run
@@ -102,6 +104,7 @@ media-platform/
 ```bash
 make recommend-checks
 make check-required
+make check-required-strict
 make check-changed-python
 make fix-changed-python
 make check-fast

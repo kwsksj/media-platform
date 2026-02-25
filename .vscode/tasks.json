@@ -20,6 +20,12 @@
       "group": "test"
     },
     {
+      "label": "Check Required Strict",
+      "type": "shell",
+      "command": "make check-required-strict",
+      "group": "test"
+    },
+    {
       "label": "Check Changed Python",
       "type": "shell",
       "command": "make check-changed-python",

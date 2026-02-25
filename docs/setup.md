@@ -237,6 +237,9 @@ make recommend-checks
 # 推奨チェックのうち必須だけ自動実行
 make check-required
 
+# マージ前に強めに確認したい場合
+make check-required-strict
+
 # 変更差分だけ高速チェック
 make check-changed-python
 

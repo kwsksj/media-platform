@@ -20,7 +20,7 @@ TAKEOUT_DIR ?= ./takeout-photos
 THRESHOLD ?= 10
 MAX_PER_GROUP ?= 10
 
-.PHONY: help ensure-python-venv setup-python-dev setup-admin-web pre-commit-install lint format-check typecheck test recommend-checks check-required check-changed-python fix-changed-python check-fast check-python check-monorepo ingest-preview ingest-import-dry publish-dry publish-catchup-dry publish-monthly-schedule-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry secrets-list
+.PHONY: help ensure-python-venv setup-python-dev setup-admin-web pre-commit-install lint format-check typecheck test recommend-checks recommend-checks-strict check-required check-required-strict check-changed-python fix-changed-python check-fast check-python check-monorepo ingest-preview ingest-import-dry publish-dry publish-catchup-dry publish-monthly-schedule-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry secrets-list
 
 help:
 	@echo "Monorepo helper targets"
@@ -28,7 +28,9 @@ help:
 	@echo "  make setup-admin-web"
 	@echo "  make pre-commit-install"
 	@echo "  make recommend-checks        # suggest minimal checks from changed files"
+	@echo "  make recommend-checks-strict # same as above, but marks cross-cutting checks required"
 	@echo "  make check-required          # auto-run required checks from suggestions"
+	@echo "  make check-required-strict   # strict required set (for pre-merge/release)"
 	@echo "  make check-changed-python    # changed Python files only (ruff + mypy)"
 	@echo "  make fix-changed-python      # auto-fix changed Python files"
 	@echo "  make check-fast              # lint + typecheck"
@@ -79,8 +81,14 @@ test: ensure-python-venv
 recommend-checks: ensure-python-venv
 	@$(VENV_PYTHON) scripts/recommend_checks.py --repo .
 
+recommend-checks-strict: ensure-python-venv
+	@$(VENV_PYTHON) scripts/recommend_checks.py --repo . --strict
+
 check-required: ensure-python-venv
 	@$(VENV_PYTHON) scripts/execute_recommended_checks.py --repo .
+
+check-required-strict: ensure-python-venv
+	@$(VENV_PYTHON) scripts/execute_recommended_checks.py --repo . --strict
 
 check-changed-python: ensure-python-venv
 	@set -e; \

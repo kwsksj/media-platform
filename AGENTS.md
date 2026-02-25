@@ -3,12 +3,14 @@
 ## Purpose
 This repository manages ingest, publishing, and gallery generation for the media platform.
 Use this file as the default execution guide for code changes and validation.
+When available, prefer the `media-platform-dev-loop` skill and keep repository scripts as the source of truth.
 
 ## Fast Start
 ```bash
 make setup-python-dev
 make recommend-checks
 make check-required
+make check-required-strict
 make check-changed-python
 make check-fast
 make check-monorepo
@@ -24,11 +26,12 @@ make fix-changed-python
 ## Preferred Validation Order
 1. `make recommend-checks` (path-driven recommendation)
 2. `make check-required` (auto-run required subset)
-3. `make check-changed-python` (changed Python files only)
-4. `make check-fast` (full ruff + mypy when needed)
-5. `make test` (when Python code is changed)
-6. `make check-monorepo` (structure guard)
-7. Target-specific dry-run command (`make publish-dry`, `make gallery-export`, etc.)
+3. `make check-required-strict` (before merge or release)
+4. `make check-changed-python` (changed Python files only)
+5. `make check-fast` (full ruff + mypy when needed)
+6. `make test` (when Python code is changed)
+7. `make check-monorepo` (structure guard)
+8. Target-specific dry-run command (`make publish-dry`, `make gallery-export`, etc.)
 
 ## Repo Map
 - `src/auto_post`: Python CLI implementation
