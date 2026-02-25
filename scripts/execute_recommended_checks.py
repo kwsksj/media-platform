@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+import sys
 from pathlib import Path
 
 from recommend_checks import build_recommendations, detect_changed_files
@@ -38,8 +39,12 @@ def main() -> int:
     args = parser.parse_args()
 
     repo = Path(args.repo).resolve()
-    paths = sorted(set(args.paths)) if args.paths else detect_changed_files(repo)
-    recs = build_recommendations(paths, strict=args.strict)
+    try:
+        paths = sorted(set(args.paths)) if args.paths else detect_changed_files(repo)
+        recs = build_recommendations(paths, strict=args.strict)
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
 
     if args.include_optional:
         targets = recs

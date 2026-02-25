@@ -91,46 +91,10 @@ check-required-strict: ensure-python-venv
 	@$(VENV_PYTHON) scripts/execute_recommended_checks.py --repo . --strict
 
 check-changed-python: ensure-python-venv
-	@set -e; \
-	files="$$( \
-		{ \
-			git diff --name-only --diff-filter=ACMR -- '*.py'; \
-			git diff --cached --name-only --diff-filter=ACMR -- '*.py'; \
-			git ls-files --others --exclude-standard -- '*.py'; \
-		} | sort -u \
-	)"; \
-	if [ -z "$$files" ]; then \
-		echo "No changed Python files."; \
-		exit 0; \
-	fi; \
-	echo "Changed Python files:"; \
-	echo "$$files"; \
-	$(RUFF) check $$files; \
-	$(RUFF) format --check $$files; \
-	src_files="$$(echo "$$files" | awk '/^src\/.*\.py$$/ {print}')"; \
-	if [ -n "$$src_files" ]; then \
-		$(MYPY) $$src_files; \
-	else \
-		echo "No changed files under src/ for mypy."; \
-	fi
+	@$(VENV_PYTHON) scripts/check_changed_python.py --repo . --python "$(VENV_PYTHON)"
 
 fix-changed-python: ensure-python-venv
-	@set -e; \
-	files="$$( \
-		{ \
-			git diff --name-only --diff-filter=ACMR -- '*.py'; \
-			git diff --cached --name-only --diff-filter=ACMR -- '*.py'; \
-			git ls-files --others --exclude-standard -- '*.py'; \
-		} | sort -u \
-	)"; \
-	if [ -z "$$files" ]; then \
-		echo "No changed Python files."; \
-		exit 0; \
-	fi; \
-	echo "Auto-fixing changed Python files:"; \
-	echo "$$files"; \
-	$(RUFF) check --fix $$files; \
-	$(RUFF) format $$files
+	@$(VENV_PYTHON) scripts/check_changed_python.py --repo . --python "$(VENV_PYTHON)" --fix
 
 check-fast: lint typecheck
 

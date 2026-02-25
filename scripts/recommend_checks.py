@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
@@ -17,15 +18,21 @@ class Recommendation:
 
 
 def _run_git_list(repo: Path, args: list[str]) -> list[str]:
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return []
+    command = ["git", *args]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("git command was not found in PATH") from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        message = stderr or f"exit code {exc.returncode}"
+        raise RuntimeError(f"failed to run `{' '.join(command)}`: {message}") from exc
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
@@ -197,8 +204,12 @@ def main() -> int:
     args = parser.parse_args()
 
     repo = Path(args.repo).resolve()
-    paths = sorted(set(args.paths)) if args.paths else detect_changed_files(repo)
-    recs = build_recommendations(paths, strict=args.strict)
+    try:
+        paths = sorted(set(args.paths)) if args.paths else detect_changed_files(repo)
+        recs = build_recommendations(paths, strict=args.strict)
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
 
     payload = {
         "repo": str(repo),
