@@ -39,6 +39,8 @@ make setup-python-dev
 
 ```bash
 make help
+make recommend-checks
+make check-required
 make check-changed-python
 make check-fast
 make check-monorepo
@@ -98,6 +100,8 @@ media-platform/
 ### Makefile（推奨入口）
 
 ```bash
+make recommend-checks
+make check-required
 make check-changed-python
 make fix-changed-python
 make check-fast

@@ -7,6 +7,8 @@ Use this file as the default execution guide for code changes and validation.
 ## Fast Start
 ```bash
 make setup-python-dev
+make recommend-checks
+make check-required
 make check-changed-python
 make check-fast
 make check-monorepo
@@ -20,11 +22,13 @@ make fix-changed-python
 ```
 
 ## Preferred Validation Order
-1. `make check-changed-python` (changed Python files only)
-2. `make check-fast` (full ruff + mypy when needed)
-3. `make test` (when Python code is changed)
-4. `make check-monorepo` (structure guard)
-5. Target-specific dry-run command (`make publish-dry`, `make gallery-export`, etc.)
+1. `make recommend-checks` (path-driven recommendation)
+2. `make check-required` (auto-run required subset)
+3. `make check-changed-python` (changed Python files only)
+4. `make check-fast` (full ruff + mypy when needed)
+5. `make test` (when Python code is changed)
+6. `make check-monorepo` (structure guard)
+7. Target-specific dry-run command (`make publish-dry`, `make gallery-export`, etc.)
 
 ## Repo Map
 - `src/auto_post`: Python CLI implementation

@@ -231,6 +231,12 @@ cp .env.example .env
 ### 5.3 接続テスト
 
 ```bash
+# 変更差分に応じた推奨チェックを表示
+make recommend-checks
+
+# 推奨チェックのうち必須だけ自動実行
+make check-required
+
 # 変更差分だけ高速チェック
 make check-changed-python
 
