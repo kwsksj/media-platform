@@ -206,7 +206,17 @@ git clone https://github.com/kwsksj/media-platform.git
 cd media-platform
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -e ".[dev]"
+make setup-python-dev
+```
+
+必要に応じて:
+
+```bash
+# 管理UIの依存を入れる
+make setup-admin-web
+
+# commit前チェックを自動化
+make pre-commit-install
 ```
 
 ### 5.2 環境変数設定
@@ -219,6 +229,9 @@ cp .env.example .env
 ### 5.3 接続テスト
 
 ```bash
+# Pythonの高速チェック（lint + typecheck）
+make check-fast
+
 # 構成チェック
 make check-monorepo
 

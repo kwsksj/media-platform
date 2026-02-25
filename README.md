@@ -34,12 +34,21 @@ git clone https://github.com/kwsksj/media-platform.git
 cd media-platform
 python3 -m venv venv
 source venv/bin/activate
-pip install -e .
+make setup-python-dev
 ```
 
 ```bash
 make help
+make check-fast
 make check-monorepo
+```
+
+```bash
+# 任意: 管理UIの依存を入れる
+make setup-admin-web
+
+# 任意: commit前チェックを自動化
+make pre-commit-install
 ```
 
 ```bash
@@ -85,6 +94,8 @@ media-platform/
 ### Makefile（推奨入口）
 
 ```bash
+make check-fast
+make check-python
 make check-monorepo
 make ingest-preview TAKEOUT_DIR=./takeout-photos
 make ingest-import-dry TAKEOUT_DIR=./takeout-photos
