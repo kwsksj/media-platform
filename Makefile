@@ -20,7 +20,7 @@ TAKEOUT_DIR ?= ./takeout-photos
 THRESHOLD ?= 10
 MAX_PER_GROUP ?= 10
 
-.PHONY: help ensure-python-venv setup-python-dev setup-admin-web pre-commit-install lint format-check typecheck test recommend-checks recommend-checks-strict check-required check-required-strict check-changed-python fix-changed-python check-fast check-python check-monorepo ingest-preview ingest-import-dry publish-dry publish-catchup-dry publish-monthly-schedule-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry secrets-list
+.PHONY: help ensure-python-venv setup-python-dev setup-admin-web pre-commit-install lint format-check typecheck test recommend-checks recommend-checks-strict check-required check-required-strict check-changed-python fix-changed-python check-fast check-python check-monorepo check-markdown ingest-preview ingest-import-dry publish-dry publish-catchup-dry publish-monthly-schedule-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry secrets-list
 
 help:
 	@echo "Monorepo helper targets"
@@ -36,6 +36,7 @@ help:
 	@echo "  make check-fast              # lint + typecheck"
 	@echo "  make check-python            # lint + typecheck + test"
 	@echo "  make check-monorepo"
+	@echo "  make check-markdown          # practical markdown lint (optional)"
 	@echo "  make ingest-preview TAKEOUT_DIR=./takeout-photos [THRESHOLD=10] [MAX_PER_GROUP=10]"
 	@echo "  make ingest-import-dry TAKEOUT_DIR=./takeout-photos [THRESHOLD=10] [MAX_PER_GROUP=10]"
 	@echo "  make publish-dry [DATE=$$(date +%Y-%m-%d)]"
@@ -102,6 +103,13 @@ check-python: check-fast test
 
 check-monorepo:
 	@./scripts/check-repo-structure.sh
+
+check-markdown:
+	@if command -v npx >/dev/null 2>&1; then \
+		npx -y markdownlint-cli2; \
+	else \
+		echo "Skip: npx not found (install Node.js to run markdown lint)."; \
+	fi
 
 ingest-preview:
 	@"$(INGEST_TOOL_DIR)/preview.sh" "$(TAKEOUT_DIR)" --threshold "$(THRESHOLD)" --max-per-group "$(MAX_PER_GROUP)"

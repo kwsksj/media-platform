@@ -219,7 +219,7 @@ make setup-admin-web
 make pre-commit-install
 ```
 
-VSCode を使う場合は、`Run Task` から `Check Changed Python` / `Check Fast` を実行できます。
+VSCode を使う場合は、`Run Task` から `Check Changed Python` / `Check Fast` / `Check Markdown` を実行できます。
 
 ### 5.2 環境変数設定
 
@@ -248,6 +248,9 @@ make check-fast
 
 # 構成チェック
 make check-monorepo
+
+# Markdown チェック（実務向けルール）
+make check-markdown
 
 # Notion 接続確認
 auto-post check-notion
@@ -356,8 +359,8 @@ GitHub Repository Settings:
 GitHub Repository Variables:
 
 - `PR_AUTO_MERGE_ENABLED`: `false` で承認時 auto-merge を停止（既定は有効運用）
-- `AUTO_WORKER_DEPLOY_ON_MERGE`: `true` で merge 後に `worker-deploy.yml` を起動
-- `AUTO_GALLERY_EXPORT_ON_MERGE`: `true` で merge 後に `gallery-export.yml` を起動
+- `AUTO_WORKER_DEPLOY_ON_MERGE`: `true` で merge 後に `worker-deploy.yml` を起動（Worker関連変更時のみ）
+- `AUTO_GALLERY_EXPORT_ON_MERGE`: `true` で merge 後に `gallery-export.yml` を起動（Gallery関連変更時のみ）
 
 GitHub Repository Secrets:
 

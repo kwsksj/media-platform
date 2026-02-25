@@ -12,6 +12,17 @@
       "source.organizeImports.ruff": "explicit"
     }
   },
+  "[markdown]": {
+    "editor.wordWrap": "on"
+  },
+  "markdownlint.configFile": ".markdownlint.jsonc",
+  "markdownlint.ignore": [
+    "**/node_modules/**",
+    "**/venv/**",
+    "**/.venv/**",
+    "archive/**"
+  ],
+  "markdownlint.run": "onSave",
   "files.watcherExclude": {
     "**/venv/**": true,
     "**/.pytest_cache/**": true,

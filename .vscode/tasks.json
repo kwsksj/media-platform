@@ -44,6 +44,12 @@
       "group": "test"
     },
     {
+      "label": "Check Markdown",
+      "type": "shell",
+      "command": "make check-markdown",
+      "group": "test"
+    },
+    {
       "label": "Publish Dry Run",
       "type": "shell",
       "command": "make publish-dry",

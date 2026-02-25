@@ -68,8 +68,43 @@ jobs:
               core.info(`Skip delete branch: ${error.message}`);
             }
 
+      - name: Detect changed paths
+        id: changed-paths
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            const changed = files.map((item) => item.filename);
+            const workerChanged = changed.some(
+              (path) =>
+                path.startsWith("apps/worker-api/") ||
+                path === ".github/workflows/worker-deploy.yml" ||
+                path === ".github/workflows/pr-lifecycle.yml"
+            );
+            const galleryChanged = changed.some(
+              (path) =>
+                path.startsWith("apps/gallery-web/") ||
+                path.startsWith("tools/gallery-build/") ||
+                path === ".github/workflows/gallery-export.yml" ||
+                path === ".github/workflows/pr-lifecycle.yml"
+            );
+
+            core.info(`Changed files: ${changed.length}`);
+            core.info(`worker_changed=${workerChanged}`);
+            core.info(`gallery_changed=${galleryChanged}`);
+            core.setOutput("worker_changed", workerChanged ? "true" : "false");
+            core.setOutput("gallery_changed", galleryChanged ? "true" : "false");
+
       - name: Trigger worker deploy workflow
-        if: ${{ vars.AUTO_WORKER_DEPLOY_ON_MERGE == 'true' }}
+        if: ${{ vars.AUTO_WORKER_DEPLOY_ON_MERGE == 'true' && steps.changed-paths.outputs.worker_changed == 'true' }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -83,7 +118,7 @@ jobs:
             core.info("Dispatched worker-deploy.yml")
 
       - name: Trigger gallery export workflow
-        if: ${{ vars.AUTO_GALLERY_EXPORT_ON_MERGE == 'true' }}
+        if: ${{ vars.AUTO_GALLERY_EXPORT_ON_MERGE == 'true' && steps.changed-paths.outputs.gallery_changed == 'true' }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}

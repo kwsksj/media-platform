@@ -31,13 +31,13 @@
 - `PR Lifecycle Automation` (`.github/workflows/pr-lifecycle.yml`)
   - Approved review を契機に auto-merge を有効化（`--auto --squash --delete-branch`）
   - merge 後に head branch 削除をフォールバック実行
-  - 必要に応じて `Worker Deploy` / `Daily Gallery Export` を merge 後に自動起動
+  - Worker/Gallery 関連変更時のみ `Worker Deploy` / `Daily Gallery Export` を merge 後に自動起動
 
 Repository Variables:
 
 - `PR_AUTO_MERGE_ENABLED` (`false` で auto-merge 有効化を停止)
-- `AUTO_WORKER_DEPLOY_ON_MERGE` (`true` で `worker-deploy.yml` を merge 後に起動)
-- `AUTO_GALLERY_EXPORT_ON_MERGE` (`true` で `gallery-export.yml` を merge 後に起動)
+- `AUTO_WORKER_DEPLOY_ON_MERGE` (`true` で `worker-deploy.yml` を merge 後に起動、Worker関連変更時のみ)
+- `AUTO_GALLERY_EXPORT_ON_MERGE` (`true` で `gallery-export.yml` を merge 後に起動、Gallery関連変更時のみ)
 
 ## Image Link Health Check Optional Settings
 
@@ -52,6 +52,9 @@ GitHub Repository Variables:
 ```bash
 # 構成チェック
 make check-monorepo
+
+# Markdown チェック（実務向け）
+make check-markdown
 
 # ingest dry-run
 make ingest-preview TAKEOUT_DIR=./takeout-photos

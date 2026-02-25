@@ -93,6 +93,16 @@ def python_related(path: str) -> bool:
     return path in {"pyproject.toml", "Makefile", ".pre-commit-config.yaml"}
 
 
+def markdown_related(path: str) -> bool:
+    if path.endswith(".md"):
+        return True
+    return path in {
+        ".markdownlint.jsonc",
+        ".markdownlintignore",
+        ".markdownlint-cli2.jsonc",
+    }
+
+
 def build_recommendations(paths: list[str], strict: bool = False) -> list[Recommendation]:
     recs: list[Recommendation] = []
 
@@ -105,6 +115,11 @@ def build_recommendations(paths: list[str], strict: bool = False) -> list[Recomm
         return recs
 
     if is_docs_only(paths):
+        add(
+            command="make check-markdown",
+            reason="validate Markdown with repo-tuned lint settings",
+            required=False,
+        )
         add(
             command="make check-monorepo",
             reason="quick structure guard for documentation-only changes",
@@ -123,6 +138,13 @@ def build_recommendations(paths: list[str], strict: bool = False) -> list[Recomm
             command="make check-changed-python",
             reason="run Ruff and mypy only for changed Python files",
             required=True,
+        )
+
+    if any(markdown_related(path) for path in paths):
+        add(
+            command="make check-markdown",
+            reason="validate Markdown with repo-tuned lint settings",
+            required=False,
         )
 
     if any(has_prefix(path, "src/auto_post") for path in paths):

@@ -14,6 +14,7 @@ make check-required-strict
 make check-changed-python
 make check-fast
 make check-monorepo
+make check-markdown
 ```
 
 Optional:
@@ -21,6 +22,7 @@ Optional:
 make setup-admin-web
 make pre-commit-install
 make fix-changed-python
+make check-markdown
 ```
 
 ## Preferred Validation Order
@@ -31,7 +33,8 @@ make fix-changed-python
 5. `make check-fast` (full ruff + mypy when needed)
 6. `make test` (when Python code is changed)
 7. `make check-monorepo` (structure guard)
-8. Target-specific dry-run command (`make publish-dry`, `make gallery-export`, etc.)
+8. `make check-markdown` (Markdown changes only; practical rules)
+9. Target-specific dry-run command (`make publish-dry`, `make gallery-export`, etc.)
 
 ## Repo Map
 - `src/auto_post`: Python CLI implementation
