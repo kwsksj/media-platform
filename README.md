@@ -159,6 +159,27 @@ auto-post export-gallery-json --no-upload --no-thumbs --no-light
 - `Monthly Schedule Post` (`.github/workflows/monthly-schedule.yml`)
   - 毎月25日 16:00 JST (07:00 UTC)
 
+## PR 運用自動化（GitHub Actions）
+
+- `PR Lifecycle Automation` (`.github/workflows/pr-lifecycle.yml`)
+  - PR review が `APPROVED` になったタイミングで `--auto --squash --delete-branch` を試行
+  - PR merge 後に head branch の削除をフォールバック実行
+  - 条件付きでデプロイworkflowを自動起動
+- `Worker Deploy` (`.github/workflows/worker-deploy.yml`)
+  - 手動実行（`Run workflow`）または PR merge 後に自動起動
+
+### PR 自動化の設定項目
+
+GitHub Repository Variables:
+
+- `PR_AUTO_MERGE_ENABLED`: `false` のとき承認時 auto-merge 有効化を無効（既定: 有効）
+- `AUTO_WORKER_DEPLOY_ON_MERGE`: `true` で merge 後に `worker-deploy.yml` を自動起動
+- `AUTO_GALLERY_EXPORT_ON_MERGE`: `true` で merge 後に `gallery-export.yml` を自動起動
+
+GitHub Repository Secrets:
+
+- `CLOUDFLARE_API_TOKEN`: `worker-deploy.yml` 実行に必須
+
 ### 画像リンク健全性チェックのオプション設定
 
 GitHub Repository Variables:

@@ -46,3 +46,7 @@ make fix-changed-python
 - Prefer dry-run targets before operations that can post/upload.
 - Never commit secrets (`.env`, tokens, keys).
 - Keep changes scoped to the target responsibility area.
+
+## PR Flow
+- Prefer `--auto --squash --delete-branch` merge style for this repository.
+- Use repository automation in `.github/workflows/pr-lifecycle.yml` for approval-to-merge and post-merge hooks.

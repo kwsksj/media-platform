@@ -24,6 +24,20 @@
 - `Image Link Health Check` の手動再実行
 - `Daily Auto Post` の手動再実行
 - `Monthly Schedule Post` の手動再実行
+- `Worker Deploy` (`.github/workflows/worker-deploy.yml`)
+
+## PR Lifecycle Automation
+
+- `PR Lifecycle Automation` (`.github/workflows/pr-lifecycle.yml`)
+  - Approved review を契機に auto-merge を有効化（`--auto --squash --delete-branch`）
+  - merge 後に head branch 削除をフォールバック実行
+  - 必要に応じて `Worker Deploy` / `Daily Gallery Export` を merge 後に自動起動
+
+Repository Variables:
+
+- `PR_AUTO_MERGE_ENABLED` (`false` で auto-merge 有効化を停止)
+- `AUTO_WORKER_DEPLOY_ON_MERGE` (`true` で `worker-deploy.yml` を merge 後に起動)
+- `AUTO_GALLERY_EXPORT_ON_MERGE` (`true` で `gallery-export.yml` を merge 後に起動)
 
 ## Image Link Health Check Optional Settings
 

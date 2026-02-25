@@ -340,7 +340,28 @@ make secrets-list ENV_FILE=./.env
 - `Daily Gallery Export`（`.github/workflows/gallery-export.yml`）: 毎日 16:10 JST (07:10 UTC)
 - `Catch-up Post`（`.github/workflows/catchup.yml`）: 手動実行のみ
 - `Monthly Schedule Post`（`.github/workflows/monthly-schedule.yml`）: 毎月25日 16:00 JST (07:00 UTC)
+- `PR Lifecycle Automation`（`.github/workflows/pr-lifecycle.yml`）: review/merge イベントで自動実行
+- `Worker Deploy`（`.github/workflows/worker-deploy.yml`）: 手動実行、または merge 後トリガー
 - 手動実行: GitHub Actions の各ワークフローから `Run workflow`
+
+### 7.3 PR ライフサイクル自動化の有効化（任意）
+
+GitHub Repository Settings:
+
+- Pull Requests:
+  - `Allow auto-merge` を有効化
+- Branch protection（`main` 推奨）:
+  - 必要レビュー数・必須ステータスチェックを設定
+
+GitHub Repository Variables:
+
+- `PR_AUTO_MERGE_ENABLED`: `false` で承認時 auto-merge を停止（既定は有効運用）
+- `AUTO_WORKER_DEPLOY_ON_MERGE`: `true` で merge 後に `worker-deploy.yml` を起動
+- `AUTO_GALLERY_EXPORT_ON_MERGE`: `true` で merge 後に `gallery-export.yml` を起動
+
+GitHub Repository Secrets:
+
+- `CLOUDFLARE_API_TOKEN`: `worker-deploy.yml` 実行時に必須
 
 ---
 
