@@ -20,13 +20,15 @@ TAKEOUT_DIR ?= ./takeout-photos
 THRESHOLD ?= 10
 MAX_PER_GROUP ?= 10
 
-.PHONY: help ensure-python-venv setup-python-dev setup-admin-web pre-commit-install lint format-check typecheck test check-fast check-python check-monorepo ingest-preview ingest-import-dry publish-dry publish-catchup-dry publish-monthly-schedule-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry secrets-list
+.PHONY: help ensure-python-venv setup-python-dev setup-admin-web pre-commit-install lint format-check typecheck test check-changed-python fix-changed-python check-fast check-python check-monorepo ingest-preview ingest-import-dry publish-dry publish-catchup-dry publish-monthly-schedule-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry secrets-list
 
 help:
 	@echo "Monorepo helper targets"
 	@echo "  make setup-python-dev"
 	@echo "  make setup-admin-web"
 	@echo "  make pre-commit-install"
+	@echo "  make check-changed-python    # changed Python files only (ruff + mypy)"
+	@echo "  make fix-changed-python      # auto-fix changed Python files"
 	@echo "  make check-fast              # lint + typecheck"
 	@echo "  make check-python            # lint + typecheck + test"
 	@echo "  make check-monorepo"
@@ -71,6 +73,46 @@ typecheck: ensure-python-venv
 
 test: ensure-python-venv
 	@$(PYTEST) -q
+
+check-changed-python: ensure-python-venv
+	@files="$$( \
+		{ \
+			git diff --name-only --diff-filter=ACMR -- '*.py'; \
+			git diff --cached --name-only --diff-filter=ACMR -- '*.py'; \
+			git ls-files --others --exclude-standard -- '*.py'; \
+		} | sort -u \
+	)"; \
+	if [ -z "$$files" ]; then \
+		echo "No changed Python files."; \
+		exit 0; \
+	fi; \
+	echo "Changed Python files:"; \
+	echo "$$files"; \
+	$(RUFF) check $$files; \
+	$(RUFF) format --check $$files; \
+	src_files="$$(echo "$$files" | awk '/^src\/.*\.py$$/ {print}')"; \
+	if [ -n "$$src_files" ]; then \
+		$(MYPY) $$src_files; \
+	else \
+		echo "No changed files under src/ for mypy."; \
+	fi
+
+fix-changed-python: ensure-python-venv
+	@files="$$( \
+		{ \
+			git diff --name-only --diff-filter=ACMR -- '*.py'; \
+			git diff --cached --name-only --diff-filter=ACMR -- '*.py'; \
+			git ls-files --others --exclude-standard -- '*.py'; \
+		} | sort -u \
+	)"; \
+	if [ -z "$$files" ]; then \
+		echo "No changed Python files."; \
+		exit 0; \
+	fi; \
+	echo "Auto-fixing changed Python files:"; \
+	echo "$$files"; \
+	$(RUFF) check --fix $$files; \
+	$(RUFF) format $$files
 
 check-fast: lint typecheck
 

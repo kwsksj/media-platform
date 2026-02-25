@@ -39,6 +39,7 @@ make setup-python-dev
 
 ```bash
 make help
+make check-changed-python
 make check-fast
 make check-monorepo
 ```
@@ -50,6 +51,9 @@ make setup-admin-web
 # 任意: commit前チェックを自動化
 make pre-commit-install
 ```
+
+`.vscode/tasks.json` を同梱しているため、VSCode では `Run Task` から
+`Check Changed Python` / `Check Fast` / `Publish Dry Run` を直接実行できます。
 
 ```bash
 # 投稿 dry-run
@@ -94,6 +98,8 @@ media-platform/
 ### Makefile（推奨入口）
 
 ```bash
+make check-changed-python
+make fix-changed-python
 make check-fast
 make check-python
 make check-monorepo

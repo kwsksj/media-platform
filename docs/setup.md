@@ -219,6 +219,8 @@ make setup-admin-web
 make pre-commit-install
 ```
 
+VSCode を使う場合は、`Run Task` から `Check Changed Python` / `Check Fast` を実行できます。
+
 ### 5.2 環境変数設定
 
 ```bash
@@ -229,6 +231,9 @@ cp .env.example .env
 ### 5.3 接続テスト
 
 ```bash
+# 変更差分だけ高速チェック
+make check-changed-python
+
 # Pythonの高速チェック（lint + typecheck）
 make check-fast
 
