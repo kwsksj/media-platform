@@ -3186,7 +3186,7 @@
 				height: min(95vh, 920px);
 				display: flex;
 				flex-direction: column;
-				gap: 8px;
+				gap: 0;
 			}
 
 			.modal-back {
@@ -3196,23 +3196,64 @@
 				border: 1px solid var(--line-light);
 				font-size: 12px;
 				cursor: pointer;
-				padding: 6px 10px;
+				padding: 5px 10px;
 				border-radius: 999px;
 			}
 
-			.modal-header {
-				position: sticky;
-				top: 0;
-				z-index: 2;
-				background: var(--paper);
-				border-bottom: 2px solid var(--line-light);
-				padding: 18px 20px 3px;
+			.modal-back-mobile {
+				position: relative;
+				top: auto;
+				z-index: auto;
+				margin: 0 0 10px;
+				padding: 4px 8px;
+				font-size: 11px;
+				color: var(--muted);
+				background: rgba(255, 253, 245, 0.88);
+				border-color: rgba(140, 108, 88, 0.35);
+				box-shadow: none;
+				opacity: 0.9;
+			}
+
+			.modal-back-desktop {
+				display: none;
 			}
 
 			#modal-content {
 				display: flex;
 				flex-direction: column;
 				height: 100%;
+				min-height: 0;
+			}
+
+			.modal-layout {
+				display: flex;
+				flex-direction: column;
+				flex: 1;
+				min-height: 0;
+				background: #fff;
+			}
+
+			.modal-side {
+				display: none;
+				flex-direction: column;
+				background: var(--paper);
+				min-height: 0;
+			}
+
+			.modal-side-scroll {
+				min-height: 0;
+			}
+
+			.modal-side-body {
+				padding: 16px 20px 10px;
+				display: grid;
+				gap: 10px;
+			}
+
+			.modal-side-footer {
+				display: none;
+				padding: 8px 20px 14px;
+				background: var(--paper);
 			}
 
 			.modal-title-row {
@@ -3224,7 +3265,7 @@
 
 			.modal-title {
 				font-size: clamp(18px, 4.8vw, 24px);
-				margin: 0 0 6px;
+				margin: 0;
 			}
 
 			.modal-meta {
@@ -3266,27 +3307,71 @@
 				margin-bottom: 10px;
 			}
 
-			.modal-body {
+			.modal-gallery {
 				overflow: auto;
-				padding: 12px 12px 0px;
+				padding: 8px 8px 0;
 				flex: 1;
 				min-height: 0;
+				background: #fff;
 			}
 
-			.modal-footer {
-				padding: 4px 12px 10px;
-				display: flex;
-				justify-content: center;
+			.modal-mobile-meta {
+				display: grid;
+				gap: 10px;
+				margin: 0 0 10px;
+				padding: 10px 12px 12px;
+				border: 1px solid var(--line-light);
+				border-radius: 12px;
+				background: var(--paper);
 			}
 
-			.modal-footer .modal-back {
-				align-self: center;
+			.modal-mobile-meta .modal-title {
+				font-size: clamp(17px, 4.8vw, 22px);
+			}
+
+			@media (min-width: 900px) {
+				.modal-shell {
+					width: min(1280px, 97vw);
+					height: min(97vh, 1080px);
+				}
+
+				.modal-layout {
+					flex-direction: row;
+				}
+
+				.modal-side {
+					display: flex;
+					width: min(360px, 34%);
+					border-right: 2px solid var(--line-light);
+				}
+
+				.modal-side-scroll {
+					overflow: auto;
+					flex: 1;
+				}
+
+				.modal-side-footer {
+					display: block;
+				}
+
+				.modal-gallery {
+					padding: 16px 16px 0;
+				}
+
+				.modal-mobile-meta,
+				.modal-back-mobile {
+					display: none;
+				}
+
+				.modal-back-desktop {
+					display: inline-flex;
+				}
 			}
 
 			.modal-images {
 				display: grid;
 				gap: 12px;
-				margin: 10px 0 0;
+				margin: 0;
 				justify-items: center;
 			}
 
@@ -3496,18 +3581,15 @@
 				読み込みに失敗しました。再読み込みしてください。
 			</div>
 			<div class="grid" id="grid" hidden></div>
-		</div>
+			</div>
 
-		<div class="modal" id="modal" aria-hidden="true">
-			<div class="modal-shell">
-				<button class="modal-back" id="modal-back" type="button">
-					＜ もどる
-				</button>
-				<div class="modal-panel" role="dialog" aria-modal="true">
-					<div id="modal-content"></div>
+			<div class="modal" id="modal" aria-hidden="true">
+				<div class="modal-shell">
+					<div class="modal-panel" role="dialog" aria-modal="true">
+						<div id="modal-content"></div>
+					</div>
 				</div>
 			</div>
-		</div>
 
 		<script>
 			const state = {
@@ -3563,7 +3645,6 @@
 				viewerAllButton: document.getElementById("viewer-all-button"),
 				modal: document.getElementById("modal"),
 				modalShell: document.querySelector(".modal-shell"),
-				modalBack: document.getElementById("modal-back"),
 				modalContent: document.getElementById("modal-content"),
 			};
 
@@ -5162,39 +5243,7 @@
 				flushStarQueue(id);
 			}
 
-			function openModal(work) {
-				els.modalContent.innerHTML = "";
-				const header = document.createElement("div");
-				header.className = "modal-header";
-
-				const titleRow = document.createElement("div");
-				titleRow.className = "modal-title-row";
-
-				const title = document.createElement("h2");
-				title.className = "modal-title";
-				title.textContent = work.title || "";
-
-				const starRow = document.createElement("div");
-				starRow.className = "star-row";
-				if (!state.starsAvailable) starRow.classList.add("star-hidden");
-
-				const starBtn = createStarButton(work.id);
-
-				const starCount = document.createElement("span");
-				starCount.className = "star-count";
-				starCount.dataset.starCountFor = work.id;
-				starCount.textContent = getStarCount(work.id);
-
-				starBtn.appendChild(starCount);
-				starRow.appendChild(starBtn);
-
-				titleRow.appendChild(title);
-				titleRow.appendChild(starRow);
-
-				header.appendChild(titleRow);
-
-				const body = document.createElement("div");
-				body.className = "modal-body";
+			function appendModalMetaAndCaption(container, work) {
 				const bodyMeta = document.createElement("div");
 				bodyMeta.className = "modal-body-meta";
 
@@ -5242,7 +5291,7 @@
 					bodyMeta.appendChild(studioInline);
 				}
 
-				if (bodyMeta.children.length) body.appendChild(bodyMeta);
+				if (bodyMeta.children.length) container.appendChild(bodyMeta);
 
 				const chips = document.createElement("div");
 				chips.className = "chip-group";
@@ -5251,10 +5300,69 @@
 						chips.appendChild(makeChip("tag", t, false, t)),
 					);
 				}
+				if (chips.children.length) container.appendChild(chips);
 
-				const caption = document.createElement("div");
-				caption.className = "caption";
-				caption.textContent = work.caption || "";
+				if (work.caption) {
+					const caption = document.createElement("div");
+					caption.className = "caption";
+					caption.textContent = work.caption;
+					container.appendChild(caption);
+				}
+			}
+
+			function openModal(work) {
+				els.modalContent.innerHTML = "";
+				const layout = document.createElement("div");
+				layout.className = "modal-layout";
+
+				const side = document.createElement("aside");
+				side.className = "modal-side";
+				const sideScroll = document.createElement("div");
+				sideScroll.className = "modal-side-scroll";
+
+				const sideBody = document.createElement("div");
+				sideBody.className = "modal-side-body";
+				const sideTitleRow = document.createElement("div");
+				sideTitleRow.className = "modal-title-row";
+				const sideTitle = document.createElement("h2");
+				sideTitle.className = "modal-title";
+				sideTitle.textContent = work.title || "";
+				const sideStarRow = document.createElement("div");
+				sideStarRow.className = "star-row";
+				if (!state.starsAvailable) sideStarRow.classList.add("star-hidden");
+				const sideStarBtn = createStarButton(work.id);
+				const sideStarCount = document.createElement("span");
+				sideStarCount.className = "star-count";
+				sideStarCount.dataset.starCountFor = work.id;
+				sideStarCount.textContent = getStarCount(work.id);
+				sideStarBtn.appendChild(sideStarCount);
+				sideStarRow.appendChild(sideStarBtn);
+				sideTitleRow.appendChild(sideTitle);
+				sideTitleRow.appendChild(sideStarRow);
+				sideBody.appendChild(sideTitleRow);
+				appendModalMetaAndCaption(sideBody, work);
+				sideScroll.appendChild(sideBody);
+
+				const sideFooter = document.createElement("div");
+				sideFooter.className = "modal-side-footer";
+				const backDesktop = document.createElement("button");
+				backDesktop.className = "modal-back modal-back-desktop";
+				backDesktop.type = "button";
+				backDesktop.textContent = "＜ もどる";
+				backDesktop.addEventListener("click", closeModal);
+				sideFooter.appendChild(backDesktop);
+
+				side.appendChild(sideScroll);
+				side.appendChild(sideFooter);
+
+				const gallery = document.createElement("div");
+				gallery.className = "modal-gallery";
+				const backMobile = document.createElement("button");
+				backMobile.className = "modal-back modal-back-mobile";
+				backMobile.type = "button";
+				backMobile.textContent = "＜ もどる";
+				backMobile.addEventListener("click", closeModal);
+				gallery.appendChild(backMobile);
 
 				const images = document.createElement("div");
 				images.className = "modal-images";
@@ -5272,45 +5380,58 @@
 					img.onerror = () => {
 						img.src = PLACEHOLDER;
 					};
-					img.addEventListener("load", () => updateScrollHint(body));
+					img.addEventListener("load", () => updateScrollHint(gallery));
 					wrap.appendChild(img);
 					images.appendChild(wrap);
 				});
 
-				if (chips.children.length) body.appendChild(chips);
-				if (work.caption) body.appendChild(caption);
-				body.appendChild(images);
+				const mobileMeta = document.createElement("div");
+				mobileMeta.className = "modal-mobile-meta";
+				const mobileTitleRow = document.createElement("div");
+				mobileTitleRow.className = "modal-title-row";
+				const mobileTitle = document.createElement("h2");
+				mobileTitle.className = "modal-title";
+				mobileTitle.textContent = work.title || "";
+				const mobileStarRow = document.createElement("div");
+				mobileStarRow.className = "star-row";
+				if (!state.starsAvailable) mobileStarRow.classList.add("star-hidden");
+				const mobileStarBtn = createStarButton(work.id);
+				const mobileStarCount = document.createElement("span");
+				mobileStarCount.className = "star-count";
+				mobileStarCount.dataset.starCountFor = work.id;
+				mobileStarCount.textContent = getStarCount(work.id);
+				mobileStarBtn.appendChild(mobileStarCount);
+				mobileStarRow.appendChild(mobileStarBtn);
+				mobileTitleRow.appendChild(mobileTitle);
+				mobileTitleRow.appendChild(mobileStarRow);
+				mobileMeta.appendChild(mobileTitleRow);
+				appendModalMetaAndCaption(mobileMeta, work);
+				gallery.appendChild(mobileMeta);
+				gallery.appendChild(images);
+
 				const scrollHint = document.createElement("div");
 				scrollHint.className = "scroll-hint";
 				scrollHint.textContent = "∨";
 				scrollHint.setAttribute("aria-label", "続きがあります");
-				body.appendChild(scrollHint);
-				body.appendChild(document.createElement("div")).className =
+				gallery.appendChild(scrollHint);
+				gallery.appendChild(document.createElement("div")).className =
 					"footer-space";
-				const footer = document.createElement("div");
-				footer.className = "modal-footer";
-				const backBottom = document.createElement("button");
-				backBottom.className = "modal-back";
-				backBottom.type = "button";
-				backBottom.textContent = "＜ もどる";
-				backBottom.addEventListener("click", closeModal);
-				footer.appendChild(backBottom);
-				body.appendChild(footer);
-				body.addEventListener("scroll", () => updateScrollHint(body));
+				gallery.addEventListener("scroll", () => updateScrollHint(gallery));
 
-				els.modalContent.appendChild(header);
-				els.modalContent.appendChild(body);
+				layout.appendChild(side);
+				layout.appendChild(gallery);
+				els.modalContent.appendChild(layout);
 
 				lockBodyScroll();
 				els.modal.classList.add("open");
 				els.modal.setAttribute("aria-hidden", "false");
 				requestAnimationFrame(() => {
-					requestAnimationFrame(() => updateModalImageMaxHeight(body));
+					requestAnimationFrame(() => updateModalImageMaxHeight(gallery));
 				});
 				if (document.fonts && document.fonts.ready) {
-					document.fonts.ready.then(() => updateModalImageMaxHeight(body));
+					document.fonts.ready.then(() => updateModalImageMaxHeight(gallery));
 				}
-				setTimeout(() => updateModalImageMaxHeight(body), 100);
+				setTimeout(() => updateModalImageMaxHeight(gallery), 100);
 			}
 
 			function makeChip(type, value, subtle = false, label = "") {
@@ -5365,10 +5486,12 @@
 			function updateModalImageMaxHeight(bodyEl) {
 				const panel = els.modal.querySelector(".modal-panel");
 				if (!panel || !bodyEl) return;
-				const available = bodyEl.clientHeight - 80;
+				const isDesktop = window.matchMedia("(min-width: 900px)").matches;
+				const reserveSpace = isDesktop ? 40 : 24;
+				const available = bodyEl.clientHeight - reserveSpace;
 				panel.style.setProperty(
 					"--modal-image-max-height",
-					`${Math.max(240, available)}px`,
+					`${Math.max(isDesktop ? 300 : 240, available)}px`,
 				);
 				updateScrollHint(bodyEl);
 			}
@@ -5425,10 +5548,9 @@
 				els.viewerAllButton?.addEventListener("click", () => {
 					setActiveFilter("", "", true);
 				});
-				els.modalBack.addEventListener("click", closeModal);
-				els.modalShell.addEventListener("click", (e) => {
-					if (e.target === els.modalShell) closeModal();
-				});
+					els.modalShell.addEventListener("click", (e) => {
+						if (e.target === els.modalShell) closeModal();
+					});
 				els.modal.addEventListener("click", (e) => {
 					if (e.target === els.modal) closeModal();
 				});
@@ -5442,8 +5564,8 @@
 				});
 				window.addEventListener("resize", () => {
 					if (els.modal.classList.contains("open")) {
-						const body = els.modalContent.querySelector(".modal-body");
-						if (body) updateModalImageMaxHeight(body);
+						const gallery = els.modalContent.querySelector(".modal-gallery");
+						if (gallery) updateModalImageMaxHeight(gallery);
 					}
 					scheduleGridCentering(false);
 					resetHeaderScrollState();
