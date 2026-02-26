@@ -15,6 +15,7 @@ make check-changed-python
 make check-fast
 make check-monorepo
 make check-markdown
+make pr-merge-local PR=16
 ```
 
 Optional:
@@ -23,6 +24,7 @@ make setup-admin-web
 make pre-commit-install
 make fix-changed-python
 make check-markdown
+make pr-merge-local PR=16
 ```
 
 ## Preferred Validation Order
@@ -53,3 +55,4 @@ make check-markdown
 ## PR Flow
 - Prefer `--auto --squash --delete-branch` merge style for this repository.
 - Use repository automation in `.github/workflows/pr-lifecycle.yml` for approval-to-merge and post-merge hooks.
+- For local cleanup, prefer `make pr-merge-local PR=<number>` to merge and delete the local branch after merge.
