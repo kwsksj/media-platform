@@ -46,6 +46,7 @@ make check-changed-python
 make check-fast
 make check-monorepo
 make check-markdown
+make pr-merge-local PR=16
 ```
 
 ```bash
@@ -118,6 +119,7 @@ make check-fast
 make check-python
 make check-monorepo
 make check-markdown
+make pr-merge-local PR=16
 make ingest-preview TAKEOUT_DIR=./takeout-photos
 make ingest-import-dry TAKEOUT_DIR=./takeout-photos
 make publish-dry
@@ -190,6 +192,13 @@ GitHub Repository Variables:
 GitHub Repository Secrets:
 
 - `CLOUDFLARE_API_TOKEN`: `worker-deploy.yml` 実行に必須
+
+### ローカルブランチ整理を含むマージ
+
+- `make pr-merge-local PR=<number>`
+  - `gh pr merge --auto --squash --delete-branch` を実行
+  - PR が `MERGED` になったら default branch に戻って `git branch -d` まで実施
+  - 待機秒数は `PR_MERGE_WAIT_SECONDS`（既定: `600`）で調整可能
 
 ### 画像リンク健全性チェックのオプション設定
 

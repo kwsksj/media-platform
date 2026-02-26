@@ -252,6 +252,9 @@ make check-monorepo
 # Markdown チェック（実務向けルール）
 make check-markdown
 
+# PRマージ + ローカルブランチ整理
+make pr-merge-local PR=16
+
 # Notion 接続確認
 auto-post check-notion
 
