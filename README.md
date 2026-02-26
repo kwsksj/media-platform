@@ -34,13 +34,31 @@ git clone https://github.com/kwsksj/media-platform.git
 cd media-platform
 python3 -m venv venv
 source venv/bin/activate
-pip install -e .
+make setup-python-dev
 ```
 
 ```bash
 make help
+make recommend-checks
+make check-required
+make check-required-strict
+make check-changed-python
+make check-fast
 make check-monorepo
+make check-markdown
 ```
+
+```bash
+# 任意: 管理UIの依存を入れる
+make setup-admin-web
+
+# 任意: commit前チェックを自動化
+make pre-commit-install
+```
+
+`.vscode/tasks.json` を同梱しているため、VSCode では `Run Task` から
+`Check Changed Python` / `Check Fast` / `Publish Dry Run` を直接実行できます。
+`check-required-strict` は、マージ前に cross-cutting な変更を強めに検証したいときに使います。
 
 ```bash
 # 投稿 dry-run
@@ -64,6 +82,12 @@ make worker-dry
 
 詳細セットアップ: `docs/setup.md`
 
+## Markdown Lint 方針
+
+- 設定ファイル: `.markdownlint.jsonc`
+- 対象外: `.markdownlintignore`（`venv` / `node_modules` / `archive` など）
+- 実行: `make check-markdown`（Node.js + `npx` 利用。未導入時はスキップ）
+
 ## ディレクトリ構成
 
 ```text
@@ -85,7 +109,15 @@ media-platform/
 ### Makefile（推奨入口）
 
 ```bash
+make recommend-checks
+make check-required
+make check-required-strict
+make check-changed-python
+make fix-changed-python
+make check-fast
+make check-python
 make check-monorepo
+make check-markdown
 make ingest-preview TAKEOUT_DIR=./takeout-photos
 make ingest-import-dry TAKEOUT_DIR=./takeout-photos
 make publish-dry
@@ -134,6 +166,30 @@ auto-post export-gallery-json --no-upload --no-thumbs --no-light
   - 手動実行のみ
 - `Monthly Schedule Post` (`.github/workflows/monthly-schedule.yml`)
   - 毎月25日 16:00 JST (07:00 UTC)
+
+## PR 運用自動化（GitHub Actions）
+
+- `PR Lifecycle Automation` (`.github/workflows/pr-lifecycle.yml`)
+  - PR review が `APPROVED` になったタイミングで `--auto --squash --delete-branch` を試行
+  - PR merge 後に head branch の削除をフォールバック実行
+  - `apps/worker-api` / `apps/gallery-web` / `tools/gallery-build` などの変更時のみ、条件付きで後続workflowを自動起動
+- `Worker Deploy` (`.github/workflows/worker-deploy.yml`)
+  - 手動実行（`Run workflow`）または PR merge 後に自動起動
+- `Admin Web Deploy` (`.github/workflows/admin-web-deploy.yml`)
+  - `admin.html` / `admin/*` / `shared/*` と `students_index.json` / `tags_index.json` を手動実行または PR merge 後に自動デプロイ
+
+### PR 自動化の設定項目
+
+GitHub Repository Variables:
+
+- `PR_AUTO_MERGE_ENABLED`: `false` のとき承認時 auto-merge 有効化を無効（既定: 有効）
+- `AUTO_WORKER_DEPLOY_ON_MERGE`: `true` で merge 後に `worker-deploy.yml` を自動起動（Worker関連変更時のみ）
+- `AUTO_GALLERY_EXPORT_ON_MERGE`: `true` で merge 後に `gallery-export.yml` を自動起動（Gallery関連変更時のみ）
+- `AUTO_ADMIN_WEB_DEPLOY_ON_MERGE`: `true` で merge 後に `admin-web-deploy.yml` を自動起動（Admin関連変更時のみ）
+
+GitHub Repository Secrets:
+
+- `CLOUDFLARE_API_TOKEN`: `worker-deploy.yml` 実行に必須
 
 ### 画像リンク健全性チェックのオプション設定
 

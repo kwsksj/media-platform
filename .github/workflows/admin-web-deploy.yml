@@ -1,0 +1,130 @@
+name: Admin Web Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_html:
+        description: "Upload admin.html"
+        required: false
+        type: boolean
+        default: true
+      upload_indexes:
+        description: "Regenerate and upload students_index.json and tags_index.json"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install admin web dependencies
+        working-directory: apps/admin-web
+        run: npm install --no-package-lock
+
+      - name: Verify deploy secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          TAGS_DATABASE_ID: ${{ secrets.TAGS_DATABASE_ID }}
+          INPUT_UPLOAD_INDEXES: ${{ github.event.inputs.upload_indexes }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+            echo "CLOUDFLARE_API_TOKEN is required." >&2
+            exit 1
+          fi
+          if [ -z "${R2_BUCKET_NAME}" ]; then
+            echo "R2_BUCKET_NAME is required." >&2
+            exit 1
+          fi
+
+          upload_indexes="$(echo "${INPUT_UPLOAD_INDEXES:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
+          if [ "$upload_indexes" = "true" ]; then
+            if [ -z "${NOTION_TOKEN}" ]; then
+              echo "NOTION_TOKEN is required when upload_indexes=true." >&2
+              exit 1
+            fi
+            if [ -z "${NOTION_DATABASE_ID}" ]; then
+              echo "NOTION_DATABASE_ID is required when upload_indexes=true." >&2
+              exit 1
+            fi
+            if [ -z "${TAGS_DATABASE_ID}" ]; then
+              echo "TAGS_DATABASE_ID is required when upload_indexes=true." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Upload admin web static files to R2
+        if: ${{ github.event.inputs.upload_html != 'false' }}
+        working-directory: .
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          set -euo pipefail
+
+          upload() {
+            local object_path="$1"
+            local file_path="$2"
+            local content_type="$3"
+            local cache_control="$4"
+            npx wrangler r2 object put "${R2_BUCKET_NAME}/${object_path}" \
+              --config="apps/worker-api/wrangler.toml" \
+              --file="$file_path" \
+              --content-type="$content_type" \
+              --cache-control="$cache_control" \
+              --remote
+          }
+
+          upload "admin.html" "apps/admin-web/admin.html" "text/html" "max-age=3600"
+          upload "admin/admin.css" "apps/admin-web/admin/admin.css" "text/css; charset=utf-8" "max-age=3600"
+          upload "admin/admin.js" "apps/admin-web/admin/admin.js" "text/javascript; charset=utf-8" "max-age=3600"
+          upload "shared/gallery-core.css" "apps/admin-web/shared/gallery-core.css" "text/css; charset=utf-8" "max-age=3600"
+          upload "shared/gallery-core.js" "apps/admin-web/shared/gallery-core.js" "text/javascript; charset=utf-8" "max-age=3600"
+
+      - name: Build and upload admin indexes to R2
+        if: ${{ github.event.inputs.upload_indexes != 'false' }}
+        working-directory: apps/admin-web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_WORKS_DB_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          NOTION_TAGS_DB_ID: ${{ secrets.TAGS_DATABASE_ID }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          OUT_DIR="$RUNNER_TEMP/admin-indexes"
+          mkdir -p "$OUT_DIR"
+
+          node ./scripts/build-admin-indexes.mjs --out-dir "$OUT_DIR"
+
+          npx wrangler r2 object put "${R2_BUCKET_NAME}/students_index.json" \
+            --config="../worker-api/wrangler.toml" \
+            --file="${OUT_DIR}/students_index.json" \
+            --content-type="application/json; charset=utf-8" \
+            --cache-control="max-age=300" \
+            --remote
+
+          npx wrangler r2 object put "${R2_BUCKET_NAME}/tags_index.json" \
+            --config="../worker-api/wrangler.toml" \
+            --file="${OUT_DIR}/tags_index.json" \
+            --content-type="application/json; charset=utf-8" \
+            --cache-control="max-age=300" \
+            --remote

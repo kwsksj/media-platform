@@ -1,0 +1,59 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Setup Python Dev",
+      "type": "shell",
+      "command": "make setup-python-dev",
+      "group": "build"
+    },
+    {
+      "label": "Recommend Checks",
+      "type": "shell",
+      "command": "make recommend-checks",
+      "group": "test"
+    },
+    {
+      "label": "Check Required",
+      "type": "shell",
+      "command": "make check-required",
+      "group": "test"
+    },
+    {
+      "label": "Check Required Strict",
+      "type": "shell",
+      "command": "make check-required-strict",
+      "group": "test"
+    },
+    {
+      "label": "Check Changed Python",
+      "type": "shell",
+      "command": "make check-changed-python",
+      "group": "test"
+    },
+    {
+      "label": "Check Fast",
+      "type": "shell",
+      "command": "make check-fast",
+      "group": "test"
+    },
+    {
+      "label": "Check Monorepo",
+      "type": "shell",
+      "command": "make check-monorepo",
+      "group": "test"
+    },
+    {
+      "label": "Check Markdown",
+      "type": "shell",
+      "command": "make check-markdown",
+      "group": "test"
+    },
+    {
+      "label": "Publish Dry Run",
+      "type": "shell",
+      "command": "make publish-dry",
+      "group": "test"
+    }
+  ]
+}

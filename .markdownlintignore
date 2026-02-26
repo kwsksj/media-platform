@@ -1,0 +1,7 @@
+# Third-party or generated content
+**/node_modules/**
+**/venv/**
+**/.venv/**
+**/dist/**
+**/build/**
+archive/**

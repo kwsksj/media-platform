@@ -206,8 +206,20 @@ git clone https://github.com/kwsksj/media-platform.git
 cd media-platform
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -e ".[dev]"
+make setup-python-dev
 ```
+
+必要に応じて:
+
+```bash
+# 管理UIの依存を入れる
+make setup-admin-web
+
+# commit前チェックを自動化
+make pre-commit-install
+```
+
+VSCode を使う場合は、`Run Task` から `Check Changed Python` / `Check Fast` / `Check Markdown` を実行できます。
 
 ### 5.2 環境変数設定
 
@@ -219,8 +231,26 @@ cp .env.example .env
 ### 5.3 接続テスト
 
 ```bash
+# 変更差分に応じた推奨チェックを表示
+make recommend-checks
+
+# 推奨チェックのうち必須だけ自動実行
+make check-required
+
+# マージ前に強めに確認したい場合
+make check-required-strict
+
+# 変更差分だけ高速チェック
+make check-changed-python
+
+# Pythonの高速チェック（lint + typecheck）
+make check-fast
+
 # 構成チェック
 make check-monorepo
+
+# Markdown チェック（実務向けルール）
+make check-markdown
 
 # Notion 接続確認
 auto-post check-notion
@@ -313,7 +343,30 @@ make secrets-list ENV_FILE=./.env
 - `Daily Gallery Export`（`.github/workflows/gallery-export.yml`）: 毎日 16:10 JST (07:10 UTC)
 - `Catch-up Post`（`.github/workflows/catchup.yml`）: 手動実行のみ
 - `Monthly Schedule Post`（`.github/workflows/monthly-schedule.yml`）: 毎月25日 16:00 JST (07:00 UTC)
+- `PR Lifecycle Automation`（`.github/workflows/pr-lifecycle.yml`）: review/merge イベントで自動実行
+- `Worker Deploy`（`.github/workflows/worker-deploy.yml`）: 手動実行、または merge 後トリガー
+- `Admin Web Deploy`（`.github/workflows/admin-web-deploy.yml`）: 手動実行、または merge 後トリガー
 - 手動実行: GitHub Actions の各ワークフローから `Run workflow`
+
+### 7.3 PR ライフサイクル自動化の有効化（任意）
+
+GitHub Repository Settings:
+
+- Pull Requests:
+  - `Allow auto-merge` を有効化
+- Branch protection（`main` 推奨）:
+  - 必要レビュー数・必須ステータスチェックを設定
+
+GitHub Repository Variables:
+
+- `PR_AUTO_MERGE_ENABLED`: `false` で承認時 auto-merge を停止（既定は有効運用）
+- `AUTO_WORKER_DEPLOY_ON_MERGE`: `true` で merge 後に `worker-deploy.yml` を起動（Worker関連変更時のみ）
+- `AUTO_GALLERY_EXPORT_ON_MERGE`: `true` で merge 後に `gallery-export.yml` を起動（Gallery関連変更時のみ）
+- `AUTO_ADMIN_WEB_DEPLOY_ON_MERGE`: `true` で merge 後に `admin-web-deploy.yml` を起動（Admin関連変更時のみ）
+
+GitHub Repository Secrets:
+
+- `CLOUDFLARE_API_TOKEN`: `worker-deploy.yml` 実行時に必須
 
 ---
 
