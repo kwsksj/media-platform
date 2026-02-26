@@ -175,6 +175,8 @@ auto-post export-gallery-json --no-upload --no-thumbs --no-light
   - `apps/worker-api` / `apps/gallery-web` / `tools/gallery-build` などの変更時のみ、条件付きで後続workflowを自動起動
 - `Worker Deploy` (`.github/workflows/worker-deploy.yml`)
   - 手動実行（`Run workflow`）または PR merge 後に自動起動
+- `Admin Web Deploy` (`.github/workflows/admin-web-deploy.yml`)
+  - 手動実行（`Run workflow`）または PR merge 後に自動起動
 
 ### PR 自動化の設定項目
 
@@ -183,6 +185,7 @@ GitHub Repository Variables:
 - `PR_AUTO_MERGE_ENABLED`: `false` のとき承認時 auto-merge 有効化を無効（既定: 有効）
 - `AUTO_WORKER_DEPLOY_ON_MERGE`: `true` で merge 後に `worker-deploy.yml` を自動起動（Worker関連変更時のみ）
 - `AUTO_GALLERY_EXPORT_ON_MERGE`: `true` で merge 後に `gallery-export.yml` を自動起動（Gallery関連変更時のみ）
+- `AUTO_ADMIN_WEB_DEPLOY_ON_MERGE`: `true` で merge 後に `admin-web-deploy.yml` を自動起動（Admin関連変更時のみ）
 
 GitHub Repository Secrets:
 

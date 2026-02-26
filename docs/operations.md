@@ -25,19 +25,21 @@
 - `Daily Auto Post` の手動再実行
 - `Monthly Schedule Post` の手動再実行
 - `Worker Deploy` (`.github/workflows/worker-deploy.yml`)
+- `Admin Web Deploy` (`.github/workflows/admin-web-deploy.yml`)
 
 ## PR Lifecycle Automation
 
 - `PR Lifecycle Automation` (`.github/workflows/pr-lifecycle.yml`)
   - Approved review を契機に auto-merge を有効化（`--auto --squash --delete-branch`）
   - merge 後に head branch 削除をフォールバック実行
-  - Worker/Gallery 関連変更時のみ `Worker Deploy` / `Daily Gallery Export` を merge 後に自動起動
+  - Worker/Gallery/Admin 関連変更時のみ `Worker Deploy` / `Daily Gallery Export` / `Admin Web Deploy` を merge 後に自動起動
 
 Repository Variables:
 
 - `PR_AUTO_MERGE_ENABLED` (`false` で auto-merge 有効化を停止)
 - `AUTO_WORKER_DEPLOY_ON_MERGE` (`true` で `worker-deploy.yml` を merge 後に起動、Worker関連変更時のみ)
 - `AUTO_GALLERY_EXPORT_ON_MERGE` (`true` で `gallery-export.yml` を merge 後に起動、Gallery関連変更時のみ)
+- `AUTO_ADMIN_WEB_DEPLOY_ON_MERGE` (`true` で `admin-web-deploy.yml` を merge 後に起動、Admin関連変更時のみ)
 
 ## Image Link Health Check Optional Settings
 

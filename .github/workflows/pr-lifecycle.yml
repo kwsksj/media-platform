@@ -96,12 +96,21 @@ jobs:
                 path === ".github/workflows/gallery-export.yml" ||
                 path === ".github/workflows/pr-lifecycle.yml"
             );
+            const adminChanged = changed.some(
+              (path) =>
+                path.startsWith("apps/admin-web/") ||
+                path === "apps/worker-api/wrangler.toml" ||
+                path === ".github/workflows/admin-web-deploy.yml" ||
+                path === ".github/workflows/pr-lifecycle.yml"
+            );
 
             core.info(`Changed files: ${changed.length}`);
             core.info(`worker_changed=${workerChanged}`);
             core.info(`gallery_changed=${galleryChanged}`);
+            core.info(`admin_changed=${adminChanged}`);
             core.setOutput("worker_changed", workerChanged ? "true" : "false");
             core.setOutput("gallery_changed", galleryChanged ? "true" : "false");
+            core.setOutput("admin_changed", adminChanged ? "true" : "false");
 
       - name: Trigger worker deploy workflow
         if: ${{ vars.AUTO_WORKER_DEPLOY_ON_MERGE == 'true' && steps.changed-paths.outputs.worker_changed == 'true' }}
@@ -130,3 +139,17 @@ jobs:
               ref: "main",
             });
             core.info("Dispatched gallery-export.yml")
+
+      - name: Trigger admin web deploy workflow
+        if: ${{ vars.AUTO_ADMIN_WEB_DEPLOY_ON_MERGE == 'true' && steps.changed-paths.outputs.admin_changed == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "admin-web-deploy.yml",
+              ref: "main",
+            });
+            core.info("Dispatched admin-web-deploy.yml")
