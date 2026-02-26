@@ -70,14 +70,33 @@ jobs:
             fi
           fi
 
-      - name: Upload admin.html to R2
+      - name: Upload admin web static files to R2
         if: ${{ github.event.inputs.upload_html != 'false' }}
-        working-directory: apps/admin-web
+        working-directory: .
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
         run: |
-          npm run upload:admin-html -- "$R2_BUCKET_NAME"
+          set -euo pipefail
+
+          upload() {
+            local object_path="$1"
+            local file_path="$2"
+            local content_type="$3"
+            local cache_control="$4"
+            npx wrangler r2 object put "${R2_BUCKET_NAME}/${object_path}" \
+              --config="apps/worker-api/wrangler.toml" \
+              --file="$file_path" \
+              --content-type="$content_type" \
+              --cache-control="$cache_control" \
+              --remote
+          }
+
+          upload "admin.html" "apps/admin-web/admin.html" "text/html" "max-age=3600"
+          upload "admin/admin.css" "apps/admin-web/admin/admin.css" "text/css; charset=utf-8" "max-age=3600"
+          upload "admin/admin.js" "apps/admin-web/admin/admin.js" "text/javascript; charset=utf-8" "max-age=3600"
+          upload "shared/gallery-core.css" "apps/admin-web/shared/gallery-core.css" "text/css; charset=utf-8" "max-age=3600"
+          upload "shared/gallery-core.js" "apps/admin-web/shared/gallery-core.js" "text/javascript; charset=utf-8" "max-age=3600"
 
       - name: Build and upload admin indexes to R2
         if: ${{ github.event.inputs.upload_indexes != 'false' }}

@@ -26,6 +26,7 @@
 - `Monthly Schedule Post` の手動再実行
 - `Worker Deploy` (`.github/workflows/worker-deploy.yml`)
 - `Admin Web Deploy` (`.github/workflows/admin-web-deploy.yml`)
+  - `admin.html` / `admin/*` / `shared/*` と管理用 index JSON をデプロイ
 
 ## PR Lifecycle Automation
 

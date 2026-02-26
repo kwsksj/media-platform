@@ -176,7 +176,7 @@ auto-post export-gallery-json --no-upload --no-thumbs --no-light
 - `Worker Deploy` (`.github/workflows/worker-deploy.yml`)
   - 手動実行（`Run workflow`）または PR merge 後に自動起動
 - `Admin Web Deploy` (`.github/workflows/admin-web-deploy.yml`)
-  - 手動実行（`Run workflow`）または PR merge 後に自動起動
+  - `admin.html` / `admin/*` / `shared/*` と `students_index.json` / `tags_index.json` を手動実行または PR merge 後に自動デプロイ
 
 ### PR 自動化の設定項目
 
