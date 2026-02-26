@@ -61,6 +61,8 @@ make check-markdown
 
 # PRマージ + ローカルブランチ整理
 make pr-merge-local PR=16
+# 例: 最大30秒だけ待機
+PR_MERGE_WAIT_SECONDS=30 make pr-merge-local PR=16
 
 # ingest dry-run
 make ingest-preview TAKEOUT_DIR=./takeout-photos

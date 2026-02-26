@@ -198,6 +198,7 @@ GitHub Repository Secrets:
 - `make pr-merge-local PR=<number>`
   - `gh pr merge --auto --squash --delete-branch` を実行
   - PR が `MERGED` になったら default branch に戻って `git branch -d` まで実施
+  - 待機秒数は `PR_MERGE_WAIT_SECONDS`（既定: `600`）で調整可能
 
 ### 画像リンク健全性チェックのオプション設定
 
