@@ -20,7 +20,7 @@ TAKEOUT_DIR ?= ./takeout-photos
 THRESHOLD ?= 10
 MAX_PER_GROUP ?= 10
 
-.PHONY: help ensure-python-venv setup-python-dev setup-admin-web pre-commit-install lint format-check typecheck test recommend-checks recommend-checks-strict check-required check-required-strict check-changed-python fix-changed-python check-fast check-python check-monorepo check-markdown pr-merge-local ingest-preview ingest-import-dry publish-dry publish-catchup-dry publish-monthly-schedule-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry secrets-list
+.PHONY: help ensure-python-venv setup-python-dev setup-admin-web pre-commit-install lint format-check typecheck test recommend-checks recommend-checks-strict check-required check-required-strict check-changed-python fix-changed-python check-fast check-python check-monorepo check-markdown pr-ready pr-fix-ci pr-comments pr-merge-local ingest-preview ingest-import-dry publish-dry publish-catchup-dry publish-monthly-schedule-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry secrets-list
 
 help:
 	@echo "Monorepo helper targets"
@@ -37,6 +37,9 @@ help:
 	@echo "  make check-python            # lint + typecheck + test"
 	@echo "  make check-monorepo"
 	@echo "  make check-markdown          # practical markdown lint (optional)"
+	@echo "  make pr-ready [PR=16]        # recommend-checks + check-required + gh pr checks"
+	@echo "  make pr-fix-ci [PR=16]       # inspect failing GitHub Actions checks with log snippets"
+	@echo "  make pr-comments [PR=16]     # summarize actionable PR comments/review threads"
 	@echo "  make pr-merge-local [PR=16]  # merge PR and delete current local branch after merge"
 	@echo "  make ingest-preview TAKEOUT_DIR=./takeout-photos [THRESHOLD=10] [MAX_PER_GROUP=10]"
 	@echo "  make ingest-import-dry TAKEOUT_DIR=./takeout-photos [THRESHOLD=10] [MAX_PER_GROUP=10]"
@@ -111,6 +114,15 @@ check-markdown:
 	else \
 		echo "Skip: npx not found (install Node.js to run markdown lint)."; \
 	fi
+
+pr-ready:
+	@./scripts/gh_pr_ready.sh $(if $(PR),$(PR),)
+
+pr-fix-ci: ensure-python-venv
+	@$(VENV_PYTHON) scripts/inspect_pr_checks.py --repo . $(if $(PR),--pr $(PR),)
+
+pr-comments: ensure-python-venv
+	@$(VENV_PYTHON) scripts/fetch_pr_comments.py --repo . $(if $(PR),--pr $(PR),)
 
 pr-merge-local:
 	@./scripts/gh_pr_merge_and_cleanup_local.sh $(if $(PR),$(PR),)
