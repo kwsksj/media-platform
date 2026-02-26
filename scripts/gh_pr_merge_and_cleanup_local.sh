@@ -14,7 +14,7 @@ Behavior:
   3) If PR state is MERGED:
      - switch to default branch
      - fast-forward pull
-     - delete the original local branch
+     - delete the original local branch (force-delete fallback for squash/rebase merge)
 EOF
 }
 
@@ -33,7 +33,7 @@ if ! command -v git >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! git diff --quiet || ! git diff --cached --quiet; then
+if [[ -n "$(git status --porcelain)" ]]; then
   echo "Working tree is not clean. Commit or stash changes first." >&2
   exit 1
 fi
@@ -86,9 +86,11 @@ fi
 git switch "$default_branch"
 git pull --ff-only
 
-if git branch -d "$start_branch"; then
+if git branch -d "$start_branch" >/dev/null 2>&1; then
   echo "Deleted local branch: $start_branch"
 else
-  echo "Failed to delete local branch with -d. Check branch status manually." >&2
-  exit 1
+  echo "Local branch is not a direct ancestor after merge (likely squash/rebase)." >&2
+  echo "Force deleting local branch: $start_branch" >&2
+  git branch -D "$start_branch" >/dev/null
+  echo "Deleted local branch (forced): $start_branch"
 fi
