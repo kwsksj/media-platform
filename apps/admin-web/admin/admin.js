@@ -279,6 +279,28 @@ function normalizeClassroom(raw) {
 	return value;
 }
 
+function renderClassroomSelectedBadge(root, rawClassroom, { prefix = "選択中" } = {}) {
+	if (!root) return;
+	const classroom = normalizeClassroom(rawClassroom);
+	root.innerHTML = "";
+	if (!classroom) {
+		root.hidden = true;
+		return;
+	}
+	root.hidden = false;
+	const chip = el("span", { class: "chip chip--classroom-selected" });
+	chip.appendChild(el("span", { text: `${prefix}: ${classroom}` }));
+	root.appendChild(chip);
+}
+
+function syncUploadClassroomBadge() {
+	renderClassroomSelectedBadge(qs("#upload-classroom-selected"), qs("#upload-classroom")?.value || "", { prefix: "選択中" });
+}
+
+function syncCurationClassroomBadge() {
+	renderClassroomSelectedBadge(qs("#curation-classroom-selected"), qs("#curation-classroom")?.value || "", { prefix: "絞り込み" });
+}
+
 function isSameDayOrAfter(a, b) {
 	if (!a || !b) return true;
 	return a >= b;
@@ -1930,6 +1952,7 @@ function applyDraftToUploadForm(draft) {
 	if (captionInput) captionInput.value = targetDraft?.caption || "";
 	if (dateInput) dateInput.value = targetDraft?.completedDate || "";
 	if (classroomInput) classroomInput.value = targetDraft?.classroom || "";
+	syncUploadClassroomBadge();
 	if (authorSearch) authorSearch.value = "";
 	if (authorSearchResults) authorSearchResults.innerHTML = "";
 	if (status) status.textContent = "";
@@ -2222,6 +2245,7 @@ function updateUploadGroupAndAuthorCandidates({ preferredGroupValue = "", prefer
 	if (classroomSelect && classroomFromGroup) {
 		classroomSelect.value = classroomFromGroup;
 	}
+	syncUploadClassroomBadge();
 
 	const participants = Array.isArray(selectedGroup?.participants) ? selectedGroup.participants : [];
 	const candidates = participants
@@ -2384,6 +2408,7 @@ function initUpload() {
 
 	const classroomOptions = (state.schema?.classroomOptions || []).map((v) => ({ value: v }));
 	populateSelect(classroomSelect, { placeholder: "未選択", items: classroomOptions });
+	syncUploadClassroomBadge();
 
 	const dateInput = qs("#upload-completed-date");
 	const fromQuery = new URLSearchParams(window.location.search).get("date");
@@ -2426,6 +2451,7 @@ function initUpload() {
 	});
 
 	classroomSelect?.addEventListener("change", () => {
+		syncUploadClassroomBadge();
 		saveActiveDraftFromForm();
 		renderUploadDraftList();
 	});
@@ -2934,6 +2960,9 @@ function applyCurationFilters() {
 	const to = qs("#curation-to").value;
 	const classroom = qs("#curation-classroom").value;
 	const readyFilter = qs("#curation-ready-filter")?.value || "all";
+	const galleryFilter = qs("#curation-gallery-filter")?.value || "all";
+	const notifyFilter = qs("#curation-notify-filter")?.value || "all";
+	syncCurationClassroomBadge();
 
 	const missingTitle = qs("#curation-missing-title").checked;
 	const missingAuthor = qs("#curation-missing-author").checked;
@@ -2945,6 +2974,10 @@ function applyCurationFilters() {
 		if (classroom && w.classroom !== classroom) return false;
 		if (readyFilter === "unprepared" && w.ready) return false;
 		if (readyFilter === "ready" && !w.ready) return false;
+		if (galleryFilter === "reflected" && w.galleryReflected !== true) return false;
+		if (galleryFilter === "unreflected" && w.galleryReflected !== false) return false;
+		if (notifyFilter === "sent" && !isNotificationSent(w)) return false;
+		if (notifyFilter === "unsent" && isNotificationSent(w)) return false;
 		if (missingTitle && w.title) return false;
 		if (missingAuthor && (w.authorIds?.length || 0) > 0) return false;
 		if (missingTags && (w.tagIds?.length || 0) > 0) return false;
@@ -2957,6 +2990,39 @@ function applyCurationFilters() {
 
 function normalizeNotificationSyncState(value) {
 	return trimText(value || "").toLowerCase();
+}
+
+function isNotificationSent(work) {
+	if (!work || work.notificationDisabled || work.notificationPending) return false;
+	return normalizeNotificationSyncState(work.notificationState) === "sent";
+}
+
+function buildClassroomTagNameKeys(classroomRaw) {
+	const classroom = trimText(classroomRaw);
+	const keys = new Set();
+	if (!classroom) return keys;
+	const addKey = (value) => {
+		const key = normalizeSearch(value);
+		if (key) keys.add(key);
+	};
+	addKey(classroom);
+	const base = classroom.replace(/教室$/u, "");
+	if (base) {
+		addKey(base);
+		addKey(`${base}教室`);
+	}
+	return keys;
+}
+
+function filterOutClassroomTagIds(tagIdsRaw, classroomRaw) {
+	const tagIds = normalizeTagIdList(Array.isArray(tagIdsRaw) ? tagIdsRaw : []);
+	const classroomKeys = buildClassroomTagNameKeys(classroomRaw);
+	if (classroomKeys.size === 0) return tagIds;
+	return tagIds.filter((id) => {
+		const name = trimText(state.tagsById.get(id)?.name);
+		if (!name) return true;
+		return !classroomKeys.has(normalizeSearch(name));
+	});
 }
 
 function resolveNotificationSyncLabel(work) {
@@ -3083,7 +3149,8 @@ async function fetchCurationWorkSyncStatus(workIds) {
 
 function renderWorkCard(work, index) {
 	const coverUrl = work.images?.[0]?.url || "";
-	const title = work.title || "（無題）";
+	const rawTitle = trimText(work.title);
+	const title = rawTitle || "（無題）";
 	const card = el("div", { class: "work-card", "data-index": String(index) });
 	const thumb = el("div", { class: "work-card__thumb" });
 	thumb.appendChild(el("img", { src: coverUrl, alt: "" }));
@@ -3091,7 +3158,7 @@ function renderWorkCard(work, index) {
 	card.appendChild(thumb);
 
 	const meta = el("div", { class: "work-card__meta" });
-	meta.appendChild(el("div", { class: "work-card__title", text: title }));
+	meta.appendChild(el("div", { class: `work-card__title${rawTitle ? "" : " is-empty"}`, text: title }));
 	meta.appendChild(
 		el("div", { class: "work-card__sub" }, [
 			el("span", { text: work.completedDate || "-" }),
@@ -3147,7 +3214,7 @@ function renderCurationGrid() {
 	});
 	const reflectedCount = state.curation.filtered.filter((work) => work.galleryReflected === true).length;
 	const pendingNotifyCount = state.curation.filtered.filter((work) => work.notificationPending).length;
-	const sentNotifyCount = state.curation.filtered.filter((work) => normalizeNotificationSyncState(work.notificationState) === "sent").length;
+	const sentNotifyCount = state.curation.filtered.filter((work) => isNotificationSent(work)).length;
 	const syncSuffix = state.curation.syncSnapshotAt ? ` / 同期: ${formatIso(state.curation.syncSnapshotAt)}` : "";
 	const syncWarn = state.curation.syncStatusLoaded ? "" : " / 同期状態: 一部未取得";
 	qs("#curation-status").textContent =
@@ -3183,6 +3250,7 @@ async function loadCurationQueue() {
 		if (currentClassroom && classrooms.includes(currentClassroom)) {
 			classroomSelect.value = currentClassroom;
 		}
+		syncCurationClassroomBadge();
 
 		renderCurationGrid();
 		applyCurationFilters();
@@ -3334,6 +3402,7 @@ function renderWorkModal(work, index) {
 	const titleInput = el("input", { class: "input", type: "text", value: work.title || "" });
 	const completedDateInput = el("input", { class: "input", type: "date", value: work.completedDate || "" });
 	const classroomSelect = el("select", { class: "input" });
+	const modalClassroomSelected = el("div", { class: "chips chips--classroom-selected classroom-selected-inline", hidden: true });
 	const classrooms = Array.from(new Set(state.curation.works.map((w) => w.classroom).filter(Boolean))).sort((a, b) => a.localeCompare(b, "ja"));
 	populateSelect(classroomSelect, { placeholder: "未選択", items: classrooms.map((v) => ({ value: v })) });
 	classroomSelect.value = work.classroom || "";
@@ -3378,9 +3447,15 @@ function renderWorkModal(work, index) {
 			candidates: authorCandidates,
 		});
 	};
+	const syncModalClassroomBadge = () => {
+		renderClassroomSelectedBadge(modalClassroomSelected, classroomSelect.value, { prefix: "選択中" });
+	};
 
 	completedDateInput.addEventListener("change", syncModalAuthorUi);
-	classroomSelect.addEventListener("change", syncModalAuthorUi);
+	classroomSelect.addEventListener("change", () => {
+		syncModalAuthorUi();
+		syncModalClassroomBadge();
+	});
 	authorSelect.addEventListener("change", syncModalAuthorUi);
 	bindAuthorSearchInput({
 		inputEl: authorSearchInput,
@@ -3388,6 +3463,7 @@ function renderWorkModal(work, index) {
 		selectEl: authorSelect,
 	});
 	syncModalAuthorUi();
+	syncModalClassroomBadge();
 
 	let explicitTagIds = Array.isArray(work.tagIds) ? [...work.tagIds] : [];
 	tagEditor = createTagEditorController({
@@ -3671,6 +3747,7 @@ function renderWorkModal(work, index) {
 				completedDateInput,
 				el("label", { class: "label", style: "margin-left: 1rem;", text: "教室" }),
 				classroomSelect,
+				modalClassroomSelected,
 			]),
 		]),
 		el("div", { class: "form-row" }, [
@@ -3754,7 +3831,8 @@ function renderWorkModal(work, index) {
 		skip.disabled = true;
 
 		const derived = computeDerivedParentTagIds(explicitTagIds);
-		const tagIds = Array.from(new Set([...explicitTagIds, ...derived]));
+		const rawTagIds = Array.from(new Set([...explicitTagIds, ...derived]));
+		const tagIds = filterOutClassroomTagIds(rawTagIds, classroomSelect.value);
 		const payload = {
 			id: work.id,
 			title: titleInput.value.trim(),
@@ -3834,9 +3912,12 @@ function openWorkModal(index) {
 
 function initCuration() {
 	qs("#curation-refresh").addEventListener("click", () => loadCurationQueue());
-	qsa("#curation-from,#curation-to,#curation-classroom,#curation-ready-filter,#curation-missing-title,#curation-missing-author,#curation-missing-tags").forEach((elx) => {
+	qsa(
+		"#curation-from,#curation-to,#curation-classroom,#curation-ready-filter,#curation-gallery-filter,#curation-notify-filter,#curation-missing-title,#curation-missing-author,#curation-missing-tags",
+	).forEach((elx) => {
 		elx.addEventListener("change", () => applyCurationFilters());
 	});
+	syncCurationClassroomBadge();
 }
 
 function initHeaderActions() {

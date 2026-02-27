@@ -2684,7 +2684,7 @@ async function handleNotionUpdateWork(request, env) {
   return okResponse(response);
 }
 
-async function handleNotionCreateTag(request, env) {
+async function handleNotionCreateTag(request, env, executionCtx = null) {
   const tagsDbId = getEnvString(env, "NOTION_TAGS_DB_ID");
   if (!tagsDbId) return serverError("NOTION_TAGS_DB_ID not configured");
 
@@ -2769,7 +2769,7 @@ async function handleNotionCreateTag(request, env) {
     return jsonResponse({ ok: false, error: "failed to create notion tag", detail: res.data }, 500);
   }
 
-  const tagsIndex = await refreshTagsIndexAfterTagMutation(env);
+  triggerTagsIndexRefreshInBackground(env, executionCtx);
   return okResponse(
     {
       id: asString(res.data?.id),
@@ -2780,13 +2780,13 @@ async function handleNotionCreateTag(request, env) {
       aliases,
       merge_to: "",
       usage_count: 0,
-      tags_index: tagsIndex,
+      tags_index_refresh_queued: true,
     },
     201,
   );
 }
 
-async function handleNotionUpdateTag(request, env) {
+async function handleNotionUpdateTag(request, env, executionCtx = null) {
   const tagsDbId = getEnvString(env, "NOTION_TAGS_DB_ID");
   if (!tagsDbId) return serverError("NOTION_TAGS_DB_ID not configured");
 
@@ -2807,10 +2807,10 @@ async function handleNotionUpdateTag(request, env) {
   const childrenProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_CHILDREN_PROP", "子タグ"), "子タグ"], "");
   const usageCountProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_USAGE_COUNT_PROP", "作品数"), "作品数"], "");
   const worksRelProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_WORKS_REL_PROP", "作品"), "作品"], "");
-  const withTagsIndex = async (body) => {
-    const tagsIndex = await refreshTagsIndexAfterTagMutation(env);
-    return { ...body, tags_index: tagsIndex };
-  };
+  const withQueuedTagsIndexRefresh = (body) => ({
+    ...body,
+    tags_index_refresh_queued: true,
+  });
 
   const loadTagPage = async (id) => {
     const res = await notionFetch(env, `/pages/${id}`, { method: "GET" });
@@ -2955,40 +2955,46 @@ async function handleNotionUpdateTag(request, env) {
     const overlap = bulkParentIds.filter((id) => bulkChildIds.includes(id));
     if (overlap.length > 0) return badRequest("parentIds and childIds must be disjoint");
 
-    const updatedChildren = [];
-    for (const childId of bulkChildIds) {
-      const updatedChild = await patchTagRelations({
-        id: childId,
-        addParentIds: bulkParentIds,
-      });
-      if (!updatedChild.ok) {
+    const updatedChildrenResults = await Promise.all(
+      bulkChildIds.map((childId) =>
+        patchTagRelations({
+          id: childId,
+          addParentIds: bulkParentIds,
+        }),
+      ),
+    );
+    const failedChild = updatedChildrenResults.find((entry) => !entry.ok);
+    if (failedChild) {
+      return jsonResponse(
+        { ok: false, error: failedChild.error || "failed to update child tag relation", detail: failedChild.detail || null },
+        500,
+      );
+    }
+    const updatedChildren = updatedChildrenResults.map((entry) => entry.tag);
+
+    let updatedParents = [];
+    if (childrenProp) {
+      const updatedParentsResults = await Promise.all(
+        bulkParentIds.map((parentId) =>
+          patchTagRelations({
+            id: parentId,
+            addChildIds: bulkChildIds,
+          }),
+        ),
+      );
+      const failedParent = updatedParentsResults.find((entry) => !entry.ok);
+      if (failedParent) {
         return jsonResponse(
-          { ok: false, error: updatedChild.error || "failed to update child tag relation", detail: updatedChild.detail || null },
+          { ok: false, error: failedParent.error || "failed to update parent tag relation", detail: failedParent.detail || null },
           500,
         );
       }
-      updatedChildren.push(updatedChild.tag);
+      updatedParents = updatedParentsResults.map((entry) => entry.tag);
     }
 
-    const updatedParents = [];
-    if (childrenProp) {
-      for (const parentId of bulkParentIds) {
-        const updatedParent = await patchTagRelations({
-          id: parentId,
-          addChildIds: bulkChildIds,
-        });
-        if (!updatedParent.ok) {
-          return jsonResponse(
-            { ok: false, error: updatedParent.error || "failed to update parent tag relation", detail: updatedParent.detail || null },
-            500,
-          );
-        }
-        updatedParents.push(updatedParent.tag);
-      }
-    }
-
+    triggerTagsIndexRefreshInBackground(env, executionCtx);
     return okResponse(
-      await withTagsIndex({
+      withQueuedTagsIndexRefresh({
         parent_ids: bulkParentIds,
         child_ids: bulkChildIds,
         parents: updatedParents,
@@ -3040,7 +3046,8 @@ async function handleNotionUpdateTag(request, env) {
       }
       latestTag = buildTagResponseFromPage(loaded.page);
     }
-    return okResponse(await withTagsIndex(latestTag));
+    triggerTagsIndexRefreshInBackground(env, executionCtx);
+    return okResponse(withQueuedTagsIndexRefresh(latestTag));
   }
 
   const parentId = asString(payload.parentId).trim();
@@ -3068,8 +3075,9 @@ async function handleNotionUpdateTag(request, env) {
     parentUpdated = result.tag;
   }
 
+  triggerTagsIndexRefreshInBackground(env, executionCtx);
   return okResponse(
-    await withTagsIndex({
+    withQueuedTagsIndexRefresh({
       parent: parentUpdated || { id: parentId, children: [] },
       child: childUpdated.tag,
     }),
@@ -3856,25 +3864,26 @@ async function regenerateTagsIndex(env) {
   };
 }
 
-async function refreshTagsIndexAfterTagMutation(env) {
-  const result = await regenerateTagsIndex(env);
-  if (result.ok) {
-    return {
-      regenerated: true,
-      key: result.key,
-      count: result.count,
-      generated_at: result.generated_at,
-    };
+function triggerTagsIndexRefreshInBackground(env, executionCtx = null) {
+  const job = regenerateTagsIndex(env)
+    .then((result) => {
+      if (!result.ok) {
+        console.error("failed to regenerate tags index after tag mutation", {
+          error: result.error,
+          detail: result.detail || null,
+        });
+      }
+    })
+    .catch((error) => {
+      console.error("failed to regenerate tags index after tag mutation", {
+        error: asString(error?.message).trim() || "unknown_error",
+      });
+    });
+  if (executionCtx && typeof executionCtx.waitUntil === "function") {
+    executionCtx.waitUntil(job);
+  } else {
+    void job;
   }
-
-  console.error("failed to regenerate tags index after tag mutation", {
-    error: result.error,
-    detail: result.detail || null,
-  });
-  return {
-    regenerated: false,
-    error: result.error,
-  };
 }
 
 async function handleTriggerTagsIndexUpdate(request, env) {
@@ -3984,7 +3993,7 @@ async function handleScheduleIndexPush(request, env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
 
@@ -4066,11 +4075,11 @@ export default {
     }
 
     if (pathname === "/admin/notion/tag" && request.method === "POST") {
-      return handleNotionCreateTag(request, env);
+      return handleNotionCreateTag(request, env, ctx);
     }
 
     if (pathname === "/admin/notion/tag" && request.method === "PATCH") {
-      return handleNotionUpdateTag(request, env);
+      return handleNotionUpdateTag(request, env, ctx);
     }
 
     if (pathname === "/admin/r2/upload" && request.method === "POST") {

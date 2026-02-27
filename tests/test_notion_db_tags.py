@@ -41,7 +41,7 @@ def test_add_work_uses_relation_tags_when_tag_property_is_relation():
     properties = db.client.pages.create_calls[0]["properties"]
     assert "relation" in properties["タグ"]
     related_ids = {item["id"] for item in properties["タグ"]["relation"]}
-    assert related_ids == {"id-東京教室", "id-木彫り", "id-作品"}
+    assert related_ids == {"id-木彫り", "id-作品"}
     assert {db_id for db_id, _ in relation_lookups} == {"tags-db"}
 
 
@@ -63,4 +63,4 @@ def test_add_work_uses_multi_select_tags_when_tag_property_is_multi_select():
     properties = db.client.pages.create_calls[0]["properties"]
     assert "multi_select" in properties["タグ"]
     tag_names = {item["name"] for item in properties["タグ"]["multi_select"]}
-    assert tag_names == {"東京教室", "木彫り"}
+    assert tag_names == {"木彫り"}

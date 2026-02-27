@@ -290,6 +290,41 @@ select.input[multiple] option {
 	background: rgba(43, 106, 255, 0.08);
 }
 
+.chips--classroom-selected {
+	min-height: 22px;
+}
+
+.chip--classroom-selected {
+	border-color: rgba(43, 106, 255, 0.48);
+	background: rgba(43, 106, 255, 0.14);
+	color: #0d39a6;
+	font-weight: 700;
+}
+
+.toolbar--filters .chips--classroom-selected {
+	align-self: center;
+}
+
+.classroom-selected-inline {
+	margin-left: 8px;
+}
+
+.classroom-selected-inline .chip {
+	padding: 5px 10px;
+}
+
+.work-card__title {
+	min-height: calc(1.3em * 2);
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+
+.work-card__title.is-empty {
+	color: var(--muted);
+	font-weight: 600;
+	letter-spacing: 0.01em;
+}
+
 .work-card__flags {
 	display: flex;
 	flex-direction: column;

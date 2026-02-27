@@ -115,24 +115,25 @@
 							</div>
 						</div>
 
-						<div class="form-grid form-grid--meta">
-							<div class="form-row">
-								<label class="label" for="upload-completed-date">完成日（撮影日）</label>
-								<input id="upload-completed-date" class="input" type="date" />
-								<div id="upload-exif-note" class="subnote"></div>
+							<div class="form-grid form-grid--meta">
+								<div class="form-row">
+									<label class="label" for="upload-completed-date">完成日（撮影日）</label>
+									<input id="upload-completed-date" class="input" type="date" />
+									<div id="upload-exif-note" class="subnote"></div>
+								</div>
+
+								<div class="form-row">
+									<label class="label" for="upload-classroom">教室（Notion保存値）</label>
+									<select id="upload-classroom" class="input"></select>
+									<div id="upload-classroom-selected" class="chips chips--classroom-selected" hidden></div>
+									<details class="help-toggle">
+										<summary class="help-toggle__summary" aria-label="教室項目の説明を表示">?</summary>
+										<div class="help-toggle__body subnote">保存時に「〇〇教室」へ正規化します。</div>
+									</details>
+								</div>
 							</div>
 
-							<div class="form-row">
-								<label class="label" for="upload-classroom">教室（Notion保存値）</label>
-								<select id="upload-classroom" class="input"></select>
-								<details class="help-toggle">
-									<summary class="help-toggle__summary" aria-label="教室項目の説明を表示">?</summary>
-									<div class="help-toggle__body subnote">保存時に「〇〇教室」へ正規化します。</div>
-								</details>
-							</div>
-						</div>
-
-						<div class="form-grid">
+							<div class="form-grid">
 							<div class="form-row">
 								<div id="upload-author-label" class="label">作者</div>
 								<select id="upload-author" class="input author-select-native" multiple size="6" hidden aria-hidden="true"></select>
@@ -208,12 +209,29 @@
 								教室
 								<select id="curation-classroom" class="input input--sm"></select>
 							</label>
+							<div id="curation-classroom-selected" class="chips chips--classroom-selected" hidden></div>
 							<label class="label-inline">
 								整備状態
 								<select id="curation-ready-filter" class="input input--sm">
 									<option value="all">すべて</option>
 									<option value="unprepared">未整備のみ</option>
 									<option value="ready">整備済みのみ</option>
+								</select>
+							</label>
+							<label class="label-inline">
+								ギャラリー反映
+								<select id="curation-gallery-filter" class="input input--sm">
+									<option value="all">すべて</option>
+									<option value="reflected">反映済み</option>
+									<option value="unreflected">未反映のみ</option>
+								</select>
+							</label>
+							<label class="label-inline">
+								通知送信
+								<select id="curation-notify-filter" class="input input--sm">
+									<option value="all">すべて</option>
+									<option value="sent">通知済み</option>
+									<option value="unsent">未通知のみ</option>
 								</select>
 							</label>
 							<label class="checkbox checkbox--sm">

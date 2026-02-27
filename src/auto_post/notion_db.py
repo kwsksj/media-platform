@@ -328,8 +328,6 @@ class NotionDB:
         if classroom:
             if self._is_property_valid("教室"):
                 properties["教室"] = {"select": {"name": classroom}}
-            # User request: Add classroom to Tags as well (for Relation/Filter)
-            tag_names.add(classroom)
 
         # Process input string tags
         if tags:
@@ -865,70 +863,8 @@ class NotionDB:
         """Update the location (Classroom) for an existing work."""
         properties: dict[str, Any] = {}
 
-        # 1. Update Classroom Property
         if self._is_property_valid("教室"):
             properties["教室"] = {"select": {"name": classroom}}
-
-        # Retrieve existing tags to preserve them?
-        # Ideally yes, but merging relations is tricky without fetching first.
-        # For now, let's Append to Relation if possible.
-        # But Notion API "properties" update replaces the value.
-        # So we really should fetch the page's current relation IDs first.
-
-        # NOTE: To keep it simple for this specific fix (filling MISSING location),
-        # we can just try to add the relation.
-        # However, overwriting existing tags is risky if user manually added some.
-        # Let's try to just update "教室" first, and "タグ" if empty?
-        # Or better: Fetch page -> get current tags -> append -> update.
-
-        # Fetch current page details
-        page = cast(JsonDict, self.client.pages.retrieve(page_id))
-        page_properties = cast(dict[str, Any], page.get("properties", {}))
-        current_relation_ids: list[dict[str, str]] = []
-
-        # Check current Relation
-        # Assuming "タグ" is Relation property key
-        # (This relies on property name being valid)
-        tag_prop = page_properties.get("タグ")
-        if isinstance(tag_prop, dict) and tag_prop.get("type") == "relation":
-            relation_values = tag_prop.get("relation", [])
-            if isinstance(relation_values, list):
-                current_relation_ids = [
-                    {"id": str(r["id"])}
-                    for r in relation_values
-                    if isinstance(r, dict) and isinstance(r.get("id"), str)
-                ]
-
-        # Check Multi-select
-        current_ms_names = set()
-        if isinstance(tag_prop, dict) and tag_prop.get("type") == "multi_select":
-            multi_values = tag_prop.get("multi_select", [])
-            if isinstance(multi_values, list):
-                current_ms_names = {
-                    str(opt["name"])
-                    for opt in multi_values
-                    if isinstance(opt, dict) and isinstance(opt.get("name"), str)
-                }
-
-        # Prepare new tag
-        tag_prop_type = tag_prop.get("type") if isinstance(tag_prop, dict) else None
-        relation_db_id = self._get_relation_database_id("タグ") or self.tags_database_id
-        relation_used = False
-        if tag_prop_type == "relation" and relation_db_id:
-            tag_id = self._get_or_create_tag_page(classroom, relation_db_id)
-            if tag_id:
-                # Check if already exists
-                if not any(r["id"] == tag_id for r in current_relation_ids):
-                    current_relation_ids.append({"id": tag_id})
-
-                properties["タグ"] = {"relation": current_relation_ids}
-                relation_used = True
-
-        # Fallback to Multi-select
-        if not relation_used and tag_prop_type == "multi_select":
-            current_ms_names.add(classroom)
-            ms_options = [{"name": t} for t in current_ms_names]
-            properties["タグ"] = {"multi_select": ms_options}
 
         if properties:
             self.client.pages.update(page_id=page_id, properties=properties)
