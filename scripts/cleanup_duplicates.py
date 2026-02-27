@@ -4,13 +4,17 @@
 
 WorksPhotesフォルダから多重取り込みされた以下を削除する:
 1. 整備済=OFF の Notion ページ → アーカイブ + 紐づくR2画像を削除
-2. Notionページに紐づかない孤立R2画像 → 削除
+2. Notionページに紐づかない孤立R2画像 → （オプションで）削除
 
 ギャラリーに反映済み（整備済=ON）のアイテムは一切触れない。
+未整理アップロード画像がある運用を考慮し、孤立R2画像の削除はデフォルト無効。
 
 使い方:
   # dry-run（確認のみ）
   python scripts/cleanup_duplicates.py
+
+  # 孤立R2画像も削除対象に含める（明示指定）
+  python scripts/cleanup_duplicates.py --delete-orphaned-r2
 
   # 実行
   python scripts/cleanup_duplicates.py --execute
@@ -26,9 +30,9 @@ from urllib.parse import urlparse
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "src"))
 
-from auto_post.config import Config
-from auto_post.notion_db import NotionDB
-from auto_post.r2_storage import R2Storage
+from auto_post.config import Config  # noqa: E402
+from auto_post.notion_db import NotionDB  # noqa: E402
+from auto_post.r2_storage import R2Storage  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,6 +49,14 @@ logger = logging.getLogger(__name__)
 
 # ---------- 整備済プロパティ名候補 ----------
 READY_PROP_CANDIDATES = ("整備済み", "整備済")
+KNOWN_R2_PREFIXES = (
+    "photos/",
+    "photos-light/",
+    "images/",
+    "images-light/",
+    "uploads/",
+    "uploads-light/",
+)
 
 
 def _resolve_ready_prop(db_info: dict) -> str:
@@ -110,19 +122,19 @@ def _url_to_r2_key(url: str, public_url: str) -> str | None:
         return None
     # https://pub-xxx.r2.dev/photos/xxx_yyy.jpg -> photos/xxx_yyy.jpg
     if public_url and url.startswith(public_url):
-        key = url[len(public_url):].lstrip("/")
+        key = url[len(public_url) :].lstrip("/")
         return key if key else None
     # URLパースでパスだけ取る
     parsed = urlparse(url)
     path = parsed.path.lstrip("/")
-    if path.startswith("photos/"):
+    if path.startswith(KNOWN_R2_PREFIXES):
         return path
     return None
 
 
-def _list_all_r2_keys(r2: R2Storage, prefix: str = "photos/") -> list[str]:
-    """R2バケット内の全オブジェクトキーをリストする。"""
-    keys = []
+def _list_r2_keys_with_prefix(r2: R2Storage, prefix: str) -> list[str]:
+    """指定prefix配下のR2オブジェクトキーをリストする。"""
+    keys: list[str] = []
     client = r2._create_client()
     continuation_token = None
 
@@ -150,10 +162,19 @@ def _list_all_r2_keys(r2: R2Storage, prefix: str = "photos/") -> list[str]:
     return keys
 
 
+def _list_all_r2_keys(
+    r2: R2Storage,
+    prefixes: tuple[str, ...] = KNOWN_R2_PREFIXES,
+) -> set[str]:
+    """R2バケット内の既知画像prefix配下オブジェクトキーをリストする。"""
+    all_keys: set[str] = set()
+    for prefix in prefixes:
+        all_keys.update(_list_r2_keys_with_prefix(r2, prefix=prefix))
+    return all_keys
+
+
 def main():
-    parser = argparse.ArgumentParser(
-        description="重複インポートデータのクリーンアップ"
-    )
+    parser = argparse.ArgumentParser(description="重複インポートデータのクリーンアップ")
     parser.add_argument(
         "--execute",
         action="store_true",
@@ -165,9 +186,15 @@ def main():
         default=ROOT_DIR / ".env",
         help=".envファイルのパス",
     )
+    parser.add_argument(
+        "--delete-orphaned-r2",
+        action="store_true",
+        help="Notionに未紐づけの孤立R2画像も削除対象に含める（デフォルト: 含めない）",
+    )
     args = parser.parse_args()
 
     dry_run = not args.execute
+    delete_orphaned_r2 = bool(args.delete_orphaned_r2)
 
     if dry_run:
         print("=" * 60)
@@ -233,8 +260,10 @@ def main():
     # Step 2: R2 全オブジェクト取得
     # ------------------------------------------------
     print("\n📦 R2バケットから全オブジェクトキーを取得中...")
-    all_r2_keys = set(_list_all_r2_keys(r2, prefix="photos/"))
-    print(f"  R2 photos/ 総数: {len(all_r2_keys)}")
+    all_r2_keys = _list_all_r2_keys(r2)
+    joined_prefixes = ", ".join(KNOWN_R2_PREFIXES)
+    print(f"  R2対象prefix: {joined_prefixes}")
+    print(f"  R2対象オブジェクト総数: {len(all_r2_keys)}")
 
     # 孤立R2キー = R2にあるが、Notionのどのページからも参照されていないもの
     orphaned_r2_keys = all_r2_keys - notion_r2_keys_all
@@ -252,8 +281,12 @@ def main():
     # ------------------------------------------------
     # Step 3: 削除対象のサマリー
     # ------------------------------------------------
-    # 削除対象R2キー = 孤立キー + 未整備ページのキー(整備済と共有していないもの)
-    r2_keys_to_delete = orphaned_r2_keys | not_ready_r2_keys
+    # 削除対象R2キー
+    # - default: 未整備ページ由来のみ
+    # - --delete-orphaned-r2 指定時: 孤立キーも含める
+    r2_keys_to_delete = set(not_ready_r2_keys)
+    if delete_orphaned_r2:
+        r2_keys_to_delete.update(orphaned_r2_keys)
     notion_pages_to_archive = not_ready_pages
 
     print("\n" + "=" * 60)
@@ -267,8 +300,11 @@ def main():
         print(f"  - [{page_id[:8]}...] {title} (画像: {len(image_urls)}枚)")
 
     print(f"\n🖼  R2画像 削除対象: {len(r2_keys_to_delete)} 件")
-    print(f"    内訳:")
-    print(f"      孤立画像 (Notionページなし): {len(orphaned_r2_keys)} 件")
+    print("    内訳:")
+    if delete_orphaned_r2:
+        print(f"      孤立画像 (Notionページなし): {len(orphaned_r2_keys)} 件")
+    else:
+        print(f"      孤立画像 (Notionページなし): {len(orphaned_r2_keys)} 件（今回は削除対象外）")
     print(f"      未整備ページの画像: {len(not_ready_r2_keys)} 件")
 
     if len(r2_keys_to_delete) <= 50:
@@ -276,7 +312,7 @@ def main():
             tag = "孤立" if key in orphaned_r2_keys else "未整備"
             print(f"    - [{tag}] {key}")
     else:
-        print(f"    (件数が多いため先頭20件を表示)")
+        print("    (件数が多いため先頭20件を表示)")
         for key in sorted(r2_keys_to_delete)[:20]:
             tag = "孤立" if key in orphaned_r2_keys else "未整備"
             print(f"    - [{tag}] {key}")
@@ -289,8 +325,12 @@ def main():
     # ------------------------------------------------
     if dry_run:
         print("\n" + "=" * 60)
-        print("🔍 DRY-RUN 完了。実際に削除するには --execute オプションを付けて再実行してください。")
-        print(f"   python scripts/cleanup_duplicates.py --execute")
+        print(
+            "🔍 DRY-RUN 完了。実際に削除するには --execute オプションを付けて再実行してください。"
+        )
+        if not delete_orphaned_r2 and orphaned_r2_keys:
+            print("   孤立R2画像も削除したい場合は --delete-orphaned-r2 を追加してください。")
+        print("   python scripts/cleanup_duplicates.py --execute")
         print("=" * 60)
         return
 

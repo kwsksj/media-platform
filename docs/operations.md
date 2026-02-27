@@ -80,7 +80,43 @@ make gallery-tag-recalc-dry
 # app smoke / deploy dry-run
 make admin-smoke
 make worker-dry
+
+# R2 backup / restore drill (rclone)
+make r2-backup-dry
+make r2-backup
+make r2-restore-dry
+
+# 整合性チェック（dry-run）
+python scripts/check_image_links.py
+python scripts/cleanup_duplicates.py
+# 孤立R2画像も削除対象にする場合のみ明示指定
+python scripts/cleanup_duplicates.py --delete-orphaned-r2
 ```
+
+## R2 Backup Runbook
+
+`scripts/r2_backup.sh` は `rclone` 前提の雛形です。正本はR2のまま、別リモート（例: Google Drive）をバックアップ先にします。
+
+```bash
+# 必須: rclone remote を設定済みにする
+# 例: r2 remote名=r2, Drive remote名=gdrive
+export R2_REMOTE_NAME=r2
+export R2_BUCKET_NAME=<your-r2-bucket>
+export R2_BACKUP_REMOTE=gdrive:media-platform-r2/current
+
+# バックアップ dry-run / 実行
+make r2-backup-dry
+make r2-backup
+
+# 復元リハーサル（dry-runのみ）
+make r2-restore-dry
+```
+
+### 未整理アップロードが多い場合の注意
+
+- `cleanup_duplicates.py` はデフォルトで **孤立R2画像を削除しません**（Notion未登録の保留画像を保護）。
+- Notionの未整備ページと紐づく画像は従来どおり削除候補になります。
+- 孤立R2画像を削除するのは、棚卸しが終わった後に `--delete-orphaned-r2` を付ける時だけにしてください。
 
 ## Tool Entrypoints
 

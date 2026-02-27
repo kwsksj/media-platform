@@ -20,7 +20,7 @@ TAKEOUT_DIR ?= ./takeout-photos
 THRESHOLD ?= 10
 MAX_PER_GROUP ?= 10
 
-.PHONY: help ensure-python-venv setup-python-dev setup-admin-web pre-commit-install lint format-check typecheck test recommend-checks recommend-checks-strict check-required check-required-strict check-changed-python fix-changed-python check-fast check-python check-monorepo check-markdown pr-ready pr-fix-ci pr-comments pr-merge-local ingest-preview ingest-import-dry publish-dry publish-catchup-dry publish-monthly-schedule-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry secrets-list
+.PHONY: help ensure-python-venv setup-python-dev setup-admin-web pre-commit-install lint format-check typecheck test recommend-checks recommend-checks-strict check-required check-required-strict check-changed-python fix-changed-python check-fast check-python check-monorepo check-markdown pr-ready pr-fix-ci pr-comments pr-merge-local ingest-preview ingest-import-dry publish-dry publish-catchup-dry publish-monthly-schedule-dry gallery-export gallery-tag-recalc-dry gallery-tag-recalc-apply admin-smoke worker-dry r2-backup r2-backup-dry r2-restore-dry secrets-list
 
 help:
 	@echo "Monorepo helper targets"
@@ -51,6 +51,9 @@ help:
 	@echo "  make gallery-tag-recalc-apply"
 	@echo "  make admin-smoke"
 	@echo "  make worker-dry"
+	@echo "  make r2-backup             # R2 -> backup remote (rclone copy)"
+	@echo "  make r2-backup-dry         # dry-run for backup"
+	@echo "  make r2-restore-dry        # dry-run restore backup -> R2"
 	@echo "  make secrets-list [ENV_FILE=./.env]"
 
 ensure-python-venv:
@@ -159,6 +162,15 @@ admin-smoke:
 
 worker-dry:
 	@cd "$(WORKER_API_DIR)" && npx wrangler deploy --dry-run
+
+r2-backup:
+	@./scripts/r2_backup.sh backup
+
+r2-backup-dry:
+	@./scripts/r2_backup.sh backup-dry-run
+
+r2-restore-dry:
+	@./scripts/r2_backup.sh restore-dry-run
 
 secrets-list:
 	@./scripts/list-required-gh-secrets.sh "$(if $(ENV_FILE),$(ENV_FILE),./.env)"
