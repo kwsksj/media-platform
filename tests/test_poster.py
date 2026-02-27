@@ -3,6 +3,8 @@
 from datetime import datetime
 from unittest.mock import Mock
 
+import pytest
+
 from auto_post.notion_db import WorkItem
 from auto_post.poster import Poster, generate_caption
 
@@ -123,7 +125,9 @@ class TestRunDailyPost:
 
         posted_ids: list[str] = []
 
-        def fake_process_post(work: WorkItem, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
+        def fake_process_post(
+            work: WorkItem, dry_run: bool = False, platforms: list[str] | None = None
+        ) -> dict:
             posted_ids.append(work.page_id)
             return {"instagram": True, "x": False, "threads": False, "errors": []}
 
@@ -164,7 +168,9 @@ class TestRunDailyPost:
 
         posted_ids: list[str] = []
 
-        def fake_process_post(work: WorkItem, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
+        def fake_process_post(
+            work: WorkItem, dry_run: bool = False, platforms: list[str] | None = None
+        ) -> dict:
             posted_ids.append(work.page_id)
             return {"instagram": True, "x": False, "threads": False, "errors": []}
 
@@ -183,3 +189,74 @@ class TestRunDailyPost:
 
         assert posted_ids == ["old-1"]
         assert result["processed"] == ["oldest"]
+
+
+def test_process_post_skips_unready_work():
+    poster = object.__new__(Poster)
+
+    post = _make_work("page-1", "not-ready", datetime(2026, 2, 1))
+
+    result = poster._process_post(post, dry_run=True, platforms=["instagram"])
+
+    assert result["instagram"] is False
+    assert result["x"] is False
+    assert result["threads"] is False
+    assert "not ready" in result["errors"][0].lower()
+
+
+def test_test_post_rejects_unready_work():
+    poster = object.__new__(Poster)
+    poster.notion = Mock()
+    poster.notion.list_works.return_value = [
+        _make_work("page-1", "not-ready", datetime(2026, 2, 1))
+    ]
+
+    with pytest.raises(ValueError, match="not ready"):
+        poster.test_post("page-1", "instagram")
+
+
+def test_process_post_skips_work_before_2025():
+    poster = object.__new__(Poster)
+
+    post = _make_work("page-1", "old-work", datetime(2024, 12, 31))
+    post.ready = True
+
+    result = poster._process_post(post, dry_run=True, platforms=["instagram"])
+
+    assert result["instagram"] is False
+    assert result["x"] is False
+    assert result["threads"] is False
+    assert "before 2025-01-01" in result["errors"][0]
+
+
+def test_test_post_rejects_work_before_2025():
+    poster = object.__new__(Poster)
+    poster.notion = Mock()
+    poster.notion.list_works.return_value = [
+        _make_work("page-1", "old-work", datetime(2024, 12, 31))
+    ]
+    poster.notion.list_works.return_value[0].ready = True
+
+    with pytest.raises(ValueError, match="before 2025-01-01"):
+        poster.test_post("page-1", "instagram")
+
+
+def test_process_post_dry_run_does_not_download_images(monkeypatch):
+    poster = object.__new__(Poster)
+    poster.config = Mock()
+    poster.config.default_tags = "#default"
+
+    post = _make_work("page-1", "fast-dry-run", datetime(2026, 1, 2))
+    post.ready = True
+
+    def _should_not_call(_url: str):
+        raise AssertionError("download should not be called during dry-run")
+
+    monkeypatch.setattr("auto_post.poster.download_image_from_url", _should_not_call)
+
+    result = poster._process_post(post, dry_run=True, platforms=["instagram", "x", "threads"])
+
+    assert result["instagram"] is True
+    assert result["x"] is True
+    assert result["threads"] is True
+    assert result["errors"] == []
