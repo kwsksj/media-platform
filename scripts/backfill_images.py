@@ -26,11 +26,12 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "src"))
 
-from auto_post.config import Config
-from auto_post.grouping import IMAGE_EXTENSIONS, get_photo_metadata
-from auto_post.notion_db import NotionDB
-from auto_post.r2_storage import R2Storage
-from auto_post.schedule_lookup import ScheduleLookup
+# Imported after sys.path adjustment for direct script execution.
+from auto_post.config import Config  # noqa: E402
+from auto_post.grouping import IMAGE_EXTENSIONS, get_photo_metadata  # noqa: E402
+from auto_post.notion_db import NotionDB  # noqa: E402
+from auto_post.r2_storage import R2Storage  # noqa: E402
+from auto_post.schedule_lookup import ScheduleLookup  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -86,9 +87,7 @@ def _list_all_r2_keys(r2: R2Storage, prefix: str = "photos/") -> list[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="欠け画像バックフィル（R2ファイル名突合）"
-    )
+    parser = argparse.ArgumentParser(description="欠け画像バックフィル（R2ファイル名突合）")
     parser.add_argument(
         "folder",
         type=Path,
@@ -185,7 +184,7 @@ def main():
     missing_images = [path for paths in missing_by_folder.values() for path in paths]
     already_count = len(local_images) - len(missing_images)
 
-    print(f"\n" + "=" * 60)
+    print("\n" + "=" * 60)
     print("📊 バックフィル対象サマリー")
     print("=" * 60)
     print(f"  ローカル画像:     {len(local_images)}")
@@ -198,7 +197,7 @@ def main():
             for path in paths:
                 print(f"    + {path.name}")
     else:
-        print(f"  (件数が多いため先頭ダイジェスト表示)")
+        print("  (件数が多いため先頭ダイジェスト表示)")
         count = 0
         for folder_name, paths in missing_by_folder.items():
             print(f"\n  📂 {folder_name} ({len(paths)}件):")
@@ -208,7 +207,7 @@ def main():
                 print(f"    ... 他 {len(paths) - 5} 件")
             count += len(paths)
             if count >= 30:
-                print(f"\n    ... 以降省略")
+                print("\n    ... 以降省略")
                 break
 
     if not missing_images:
@@ -219,8 +218,10 @@ def main():
     # Step 4: 実行
     # ------------------------------------------------
     if dry_run:
-        print(f"\n" + "=" * 60)
-        print("🔍 DRY-RUN 完了。実際にアップロード・Notion連携するには --execute を付けてください。")
+        print("\n" + "=" * 60)
+        print(
+            "🔍 DRY-RUN 完了。実際にアップロード・Notion連携するには --execute を付けてください。"
+        )
         print(f"   python scripts/backfill_images.py {root_folder} --execute")
         print("=" * 60)
         return
@@ -283,18 +284,23 @@ def main():
 
                 files_payload = existing_files.copy()
                 for i, url in enumerate(new_urls):
-                    files_payload.append({
-                        "type": "external",
-                        "name": f"image_{len(existing_files) + i + 1}",
-                        "external": {"url": url}
-                    })
+                    files_payload.append(
+                        {
+                            "type": "external",
+                            "name": f"image_{len(existing_files) + i + 1}",
+                            "external": {"url": url},
+                        }
+                    )
 
                 notion.client.pages.update(
-                    page_id=page_id,
-                    properties={"画像": {"files": files_payload}}
+                    page_id=page_id, properties={"画像": {"files": files_payload}}
                 )
                 notion_updated += 1
-                logger.info(f"Updated existing Notion page: {folder_name} (+{len(new_urls)} images)")
+                logger.info(
+                    "Updated existing Notion page: %s (+%d images)",
+                    folder_name,
+                    len(new_urls),
+                )
 
             else:
                 # 新規ページ作成
@@ -309,7 +315,12 @@ def main():
                     classroom=classroom,
                 )
                 notion_created += 1
-                logger.info(f"Created new Notion page: {folder_name} ({len(new_urls)} images, Date: {folder_timestamp})")
+                logger.info(
+                    "Created new Notion page: %s (%d images, Date: %s)",
+                    folder_name,
+                    len(new_urls),
+                    folder_timestamp,
+                )
 
         except Exception as e:
             errors += 1
@@ -318,7 +329,7 @@ def main():
     # ------------------------------------------------
     # 結果サマリー
     # ------------------------------------------------
-    print(f"\n" + "=" * 60)
+    print("\n" + "=" * 60)
     print("🎉 バックフィル完了")
     print("=" * 60)
     print(f"  R2アップロード: {uploaded} 件")
