@@ -7,6 +7,7 @@ const CORS_HEADERS = {
 const UPLOAD_NOTIFY_PENDING_WORK_PREFIX = "upload_notify:pending:work:";
 const UPLOAD_NOTIFY_STATUS_WORK_PREFIX = "upload_notify:status:work:";
 const UPLOAD_NOTIFY_DISABLED_WORK_PREFIX = "upload_notify:disabled:work:";
+const IMAGE_KEY_PREFIXES = ["photos/", "photos-light/", "images/", "images-light/", "uploads/", "uploads-light/"];
 
 function withCors(headers = {}) {
   return { ...CORS_HEADERS, ...headers };
@@ -492,6 +493,26 @@ function normalizeYmd(value) {
   if (!raw) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   return "";
+}
+
+function sanitizeR2Prefix(value) {
+  const raw = asString(value).trim();
+  if (!raw) return "";
+  return raw
+    .split("/")
+    .map((segment) => asString(segment).trim())
+    .filter((segment) => Boolean(segment) && segment !== "." && segment !== "..")
+    .join("/");
+}
+
+function buildUploadKeyPrefix(rawPrefix) {
+  const base = sanitizeR2Prefix(rawPrefix) || "photos";
+  if (base.includes("/")) return base;
+  // Partition by upload time so object keys stay stable even if completedDate changes later.
+  const now = new Date();
+  const yyyy = String(now.getUTCFullYear());
+  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+  return `${base}/${yyyy}/${mm}`;
 }
 
 function isTruthyString(value) {
@@ -3070,7 +3091,7 @@ async function handleR2Upload(request, env) {
   const files = form.getAll("files");
   if (!files || files.length === 0) return badRequest("no files");
 
-  const prefix = asString(form.get("prefix")).trim() || "uploads";
+  const prefix = buildUploadKeyPrefix(form.get("prefix"));
 
   const results = [];
   for (const f of files) {
@@ -3152,16 +3173,15 @@ function collectRelatedR2Keys(imageKey) {
   const key = asString(imageKey).trim().replace(/^\/+/, "");
   if (!key) return [];
 
-  const prefixes = ["photos/", "photos-light/", "images/", "images-light/"];
   let suffix = null;
-  for (const prefix of prefixes) {
+  for (const prefix of IMAGE_KEY_PREFIXES) {
     if (!key.startsWith(prefix)) continue;
     suffix = key.slice(prefix.length);
     break;
   }
   if (!suffix) return [key];
 
-  const out = new Set(prefixes.map((prefix) => `${prefix}${suffix}`));
+  const out = new Set(IMAGE_KEY_PREFIXES.map((prefix) => `${prefix}${suffix}`));
   return Array.from(out.values());
 }
 

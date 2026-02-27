@@ -25,11 +25,11 @@ from urllib.parse import unquote, urlparse
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "src"))
 
-from auto_post.config import Config
-from auto_post.grouping import IMAGE_EXTENSIONS, get_photo_metadata
-from auto_post.notion_db import NotionDB
-from auto_post.r2_storage import R2Storage
-from auto_post.schedule_lookup import ScheduleLookup
+from auto_post.config import Config  # noqa: E402
+from auto_post.grouping import IMAGE_EXTENSIONS, get_photo_metadata  # noqa: E402
+from auto_post.notion_db import NotionDB  # noqa: E402
+from auto_post.r2_storage import R2Storage  # noqa: E402
+from auto_post.schedule_lookup import ScheduleLookup  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,6 +42,15 @@ logging.getLogger("botocore").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+KNOWN_R2_PREFIXES = (
+    "photos/",
+    "photos-light/",
+    "images/",
+    "images-light/",
+    "uploads/",
+    "uploads-light/",
+)
 
 
 def _extract_original_filename(r2_key: str) -> str:
@@ -76,17 +85,17 @@ def _url_to_r2_key(url: str, public_url: str) -> str | None:
         return None
     public_url = (public_url or "").rstrip("/")
     if public_url and url.startswith(f"{public_url}/"):
-        key = url[len(public_url):].lstrip("/")
+        key = url[len(public_url) :].lstrip("/")
         return unquote(key) if key else None
     parsed = urlparse(url)
     path = unquote(parsed.path.lstrip("/"))
-    if path.startswith(("photos/", "photos-light/", "images-light/", "images/")):
+    if path.startswith(KNOWN_R2_PREFIXES):
         return path
     return None
 
 
-def _list_all_r2_keys(r2: R2Storage, prefix: str = "photos/") -> list[str]:
-    keys = []
+def _list_r2_keys_with_prefix(r2: R2Storage, prefix: str) -> list[str]:
+    keys: list[str] = []
     client = r2._create_client()
     continuation_token = None
 
@@ -111,6 +120,16 @@ def _list_all_r2_keys(r2: R2Storage, prefix: str = "photos/") -> list[str]:
             break
 
     return keys
+
+
+def _list_all_r2_keys(
+    r2: R2Storage,
+    prefixes: tuple[str, ...] = KNOWN_R2_PREFIXES,
+) -> set[str]:
+    all_keys: set[str] = set()
+    for prefix in prefixes:
+        all_keys.update(_list_r2_keys_with_prefix(r2, prefix=prefix))
+    return all_keys
 
 
 def main():
@@ -139,7 +158,11 @@ def main():
     print("=" * 60)
 
     config = Config.load(env_file=args.env_file, allow_missing_instagram=True)
-    notion = NotionDB(config.notion.token, config.notion.database_id, config.notion.tags_database_id)
+    notion = NotionDB(
+        config.notion.token,
+        config.notion.database_id,
+        config.notion.tags_database_id,
+    )
     r2 = R2Storage(config.r2)
     public_url = config.r2.public_url or ""
 
@@ -183,9 +206,11 @@ def main():
     # Step 3: R2全オブジェクトリストから「孤立キー」を特定
     # ------------------------------------------------
     print("\n📦 R2バケットから全オブジェクトキーを取得中...")
-    all_r2_keys = set(_list_all_r2_keys(r2, prefix="photos/"))
+    all_r2_keys = _list_all_r2_keys(r2)
+    joined_prefixes = ", ".join(KNOWN_R2_PREFIXES)
     orphaned_r2_keys = all_r2_keys - notion_r2_keys
 
+    print(f"  対象prefix: {joined_prefixes}")
     print(f"  R2全体: {len(all_r2_keys)}")
     print(f"  孤立画像: {len(orphaned_r2_keys)} 件")
 
@@ -236,7 +261,7 @@ def main():
         for url in urls[:3]:
             print(f"    + {url}")
         if len(urls) > 3:
-            print(f"    ... 他 {len(urls)-3} 件")
+            print(f"    ... 他 {len(urls) - 3} 件")
 
     if not link_plan:
         print("\n✅ 連携可能な画像はありません。")
@@ -278,18 +303,23 @@ def main():
 
                 files_payload = existing_files.copy()
                 for i, url in enumerate(new_urls):
-                    files_payload.append({
-                        "type": "external",
-                        "name": f"image_{len(existing_files) + i + 1}",
-                        "external": {"url": url}
-                    })
+                    files_payload.append(
+                        {
+                            "type": "external",
+                            "name": f"image_{len(existing_files) + i + 1}",
+                            "external": {"url": url},
+                        }
+                    )
 
                 notion.client.pages.update(
-                    page_id=page_id,
-                    properties={"画像": {"files": files_payload}}
+                    page_id=page_id, properties={"画像": {"files": files_payload}}
                 )
                 notion_updated += 1
-                logger.info(f"Updated existing Notion page: {folder_name} (+{len(new_urls)} images)")
+                logger.info(
+                    "Updated existing Notion page: %s (+%s images)",
+                    folder_name,
+                    len(new_urls),
+                )
 
             else:
                 # 新規ページ作成
@@ -304,7 +334,12 @@ def main():
                     classroom=classroom,
                 )
                 notion_created += 1
-                logger.info(f"Created new Notion page: {folder_name} ({len(new_urls)} images, Date: {folder_timestamp})")
+                logger.info(
+                    "Created new Notion page: %s (%s images, Date: %s)",
+                    folder_name,
+                    len(new_urls),
+                    folder_timestamp,
+                )
 
         except Exception as e:
             errors += 1
@@ -316,6 +351,7 @@ def main():
     print(f"  Notion新規作成: {notion_created} ページ")
     print(f"  Notionページ更新: {notion_updated} ページ")
     print(f"  エラー: {errors} 件")
+
 
 if __name__ == "__main__":
     main()

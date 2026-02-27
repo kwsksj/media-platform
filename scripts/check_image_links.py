@@ -32,9 +32,9 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "src"))
 
-from auto_post.config import Config
-from auto_post.notion_db import NotionDB
-from auto_post.r2_storage import R2Storage
+from auto_post.config import Config  # noqa: E402
+from auto_post.notion_db import NotionDB  # noqa: E402
+from auto_post.r2_storage import R2Storage  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +54,8 @@ KNOWN_R2_PREFIXES = (
     "photos-light/",
     "images/",
     "images-light/",
+    "uploads/",
+    "uploads-light/",
     "thumbs/",
 )
 
@@ -96,7 +98,7 @@ def _url_to_r2_key(url: str, public_url: str) -> str | None:
 
     public_url = (public_url or "").rstrip("/")
     if public_url and url.startswith(f"{public_url}/"):
-        key = url[len(public_url):].lstrip("/")
+        key = url[len(public_url) :].lstrip("/")
         return urllib.parse.unquote(key) if key else None
 
     parsed = urllib.parse.urlparse(url)
@@ -234,7 +236,7 @@ def _extract_gallery_urls(gallery_data: dict | list) -> list[UrlRef]:
                         url=url.strip(),
                         source="gallery",
                         item_id=work_id,
-                        context=f"images[{i-1}]",
+                        context=f"images[{i - 1}]",
                     )
                 )
 
@@ -248,7 +250,7 @@ def _extract_gallery_urls(gallery_data: dict | list) -> list[UrlRef]:
                         url=url.strip(),
                         source="gallery",
                         item_id=work_id,
-                        context=f"images_light[{i-1}]",
+                        context=f"images_light[{i - 1}]",
                     )
                 )
 

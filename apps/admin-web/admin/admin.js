@@ -2756,7 +2756,7 @@ async function submitSingleUploadDraft(
 	try {
 		const form = new FormData();
 		orderedFiles.forEach((entry) => form.append("files", entry.file));
-		form.append("prefix", `uploads/${completedDate}`);
+		form.append("prefix", "photos");
 		const uploaded = await apiFetch("/admin/r2/upload", { method: "POST", body: form });
 		filesOut = uploaded?.files || [];
 		if (statusEl) statusEl.textContent = `${title || "作品"}: Notionへ登録中…`;
