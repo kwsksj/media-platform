@@ -71,3 +71,20 @@ def test_get_catchup_candidates_uses_ready_fallback_property_name():
     filters = _last_filters(db)
     assert {"property": "整備済", "checkbox": {"equals": True}} in filters
     assert {"property": "完成日", "date": {"on_or_after": "2025-01-01"}} in filters
+
+
+def test_is_page_ready_fallback_prefers_env_property(monkeypatch):
+    db = NotionDB("token", "works-db")
+    monkeypatch.setenv("NOTION_WORKS_READY_PROP", "公開可")
+
+    def _raise_schema_error():
+        raise RuntimeError("schema unavailable")
+
+    db._resolve_ready_property = _raise_schema_error  # type: ignore[method-assign]
+
+    props = {
+        "公開可": {"type": "checkbox", "checkbox": True},
+        "整備済み": {"type": "checkbox", "checkbox": False},
+    }
+
+    assert db._is_page_ready(props) is True

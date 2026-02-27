@@ -176,7 +176,11 @@ class NotionDB:
             # Fallback path below handles schema fetch failures gracefully.
             pass
 
-        for name in READY_PROP_CANDIDATES:
+        preferred = (os.getenv(READY_PROP_ENV) or READY_PROP_CANDIDATES[0]).strip()
+        candidates = list(
+            dict.fromkeys(name for name in (preferred, *READY_PROP_CANDIDATES) if name)
+        )
+        for name in candidates:
             ready = self._extract_ready_value(props.get(name))
             if ready is not None:
                 return ready
