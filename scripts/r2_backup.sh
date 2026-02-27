@@ -39,11 +39,21 @@ EXTRA_ARGS=()
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --source)
-      SOURCE_OVERRIDE="${2:-}"
+      NEXT_VALUE="${2:-}"
+      if [[ -z "$NEXT_VALUE" || "${NEXT_VALUE:0:1}" == "-" ]]; then
+        echo "Error: --source requires a value." >&2
+        exit 1
+      fi
+      SOURCE_OVERRIDE="$NEXT_VALUE"
       shift 2
       ;;
     --dest)
-      DEST_OVERRIDE="${2:-}"
+      NEXT_VALUE="${2:-}"
+      if [[ -z "$NEXT_VALUE" || "${NEXT_VALUE:0:1}" == "-" ]]; then
+        echo "Error: --dest requires a value." >&2
+        exit 1
+      fi
+      DEST_OVERRIDE="$NEXT_VALUE"
       shift 2
       ;;
     --help|-h)
@@ -72,14 +82,6 @@ if [[ -f ".env" ]]; then
   # shellcheck disable=SC1091
   source ".env"
   set +a
-  R2_REMOTE_NAME="${R2_REMOTE_NAME:-r2}"
-  R2_BUCKET_NAME="${R2_BUCKET_NAME:-}"
-  R2_BACKUP_REMOTE="${R2_BACKUP_REMOTE:-gdrive:media-platform-r2/current}"
-fi
-
-if [[ -z "$R2_BUCKET_NAME" && -z "$SOURCE_OVERRIDE" && -z "$DEST_OVERRIDE" ]]; then
-  echo "R2_BUCKET_NAME is required (unless both --source and --dest are provided)." >&2
-  exit 1
 fi
 
 R2_PATH="${R2_REMOTE_NAME}:${R2_BUCKET_NAME}"
@@ -87,20 +89,36 @@ R2_PATH="${R2_REMOTE_NAME}:${R2_BUCKET_NAME}"
 SOURCE=""
 DEST=""
 DRY_RUN=false
+USES_DEFAULT_R2_PATH=false
 
 case "$MODE" in
   backup)
-    SOURCE="${SOURCE_OVERRIDE:-$R2_PATH}"
+    if [[ -n "$SOURCE_OVERRIDE" ]]; then
+      SOURCE="$SOURCE_OVERRIDE"
+    else
+      SOURCE="$R2_PATH"
+      USES_DEFAULT_R2_PATH=true
+    fi
     DEST="${DEST_OVERRIDE:-$R2_BACKUP_REMOTE}"
     ;;
   backup-dry-run)
-    SOURCE="${SOURCE_OVERRIDE:-$R2_PATH}"
+    if [[ -n "$SOURCE_OVERRIDE" ]]; then
+      SOURCE="$SOURCE_OVERRIDE"
+    else
+      SOURCE="$R2_PATH"
+      USES_DEFAULT_R2_PATH=true
+    fi
     DEST="${DEST_OVERRIDE:-$R2_BACKUP_REMOTE}"
     DRY_RUN=true
     ;;
   restore-dry-run)
     SOURCE="${SOURCE_OVERRIDE:-$R2_BACKUP_REMOTE}"
-    DEST="${DEST_OVERRIDE:-$R2_PATH}"
+    if [[ -n "$DEST_OVERRIDE" ]]; then
+      DEST="$DEST_OVERRIDE"
+    else
+      DEST="$R2_PATH"
+      USES_DEFAULT_R2_PATH=true
+    fi
     DRY_RUN=true
     ;;
   *)
@@ -109,6 +127,11 @@ case "$MODE" in
     exit 1
     ;;
 esac
+
+if [[ "$USES_DEFAULT_R2_PATH" == "true" && -z "$R2_BUCKET_NAME" ]]; then
+  echo "R2_BUCKET_NAME is required unless the default R2 endpoint is fully overridden." >&2
+  exit 1
+fi
 
 RCLONE_ARGS=(
   copy
