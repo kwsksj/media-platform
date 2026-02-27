@@ -3024,27 +3024,60 @@ async function fetchCurationWorkSyncStatus(workIds) {
 			snapshotAt: "",
 		};
 	}
-	const res = await apiFetch("/admin/curation/work-sync-status", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ workIds: ids }),
-	});
-	const statusByWorkId = new Map(
-		(Array.isArray(res?.statuses) ? res.statuses : [])
-			.map((entry) => {
+
+	const batchSize = 200;
+	const statusByWorkId = new Map();
+	let pendingCount = 0;
+	let galleryLoaded = true;
+	let notificationStatusLoaded = true;
+	const notificationStatusReasons = new Set();
+	let snapshotAt = "";
+	let hadBatchError = false;
+
+	for (let offset = 0; offset < ids.length; offset += batchSize) {
+		const batchIds = ids.slice(offset, offset + batchSize);
+		try {
+			const res = await apiFetch("/admin/curation/work-sync-status", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ workIds: batchIds }),
+			});
+			const statuses = Array.isArray(res?.statuses) ? res.statuses : [];
+			for (const entry of statuses) {
 				const workId = trimText(entry?.workId);
-				if (!workId) return null;
-				return [workId, entry];
-			})
-			.filter(Boolean),
-	);
+				if (!workId) continue;
+				statusByWorkId.set(workId, entry);
+			}
+			pendingCount += Number(res?.pendingCount) || 0;
+			galleryLoaded = galleryLoaded && Boolean(res?.galleryLoaded);
+			notificationStatusLoaded = notificationStatusLoaded && Boolean(res?.notificationStatusLoaded);
+			const reason = trimText(res?.notificationStatusReason);
+			if (reason) notificationStatusReasons.add(reason);
+			const batchSnapshotAt = trimText(res?.snapshotAt);
+			if (batchSnapshotAt) snapshotAt = batchSnapshotAt;
+		} catch (error) {
+			hadBatchError = true;
+			console.error("failed to load curation work sync status batch", {
+				offset,
+				batchSize: batchIds.length,
+				message: trimText(error?.message),
+			});
+		}
+	}
+
+	if (hadBatchError) {
+		galleryLoaded = false;
+		notificationStatusLoaded = false;
+		notificationStatusReasons.add("batch_fetch_failed");
+	}
+
 	return {
 		statusByWorkId,
-		pendingCount: Number(res?.pendingCount) || 0,
-		galleryLoaded: Boolean(res?.galleryLoaded),
-		notificationStatusLoaded: Boolean(res?.notificationStatusLoaded),
-		notificationStatusReason: trimText(res?.notificationStatusReason),
-		snapshotAt: trimText(res?.snapshotAt),
+		pendingCount,
+		galleryLoaded,
+		notificationStatusLoaded,
+		notificationStatusReason: Array.from(notificationStatusReasons).join(","),
+		snapshotAt,
 	};
 }
 
