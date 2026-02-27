@@ -6,7 +6,6 @@ by looking up the schedule data from R2 (schedule_index.json).
 
 import logging
 from datetime import date, datetime
-from typing import Any
 
 from .config import Config
 from .monthly_schedule_models import ScheduleEntry, ScheduleJsonSourceConfig
@@ -54,7 +53,9 @@ class ScheduleLookup:
             return []
 
         entries = extract_month_entries_from_json(
-            data, year, month,
+            data,
+            year,
+            month,
             timezone=self._json_config.timezone,
         )
         self._cache[cache_key] = entries
@@ -109,8 +110,9 @@ class ScheduleLookup:
 
         return None, None
 
-    def preload_range(self, start_year: int, start_month: int,
-                      end_year: int, end_month: int) -> None:
+    def preload_range(
+        self, start_year: int, start_month: int, end_year: int, end_month: int
+    ) -> None:
         """Preload schedule data for a date range."""
         year, month = start_year, start_month
         while (year, month) <= (end_year, end_month):

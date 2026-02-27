@@ -26,6 +26,7 @@ dev = [
     "pytest-mock>=3.11.0",
     "ruff>=0.1.0",
     "mypy>=1.5.0",
+    "types-requests>=2.31.0.20240218",
 ]
 
 [project.scripts]

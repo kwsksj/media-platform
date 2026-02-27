@@ -3,13 +3,16 @@
 import logging
 import time
 
-import tweepy
+import tweepy  # type: ignore[import-untyped]
 
 from .config import X_MAX_IMAGES, XConfig
 
 logger = logging.getLogger(__name__)
 
-def _extract_tweepy_error_info(e: tweepy.TweepyException) -> tuple[int | None, object | None, str | None]:
+
+def _extract_tweepy_error_info(
+    e: tweepy.TweepyException,
+) -> tuple[int | None, object | None, str | None]:
     """Extract status/errors/body from TweepyException when available."""
     status = None
     api_errors = None
@@ -92,8 +95,11 @@ class XClient:
             if status is not None:
                 msg += f" (status {status})"
             raise XAPIError(msg) from e
-        logger.info(f"Uploaded media: {media.media_id_string}")
-        return media.media_id_string
+        media_id = str(getattr(media, "media_id_string", "") or "")
+        if not media_id:
+            raise XAPIError("Failed to upload media: missing media_id_string")
+        logger.info(f"Uploaded media: {media_id}")
+        return media_id
 
     def post_with_images(self, text: str, image_contents: list[tuple[bytes, str]]) -> str:
         """
@@ -125,7 +131,12 @@ class XClient:
         # Post tweet
         try:
             response = self.client.create_tweet(text=text, media_ids=media_ids)
-            tweet_id = response.data["id"]
+            data = getattr(response, "data", None)
+            tweet_id = ""
+            if isinstance(data, dict):
+                tweet_id = str(data.get("id") or "")
+            if not tweet_id:
+                raise XAPIError("Failed to post tweet: missing tweet id in response")
             logger.info(f"Posted tweet: {tweet_id}")
             return tweet_id
         except tweepy.TweepyException as e:
@@ -148,7 +159,12 @@ class XClient:
         """Post a text-only tweet."""
         try:
             response = self.client.create_tweet(text=text)
-            tweet_id = response.data["id"]
+            data = getattr(response, "data", None)
+            tweet_id = ""
+            if isinstance(data, dict):
+                tweet_id = str(data.get("id") or "")
+            if not tweet_id:
+                raise XAPIError("Failed to post tweet: missing tweet id in response")
             logger.info(f"Posted tweet: {tweet_id}")
             return tweet_id
         except tweepy.TweepyException as e:

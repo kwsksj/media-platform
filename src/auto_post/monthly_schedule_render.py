@@ -5,6 +5,7 @@ from __future__ import annotations
 import calendar
 import colorsys
 from pathlib import Path
+from typing import Any, cast
 
 from PIL import Image, ImageDraw, ImageEnhance
 
@@ -24,7 +25,6 @@ from .monthly_schedule_text import (
     _build_fixed_time_rows,
     _get_classroom_card_style,
     _get_venue_badge_style,
-    _is_night_time_text,
     _resolve_night_time_line_indexes,
     _short_classroom_name,
 )
@@ -105,10 +105,7 @@ def render_monthly_schedule_image(
     usable_grid_width = max(7, grid_width - col_gap * 6)
     cell_width_base = usable_grid_width // 7
     cell_width_remainder = usable_grid_width % 7
-    cell_widths = [
-        cell_width_base + (1 if col < cell_width_remainder else 0)
-        for col in range(7)
-    ]
+    cell_widths = [cell_width_base + (1 if col < cell_width_remainder else 0) for col in range(7)]
     grid_height = grid_bottom - grid_top
     cell_height = int((grid_height - row_gap * (row_count - 1)) / max(1, row_count))
     col_lefts: list[int] = []
@@ -238,12 +235,15 @@ def _apply_clear_warm_background_style(image: Image.Image) -> Image.Image:
         styled = styled.convert("RGB")
 
     pixels = styled.load()
+    if pixels is None:
+        return styled
     width, height = styled.size
     warm = (245, 226, 205)
     blend = 0.22
     for y in range(height):
         for x in range(width):
-            r, g, b = pixels[x, y]
+            raw_pixel = cast(tuple[Any, ...], pixels[x, y])
+            r, g, b = int(raw_pixel[0]), int(raw_pixel[1]), int(raw_pixel[2])
             _, s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
             # Warm up low-saturation bright areas (background/empty cells) while preserving card colors.
             if s < 0.22 and v > 0.70:
@@ -318,12 +318,16 @@ def _draw_day_events(
         class_y = card_rect[1] + 4
 
         classroom_text = _short_classroom_name(card.classroom) or "未定"
-        venue_badge: tuple[str, dict[str, tuple[int, int, int]], ScheduleFontSet, int, int] | None = None
+        venue_badge: (
+            tuple[str, dict[str, tuple[int, int, int]], ScheduleFontSet, int, int] | None
+        ) = None
         class_right = inner_right
         if card.venue:
             venue_style = _get_venue_badge_style(card.venue)
             max_badge_text_w = max(30, max_width // 2)
-            fit_badge_fonts = _fit_font_set_to_width(draw, card.venue, venue_badge_fonts, max_badge_text_w)
+            fit_badge_fonts = _fit_font_set_to_width(
+                draw, card.venue, venue_badge_fonts, max_badge_text_w
+            )
             badge_pad_top = 1
             badge_pad_bottom = 4
             badge_h = _mixed_font_height(draw, fit_badge_fonts) + badge_pad_top + badge_pad_bottom
@@ -333,8 +337,12 @@ def _draw_day_events(
             venue_badge = (card.venue, venue_style, fit_badge_fonts, badge_w, badge_h)
 
         class_area_w = max(10, class_right - class_x)
-        fit_classroom_fonts = _fit_font_set_to_width(draw, classroom_text, classroom_fonts, class_area_w)
-        _draw_mixed_text(draw, (class_x, class_y), classroom_text, fit_classroom_fonts, fill=class_style["text"])
+        fit_classroom_fonts = _fit_font_set_to_width(
+            draw, classroom_text, classroom_fonts, class_area_w
+        )
+        _draw_mixed_text(
+            draw, (class_x, class_y), classroom_text, fit_classroom_fonts, fill=class_style["text"]
+        )
         class_h = _mixed_font_height(draw, fit_classroom_fonts)
         class_bottom = class_y + class_h
 
@@ -362,10 +370,14 @@ def _draw_day_events(
             line_area_w = max(10, inner_right - line_x)
             if index in night_time_indexes:
                 badge_text = "夜"
-                fit_night_fonts = _fit_font_set_to_width(draw, badge_text, night_badge_fonts, max(16, line_area_w // 3))
+                fit_night_fonts = _fit_font_set_to_width(
+                    draw, badge_text, night_badge_fonts, max(16, line_area_w // 3)
+                )
                 night_pad_top = 1
                 night_pad_bottom = 4
-                night_badge_h = _mixed_font_height(draw, fit_night_fonts) + night_pad_top + night_pad_bottom
+                night_badge_h = (
+                    _mixed_font_height(draw, fit_night_fonts) + night_pad_top + night_pad_bottom
+                )
                 night_badge_w = _mixed_text_width(draw, badge_text, fit_night_fonts) + 12
                 night_y = line_y + max(0, (line_h - night_badge_h) // 2)
                 night_rect = (line_x, night_y, line_x + night_badge_w, night_y + night_badge_h)
@@ -382,7 +394,9 @@ def _draw_day_events(
 
             if value:
                 fit_line_fonts = _fit_font_set_to_width(draw, value, time_fonts, line_area_w)
-                regular_time_fonts_for_card = _pick_smaller_font_set(regular_time_fonts_for_card, fit_line_fonts)
+                regular_time_fonts_for_card = _pick_smaller_font_set(
+                    regular_time_fonts_for_card, fit_line_fonts
+                )
                 _draw_mixed_text(
                     draw,
                     (line_x, line_y),
@@ -396,7 +410,9 @@ def _draw_day_events(
             line_y += beginner_gap
             if beginner_time:
                 beginner_title = "はじめての方"
-                fit_beginner_title_fonts = _fit_font_set_to_width(draw, beginner_title, beginner_label_fonts, max(10, inner_right - inner_x))
+                fit_beginner_title_fonts = _fit_font_set_to_width(
+                    draw, beginner_title, beginner_label_fonts, max(10, inner_right - inner_x)
+                )
                 _draw_mixed_text(
                     draw,
                     (class_x, line_y),
@@ -433,7 +449,9 @@ def _draw_day_events(
         )
 
 
-def _pick_smaller_font_set(current: ScheduleFontSet | None, candidate: ScheduleFontSet) -> ScheduleFontSet:
+def _pick_smaller_font_set(
+    current: ScheduleFontSet | None, candidate: ScheduleFontSet
+) -> ScheduleFontSet:
     if current is None:
         return candidate
     current_size = int(getattr(current.num_font, "size", 0))

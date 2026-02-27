@@ -4,7 +4,7 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Callable
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 import requests
@@ -209,6 +209,7 @@ class Poster:
                     f"Retrying in {wait_seconds:.1f}s"
                 )
                 time.sleep(wait_seconds)
+        raise RuntimeError(f"{platform} post retry loop exited without result")
 
     def _add_candidates_to_queue(
         self,
@@ -276,9 +277,9 @@ class Poster:
         all_supported_platforms = ["instagram", "x", "threads"]
 
         # Queues per platform (stores page_ids)
-        platform_queues = {p: [] for p in all_supported_platforms}
+        platform_queues: dict[str, list[str]] = {p: [] for p in all_supported_platforms}
         # Central registry of WorkItems (page_id -> WorkItem)
-        unique_works = {}
+        unique_works: dict[str, WorkItem] = {}
 
         # --- Phase 1: Selection ---
 
@@ -355,7 +356,7 @@ class Poster:
 
         # --- Phase 2: Processing ---
 
-        results = {
+        results: dict[str, list[str]] = {
             "processed": [],
             "ig_success": [],
             "x_success": [],
@@ -416,8 +417,8 @@ class Poster:
         all_supported_platforms = ["instagram", "x", "threads"]
 
         # Queues per platform
-        platform_queues = {p: [] for p in all_supported_platforms}
-        unique_works = {}
+        platform_queues: dict[str, list[str]] = {p: [] for p in all_supported_platforms}
+        unique_works: dict[str, WorkItem] = {}
 
         logger.info(f"Starting catch-up post (Limit: {limit}, Platforms: {target_platforms})")
 
@@ -435,7 +436,7 @@ class Poster:
                 logger.info(f"[{p}] Added {added_count} catch-up posts")
 
         # Process each work
-        results = {
+        results: dict[str, list[str]] = {
             "processed": [],
             "ig_success": [],
             "x_success": [],
@@ -482,7 +483,7 @@ class Poster:
         self, post: WorkItem, dry_run: bool = False, platforms: list[str] | None = None
     ) -> dict:
         """Process a single post. Returns dict of success status by platform."""
-        status = {"instagram": False, "x": False, "threads": False, "errors": []}
+        status: dict[str, Any] = {"instagram": False, "x": False, "threads": False, "errors": []}
 
         if platforms is None:
             platforms = ["instagram", "threads", "x"]  # Default to all
@@ -689,7 +690,13 @@ class Poster:
 
         This path does not read/update Notion posting states.
         """
-        status = {"instagram": False, "x": False, "threads": False, "post_ids": {}, "errors": []}
+        status: dict[str, Any] = {
+            "instagram": False,
+            "x": False,
+            "threads": False,
+            "post_ids": {},
+            "errors": [],
+        }
 
         if not images_data:
             raise ValueError("images_data must not be empty")

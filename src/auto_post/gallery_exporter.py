@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import io
 import hashlib
+import io
 import logging
 import os
 import re
@@ -52,6 +52,7 @@ READY_PROP_CANDIDATES = (
     "整備済み",
     "整備済",
 )
+RESAMPLE_LANCZOS = Image.Resampling.LANCZOS
 
 
 @dataclass
@@ -174,7 +175,7 @@ class GalleryExporter:
                 continue
             normalized = str(name or "").strip().lower()
             if "整備済" in normalized or "ready" in normalized:
-                return name
+                return str(name)
 
         raise ValueError(
             "Ready property not found. "
@@ -206,7 +207,11 @@ class GalleryExporter:
         if prop.get("type") != "relation":
             logger.warning("Property %s is not relation (type=%s)", prop_name, prop.get("type"))
             return None
-        return prop.get("relation", {}).get("database_id")
+        relation = prop.get("relation")
+        if not isinstance(relation, dict):
+            return None
+        database_id = relation.get("database_id")
+        return database_id if isinstance(database_id, str) else None
 
     def _parse_work_page(
         self,
@@ -224,7 +229,11 @@ class GalleryExporter:
     ) -> dict | None:
         props = page.get("properties", {})
 
-        work_id = page.get("id")
+        work_id_raw = page.get("id")
+        if not isinstance(work_id_raw, str):
+            logger.warning("Invalid work id: %s", work_id_raw)
+            return None
+        work_id = work_id_raw
         title = self._get_title_from_props(props, "作品名")
 
         completed_date = self._get_date(props, "完成日")
@@ -347,7 +356,11 @@ class GalleryExporter:
         if prop_type == "rich_text":
             return "".join(item.get("plain_text", "") for item in prop.get("rich_text", [])).strip()
         if prop_type == "select":
-            return (prop.get("select", {}) or {}).get("name", "").strip()
+            select = prop.get("select")
+            if isinstance(select, dict):
+                name = select.get("name")
+                return str(name or "").strip()
+            return ""
         if prop_type == "number":
             return self._stringify_number(prop.get("number"))
         if prop_type == "unique_id":
@@ -400,13 +413,16 @@ class GalleryExporter:
     def _get_date(self, props: dict, key: str) -> str | None:
         date_obj = props.get(key, {}).get("date")
         if date_obj and date_obj.get("start"):
-            return date_obj["start"][:10]
+            start = date_obj.get("start")
+            if isinstance(start, str):
+                return start[:10]
         return None
 
     def _get_select(self, props: dict, key: str) -> str | None:
         sel = props.get(key, {}).get("select")
-        if sel:
-            return sel.get("name")
+        if isinstance(sel, dict):
+            name = sel.get("name")
+            return str(name) if name is not None else None
         return None
 
     def _get_rich_text(self, props: dict, key: str) -> str | None:
@@ -466,12 +482,11 @@ class GalleryExporter:
         try:
             resp = requests.get(image_url, timeout=30)
             resp.raise_for_status()
-            image = Image.open(io.BytesIO(resp.content))
-            image = ImageOps.exif_transpose(image)
+            image_src = Image.open(io.BytesIO(resp.content))
+            image: Image.Image = ImageOps.exif_transpose(image_src)
             image = self._center_crop(image, THUMB_RATIO)
-            image = image.resize(
-                (thumb_width, int(thumb_width / THUMB_RATIO)), Image.LANCZOS
-            ).convert("RGB")
+            image = image.resize((thumb_width, int(thumb_width / THUMB_RATIO)), RESAMPLE_LANCZOS)
+            image = image.convert("RGB")
 
             buf = io.BytesIO()
             image.save(buf, format="JPEG", quality=80)
@@ -505,9 +520,7 @@ class GalleryExporter:
             query_pairs = []
         else:
             query_pairs = [
-                (k, v)
-                for (k, v) in query_pairs
-                if k.lower() not in VOLATILE_QUERY_PARAM_KEYS
+                (k, v) for (k, v) in query_pairs if k.lower() not in VOLATILE_QUERY_PARAM_KEYS
             ]
 
         normalized_query = urlencode(sorted(query_pairs), doseq=True)
@@ -543,8 +556,8 @@ class GalleryExporter:
         try:
             resp = requests.get(image_url, timeout=30)
             resp.raise_for_status()
-            image = Image.open(io.BytesIO(resp.content))
-            image = ImageOps.exif_transpose(image)
+            image_src = Image.open(io.BytesIO(resp.content))
+            image: Image.Image = ImageOps.exif_transpose(image_src)
             image = self._convert_to_rgb(image)
             image = self._resize_to_max(image, max_size)
 
@@ -584,12 +597,10 @@ class GalleryExporter:
         scale = max_size / longest
         new_width = max(1, int(width * scale))
         new_height = max(1, int(height * scale))
-        return image.resize((new_width, new_height), Image.LANCZOS)
+        return image.resize((new_width, new_height), RESAMPLE_LANCZOS)
 
     def _convert_to_rgb(self, image: Image.Image) -> Image.Image:
-        if image.mode in ("RGBA", "LA") or (
-            image.mode == "P" and "transparency" in image.info
-        ):
+        if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
             background = Image.new("RGB", image.size, (255, 255, 255))
             alpha = image.split()[-1]
             background.paste(image, mask=alpha)

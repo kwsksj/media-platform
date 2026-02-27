@@ -1,5 +1,6 @@
-import click
 from pathlib import Path
+
+import click
 
 from auto_post.cli import (
     MonthlyScheduleItem,

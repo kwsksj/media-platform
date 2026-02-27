@@ -4,11 +4,14 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from notion_client import Client
 
 logger = logging.getLogger(__name__)
+
+JsonDict = dict[str, Any]
 
 PLATFORM_POSTED_PROPERTY = {
     "instagram": "Instagram投稿済",
@@ -54,8 +57,8 @@ class NotionDB:
         self.client = Client(auth=token, notion_version="2022-06-28")
         self.database_id = database_id
         self.tags_database_id = tags_database_id
-        self.known_properties = None
-        self._property_schema = None
+        self.known_properties: set[str] | None = None
+        self._property_schema: dict[str, JsonDict] | None = None
         self._schema_fetch_failed = False
         self._ready_property_name: str | None = None
         self._ready_property_type: str | None = None
@@ -64,7 +67,11 @@ class NotionDB:
         if self._property_schema is None:
             try:
                 db = self.get_database_info()
-                self._property_schema = db.get("properties", {})
+                raw_properties = db.get("properties", {})
+                if isinstance(raw_properties, dict):
+                    self._property_schema = cast(dict[str, JsonDict], raw_properties)
+                else:
+                    self._property_schema = {}
                 self.known_properties = set(self._property_schema.keys())
                 self._schema_fetch_failed = False
             except Exception as e:
@@ -94,7 +101,10 @@ class NotionDB:
     def _get_relation_database_id(self, prop_name: str) -> str | None:
         schema = self._get_property_schema(prop_name)
         if schema and schema.get("type") == "relation":
-            return schema.get("relation", {}).get("database_id")
+            relation = schema.get("relation")
+            if isinstance(relation, dict):
+                database_id = relation.get("database_id")
+                return database_id if isinstance(database_id, str) else None
         return None
 
     def _is_ready_schema_type(self, schema: dict | None) -> bool:
@@ -203,18 +213,22 @@ class NotionDB:
                 return existing
 
             # Create new page
-            db = self.client.databases.retrieve(database_id)
+            db = cast(JsonDict, self.client.databases.retrieve(database_id))
             title_prop = self.get_title_property_name(db)
             if not title_prop:
                 logger.warning("No title property for database %s", database_id)
                 return None
-            create_resp = self.client.pages.create(
-                parent={"database_id": database_id},
-                properties={
-                    title_prop: {"title": [{"text": {"content": title}}]},
-                },
+            create_resp = cast(
+                JsonDict,
+                self.client.pages.create(
+                    parent={"database_id": database_id},
+                    properties={
+                        title_prop: {"title": [{"text": {"content": title}}]},
+                    },
+                ),
             )
-            return create_resp["id"]
+            page_id = create_resp.get("id")
+            return page_id if isinstance(page_id, str) else None
         except Exception as e:
             logger.warning("Failed to get/create page '%s' in %s: %s", title, database_id, e)
             return None
@@ -222,22 +236,29 @@ class NotionDB:
     def _find_page_id_by_title(self, database_id: str, title: str) -> str | None:
         """Find a page in a database by its title property."""
         try:
-            db = self.client.databases.retrieve(database_id)
+            db = cast(JsonDict, self.client.databases.retrieve(database_id))
             title_prop = self.get_title_property_name(db)
             if not title_prop:
                 return None
-            response = self.client.request(
-                path=f"databases/{database_id}/query",
-                method="POST",
-                body={
-                    "filter": {
-                        "property": title_prop,
-                        "title": {"equals": title},
-                    }
-                },
+            response = cast(
+                JsonDict,
+                self.client.request(
+                    path=f"databases/{database_id}/query",
+                    method="POST",
+                    body={
+                        "filter": {
+                            "property": title_prop,
+                            "title": {"equals": title},
+                        }
+                    },
+                ),
             )
-            if response.get("results"):
-                return response["results"][0]["id"]
+            results = response.get("results")
+            if isinstance(results, list) and results:
+                first = results[0]
+                if isinstance(first, dict):
+                    page_id = first.get("id")
+                    return page_id if isinstance(page_id, str) else None
             return None
         except Exception as e:
             logger.warning("Failed to find page '%s' in %s: %s", title, database_id, e)
@@ -363,49 +384,72 @@ class NotionDB:
         if image_urls:
             page_cover = {"type": "external", "external": {"url": image_urls[0]}}
 
-        response = self.client.pages.create(
-            parent={"database_id": self.database_id},
-            properties=properties,
-            cover=page_cover,
+        response = cast(
+            JsonDict,
+            self.client.pages.create(
+                parent={"database_id": self.database_id},
+                properties=properties,
+                cover=page_cover,
+            ),
         )
 
-        logger.info(f"Created Notion page: {response['id']}")
-        return response["id"]
+        page_id = response.get("id")
+        if not isinstance(page_id, str):
+            raise RuntimeError("Failed to create Notion page: missing page id")
+        logger.info(f"Created Notion page: {page_id}")
+        return page_id
 
     def get_posts_for_date(self, target_date: datetime) -> list[WorkItem]:
         """Get posts scheduled for a specific date."""
         date_str = target_date.strftime("%Y-%m-%d")
         ready_filter = self._build_ready_filter()
 
-        response = self.client.request(
-            path=f"databases/{self.database_id}/query",
-            method="POST",
-            body={
-                "filter": {
-                    "and": [
-                        {
-                            "property": "投稿予定日",
-                            "date": {"equals": date_str},
-                        },
-                        {"property": "スキップ", "checkbox": {"equals": False}},
-                        ready_filter,
-                        self._build_min_completed_date_filter(),
-                    ]
-                }
-            },
+        response = cast(
+            JsonDict,
+            self.client.request(
+                path=f"databases/{self.database_id}/query",
+                method="POST",
+                body={
+                    "filter": {
+                        "and": [
+                            {
+                                "property": "投稿予定日",
+                                "date": {"equals": date_str},
+                            },
+                            {"property": "スキップ", "checkbox": {"equals": False}},
+                            ready_filter,
+                            self._build_min_completed_date_filter(),
+                        ]
+                    }
+                },
+            ),
         )
 
-        return [self._parse_page(page) for page in response["results"]]
+        results = response.get("results", [])
+        if not isinstance(results, list):
+            return []
+        return [self._parse_page(cast(dict[str, Any], page)) for page in results]
 
     def _fetch_page_title(self, page_id: str) -> str:
         """Fetch a page and return its title."""
         try:
-            page = self.client.pages.retrieve(page_id)
+            page = cast(JsonDict, self.client.pages.retrieve(page_id))
             # Inspect properties to find title
             # Title property key is variable, but type is 'title'
-            for prop in page["properties"].values():
-                if prop["type"] == "title":
-                    return prop["title"][0]["plain_text"] if prop["title"] else ""
+            properties = page.get("properties")
+            if not isinstance(properties, dict):
+                return ""
+            for prop in properties.values():
+                if not isinstance(prop, dict):
+                    continue
+                if prop.get("type") == "title":
+                    title_items = prop.get("title")
+                    if isinstance(title_items, list) and title_items:
+                        first = title_items[0]
+                        if isinstance(first, dict):
+                            plain_text = first.get("plain_text")
+                            return plain_text if isinstance(plain_text, str) else ""
+                    return ""
             return ""
         except Exception as e:
             logger.warning(f"Failed to fetch title for page {page_id}: {e}")
@@ -538,7 +582,7 @@ class NotionDB:
         posted_date: datetime | None = None,
     ):
         """Update the post status in Notion."""
-        properties = {}
+        properties: dict[str, Any] = {}
 
         if ig_posted is not None:
             properties["Instagram投稿済"] = {"checkbox": ig_posted}
@@ -580,8 +624,9 @@ class NotionDB:
 
         if error_log is not None:
             # Append to existing error log
-            page = self.client.pages.retrieve(page_id)
-            current_log = self._get_rich_text(page["properties"], "エラーログ") or ""
+            page = cast(JsonDict, self.client.pages.retrieve(page_id))
+            page_props = cast(dict[str, Any], page.get("properties", {}))
+            current_log = self._get_rich_text(page_props, "エラーログ") or ""
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
             new_entry = f"{timestamp} | {error_log}"
             updated_log = f"{current_log}\n{new_entry}" if current_log else new_entry
@@ -595,7 +640,7 @@ class NotionDB:
         self, filter_student: str | None = None, only_unposted: bool = False
     ) -> list[WorkItem]:
         """List all work items, optionally filtered."""
-        filters = []
+        filters: list[dict[str, Any]] = []
 
         if filter_student:
             # Try both potentially
@@ -627,36 +672,47 @@ class NotionDB:
                 }
             )
 
-        query_params = {"database_id": self.database_id}
+        query_filter: dict[str, Any] | None = None
         if filters:
-            query_params["filter"] = {"and": filters} if len(filters) > 1 else filters[0]
+            query_filter = {"and": filters} if len(filters) > 1 else filters[0]
 
-        response = self.client.request(
-            path=f"databases/{self.database_id}/query",
-            method="POST",
-            body=query_params.get("filter") and {"filter": query_params["filter"]} or {},
+        response = cast(
+            JsonDict,
+            self.client.request(
+                path=f"databases/{self.database_id}/query",
+                method="POST",
+                body={"filter": query_filter} if query_filter else {},
+            ),
         )
-        return [self._parse_page(page) for page in response["results"]]
+        results = response.get("results", [])
+        if not isinstance(results, list):
+            return []
+        return [self._parse_page(cast(dict[str, Any], page)) for page in results]
 
     def get_database_info(self, database_id: str | None = None) -> dict:
         """Get database schema information."""
         target_database_id = database_id or self.database_id
-        return self.client.databases.retrieve(target_database_id)
+        return cast(JsonDict, self.client.databases.retrieve(target_database_id))
 
     def list_database_pages(self, database_id: str) -> list[dict]:
         """List all pages in a Notion database with pagination."""
-        pages = []
+        pages: list[dict[str, Any]] = []
         start_cursor = None
         while True:
-            body = {}
+            body: dict[str, Any] = {}
             if start_cursor:
                 body["start_cursor"] = start_cursor
-            response = self.client.request(
-                path=f"databases/{database_id}/query",
-                method="POST",
-                body=body,
+            response = cast(
+                JsonDict,
+                self.client.request(
+                    path=f"databases/{database_id}/query",
+                    method="POST",
+                    body=body,
+                ),
             )
-            pages.extend(response.get("results", []))
+            results = response.get("results", [])
+            if isinstance(results, list):
+                pages.extend(cast(list[dict[str, Any]], results))
             if response.get("has_more"):
                 start_cursor = response.get("next_cursor")
             else:
@@ -666,13 +722,13 @@ class NotionDB:
     def get_title_property_name(self, database_info: dict) -> str | None:
         """Get the title property name from a database schema."""
         for prop_name, prop in database_info.get("properties", {}).items():
-            if prop.get("type") == "title":
-                return prop_name
+            if isinstance(prop, dict) and prop.get("type") == "title":
+                return str(prop_name)
         return None
 
     def get_database_title_map(self, database_id: str) -> dict[str, str]:
         """Build a map of page_id -> title for a given database."""
-        db_info = self.client.databases.retrieve(database_id)
+        db_info = cast(JsonDict, self.client.databases.retrieve(database_id))
         title_prop = self.get_title_property_name(db_info)
         if not title_prop:
             logger.warning("No title property found for database %s", database_id)
@@ -708,7 +764,7 @@ class NotionDB:
         if platforms is None or len(platforms) == 0:
             platforms = ["instagram", "threads"]  # X is excluded by default
 
-        platform_filters = []
+        platform_filters: list[dict[str, Any]] = []
         platform_prop_map = {
             "instagram": "Instagram投稿済",
             "x": "X投稿済",
@@ -720,7 +776,7 @@ class NotionDB:
                 platform_filters.append({"property": prop_name, "checkbox": {"equals": False}})
 
         # Build full filter
-        base_filters = [
+        base_filters: list[dict[str, Any]] = [
             # No scheduled date
             {
                 "property": "投稿予定日",
@@ -738,21 +794,27 @@ class NotionDB:
         elif len(platform_filters) == 1:
             base_filters.append(platform_filters[0])
 
-        response = self.client.request(
-            path=f"databases/{self.database_id}/query",
-            method="POST",
-            body={
-                "filter": {"and": base_filters},
-                # Sort by 完成日 ascending (oldest first), then Created Time ascending (Oldest first for same day)
-                "sorts": [
-                    {"property": "完成日", "direction": "ascending"},
-                    {"timestamp": "created_time", "direction": "ascending"},
-                ],
-                "page_size": limit,
-            },
+        response = cast(
+            JsonDict,
+            self.client.request(
+                path=f"databases/{self.database_id}/query",
+                method="POST",
+                body={
+                    "filter": {"and": base_filters},
+                    # Sort by 完成日 ascending (oldest first), then Created Time ascending (Oldest first for same day)
+                    "sorts": [
+                        {"property": "完成日", "direction": "ascending"},
+                        {"timestamp": "created_time", "direction": "ascending"},
+                    ],
+                    "page_size": limit,
+                },
+            ),
         )
 
-        return [self._parse_page(page) for page in response["results"]]
+        results = response.get("results", [])
+        if not isinstance(results, list):
+            return []
+        return [self._parse_page(cast(dict[str, Any], page)) for page in results]
 
     def find_page_by_title(self, title: str) -> str | None:
         """
@@ -761,18 +823,28 @@ class NotionDB:
         """
         try:
             # Search for the string (fuzzy match)
-            response = self.client.search(
-                query=title, filter={"property": "object", "value": "page"}
+            response = cast(
+                JsonDict,
+                self.client.search(query=title, filter={"property": "object", "value": "page"}),
             )
 
-            for result in response["results"]:
+            results = response.get("results", [])
+            if not isinstance(results, list):
+                return None
+
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
                 # 1. Check if it belongs to OUR database
                 parent = result.get("parent")
-                if not parent or parent.get("type") != "database_id":
+                if not isinstance(parent, dict) or parent.get("type") != "database_id":
                     continue
 
                 # Normalize dashes in IDs for comparison
-                res_db_id = parent["database_id"].replace("-", "")
+                database_id = parent.get("database_id")
+                if not isinstance(database_id, str):
+                    continue
+                res_db_id = database_id.replace("-", "")
                 target_db_id = self.database_id.replace("-", "")
 
                 if res_db_id != target_db_id:
@@ -782,7 +854,8 @@ class NotionDB:
                 # Use _parse_page logic to safely extract title?
                 work_item = self._parse_page(result)
                 if work_item.work_name == title:
-                    return result["id"]
+                    result_id = result.get("id")
+                    return result_id if isinstance(result_id, str) else None
 
         except Exception as e:
             logger.error(f"Error searching page by title '{title}': {e}")
@@ -790,15 +863,11 @@ class NotionDB:
 
     def update_work_location(self, page_id: str, classroom: str) -> None:
         """Update the location (Classroom) for an existing work."""
-        properties = {}
-        tag_names = set()
+        properties: dict[str, Any] = {}
 
         # 1. Update Classroom Property
         if self._is_property_valid("教室"):
             properties["教室"] = {"select": {"name": classroom}}
-
-        # 2. Add to Tags (Relation or Multi-select)
-        tag_names.add(classroom)
 
         # Retrieve existing tags to preserve them?
         # Ideally yes, but merging relations is tricky without fetching first.
@@ -813,22 +882,36 @@ class NotionDB:
         # Or better: Fetch page -> get current tags -> append -> update.
 
         # Fetch current page details
-        page = self.client.pages.retrieve(page_id)
-        current_relation_ids = []
+        page = cast(JsonDict, self.client.pages.retrieve(page_id))
+        page_properties = cast(dict[str, Any], page.get("properties", {}))
+        current_relation_ids: list[dict[str, str]] = []
 
         # Check current Relation
         # Assuming "タグ" is Relation property key
         # (This relies on property name being valid)
-        if "タグ" in page["properties"] and page["properties"]["タグ"]["type"] == "relation":
-            current_relation_ids = [{"id": r["id"]} for r in page["properties"]["タグ"]["relation"]]
+        tag_prop = page_properties.get("タグ")
+        if isinstance(tag_prop, dict) and tag_prop.get("type") == "relation":
+            relation_values = tag_prop.get("relation", [])
+            if isinstance(relation_values, list):
+                current_relation_ids = [
+                    {"id": str(r["id"])}
+                    for r in relation_values
+                    if isinstance(r, dict) and isinstance(r.get("id"), str)
+                ]
 
         # Check Multi-select
         current_ms_names = set()
-        if "タグ" in page["properties"] and page["properties"]["タグ"]["type"] == "multi_select":
-            current_ms_names = {opt["name"] for opt in page["properties"]["タグ"]["multi_select"]}
+        if isinstance(tag_prop, dict) and tag_prop.get("type") == "multi_select":
+            multi_values = tag_prop.get("multi_select", [])
+            if isinstance(multi_values, list):
+                current_ms_names = {
+                    str(opt["name"])
+                    for opt in multi_values
+                    if isinstance(opt, dict) and isinstance(opt.get("name"), str)
+                }
 
         # Prepare new tag
-        tag_prop_type = page["properties"].get("タグ", {}).get("type")
+        tag_prop_type = tag_prop.get("type") if isinstance(tag_prop, dict) else None
         relation_db_id = self._get_relation_database_id("タグ") or self.tags_database_id
         relation_used = False
         if tag_prop_type == "relation" and relation_db_id:
@@ -858,7 +941,7 @@ class NotionDB:
             return None
         return target_prop
 
-    def _build_unposted_filters(self, target_prop: str) -> list[dict]:
+    def _build_unposted_filters(self, target_prop: str) -> list[dict[str, Any]]:
         return [
             {"property": target_prop, "checkbox": {"equals": False}},
             {
@@ -870,20 +953,26 @@ class NotionDB:
             self._build_min_completed_date_filter(),
         ]
 
-    def _query_candidates(self, filters: list[dict], limit: int) -> list[WorkItem]:
-        response = self.client.request(
-            path=f"databases/{self.database_id}/query",
-            method="POST",
-            body={
-                "filter": {"and": filters},
-                "sorts": [
-                    {"property": "完成日", "direction": "ascending"},
-                    {"timestamp": "created_time", "direction": "ascending"},
-                ],
-                "page_size": limit,
-            },
+    def _query_candidates(self, filters: list[dict[str, Any]], limit: int) -> list[WorkItem]:
+        response = cast(
+            JsonDict,
+            self.client.request(
+                path=f"databases/{self.database_id}/query",
+                method="POST",
+                body={
+                    "filter": {"and": filters},
+                    "sorts": [
+                        {"property": "完成日", "direction": "ascending"},
+                        {"timestamp": "created_time", "direction": "ascending"},
+                    ],
+                    "page_size": limit,
+                },
+            ),
         )
-        return [self._parse_page(page) for page in response["results"]]
+        results = response.get("results", [])
+        if not isinstance(results, list):
+            return []
+        return [self._parse_page(cast(dict[str, Any], page)) for page in results]
 
     def get_catchup_candidates(
         self, target_platform: str, other_platforms: list[str], limit: int = 10
