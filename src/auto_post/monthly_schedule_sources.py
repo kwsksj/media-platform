@@ -21,7 +21,9 @@ class MonthlyScheduleNotionClient:
         self.source = source
         self._title_property_name: str | None = source.title_property or None
 
-    def fetch_month_entries(self, year: int, month: int, *, include_adjacent: bool = False) -> list[ScheduleEntry]:
+    def fetch_month_entries(
+        self, year: int, month: int, *, include_adjacent: bool = False
+    ) -> list[ScheduleEntry]:
         first_day = date(year, month, 1)
         next_month = (first_day.replace(day=28) + timedelta(days=4)).replace(day=1)
         last_day = next_month - timedelta(days=1)
@@ -212,7 +214,17 @@ def _build_entry_from_any_date(item: Any, tz: ZoneInfo) -> ScheduleEntry | None:
     day = None
     start_dt = None
     end_dt = None
-    date_keys = ["date", "day", "ymd", "date_ymd", "日付", "start", "start_at", "starts_at", "startAt"]
+    date_keys = [
+        "date",
+        "day",
+        "ymd",
+        "date_ymd",
+        "日付",
+        "start",
+        "start_at",
+        "starts_at",
+        "startAt",
+    ]
     for key in date_keys:
         raw = item.get(key)
         if raw is None:
@@ -252,7 +264,9 @@ def _build_entry_from_dict(
 
     classroom = _pick_text(item, ["classroom", "classroom_name", "studio", "教室"])
     venue = _pick_text(item, ["venue", "venue_name", "会場", "location"])
-    title = _pick_text(item, ["title", "name", "label", "event_name", "lesson_name", "lesson", "type"])
+    title = _pick_text(
+        item, ["title", "name", "label", "event_name", "lesson_name", "lesson", "type"]
+    )
     slot = _pick_text(item, ["slot", "time_slot", "part", "部", "時間帯"])
 
     if not title:
@@ -325,35 +339,37 @@ def _build_entry_from_dict(
     )
 
 
-def _parse_json_datetime(raw: Any, tz: ZoneInfo, base_day: date | None = None) -> tuple[date | None, datetime | None]:
+def _parse_json_datetime(
+    raw: Any, tz: ZoneInfo, base_day: date | None = None
+) -> tuple[date | None, datetime | None]:
     if raw is None:
         return None, None
 
     if isinstance(raw, datetime):
-        value = raw.astimezone(tz) if raw.tzinfo else raw.replace(tzinfo=tz)
-        return value.date(), value
+        parsed_dt = raw.astimezone(tz) if raw.tzinfo else raw.replace(tzinfo=tz)
+        return parsed_dt.date(), parsed_dt
     if isinstance(raw, date):
         return raw, None
 
-    value = str(raw).strip()
-    if not value:
+    text = str(raw).strip()
+    if not text:
         return None, None
 
-    if value.endswith("Z"):
-        value = value[:-1] + "+00:00"
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
 
-    if "T" in value:
+    if "T" in text:
         try:
-            parsed = datetime.fromisoformat(value)
+            parsed = datetime.fromisoformat(text)
             parsed = parsed.astimezone(tz) if parsed.tzinfo else parsed.replace(tzinfo=tz)
             return parsed.date(), parsed
         except ValueError:
             return None, None
 
     # HH:MM style (time only)
-    if len(value) <= 8 and ":" in value:
+    if len(text) <= 8 and ":" in text:
         try:
-            parsed_time = datetime.strptime(value, "%H:%M").time()
+            parsed_time = datetime.strptime(text, "%H:%M").time()
             day = base_day or datetime.now(tz=tz).date()
             combined = datetime.combine(day, parsed_time, tz)
             return combined.date(), combined
@@ -361,13 +377,13 @@ def _parse_json_datetime(raw: Any, tz: ZoneInfo, base_day: date | None = None) -
             return None, None
 
     # Date-only style.
-    parsed_day = _parse_date_ymd(value)
+    parsed_day = _parse_date_ymd(text)
     if parsed_day:
         return parsed_day, None
 
     # Last try for variants like "YYYY-MM-DD HH:MM".
     try:
-        parsed = datetime.fromisoformat(value.replace(" ", "T"))
+        parsed = datetime.fromisoformat(text.replace(" ", "T"))
         parsed = parsed.astimezone(tz) if parsed.tzinfo else parsed.replace(tzinfo=tz)
         return parsed.date(), parsed
     except ValueError:

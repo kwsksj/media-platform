@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any
 from zoneinfo import ZoneInfo
 
 from PIL import ImageFont
@@ -59,9 +58,11 @@ class ScheduleSourceConfig:
             database_id=database_id,
             date_property=os.environ.get("MONTHLY_SCHEDULE_DATE_PROP", "日付").strip() or "日付",
             title_property=os.environ.get("MONTHLY_SCHEDULE_TITLE_PROP", "").strip(),
-            classroom_property=os.environ.get("MONTHLY_SCHEDULE_CLASSROOM_PROP", "教室").strip() or "教室",
+            classroom_property=os.environ.get("MONTHLY_SCHEDULE_CLASSROOM_PROP", "教室").strip()
+            or "教室",
             venue_property=os.environ.get("MONTHLY_SCHEDULE_VENUE_PROP", "会場").strip() or "会場",
-            timezone=os.environ.get("MONTHLY_SCHEDULE_TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo",
+            timezone=os.environ.get("MONTHLY_SCHEDULE_TIMEZONE", "Asia/Tokyo").strip()
+            or "Asia/Tokyo",
         )
 
 
@@ -88,9 +89,13 @@ class ScheduleRenderConfig:
             height=_safe_positive_int(os.environ.get("MONTHLY_SCHEDULE_IMAGE_HEIGHT"), 2048),
             font_path=os.environ.get("MONTHLY_SCHEDULE_FONT_PATH", "").strip(),
             font_cache_dir=os.environ.get("MONTHLY_SCHEDULE_FONT_CACHE_DIR", "").strip(),
-            font_jp_regular_path=os.environ.get("MONTHLY_SCHEDULE_FONT_JP_REGULAR_PATH", "").strip(),
+            font_jp_regular_path=os.environ.get(
+                "MONTHLY_SCHEDULE_FONT_JP_REGULAR_PATH", ""
+            ).strip(),
             font_jp_bold_path=os.environ.get("MONTHLY_SCHEDULE_FONT_JP_BOLD_PATH", "").strip(),
-            font_num_regular_path=os.environ.get("MONTHLY_SCHEDULE_FONT_NUM_REGULAR_PATH", "").strip(),
+            font_num_regular_path=os.environ.get(
+                "MONTHLY_SCHEDULE_FONT_NUM_REGULAR_PATH", ""
+            ).strip(),
             font_num_bold_path=os.environ.get("MONTHLY_SCHEDULE_FONT_NUM_BOLD_PATH", "").strip(),
         )
 
@@ -109,8 +114,8 @@ class ScheduleFontPaths:
 class ScheduleFontSet:
     """Pair of Japanese/ASCII fonts at one size."""
 
-    jp_font: ImageFont.ImageFont
-    num_font: ImageFont.ImageFont
+    jp_font: ImageFont.FreeTypeFont
+    num_font: ImageFont.FreeTypeFont
     num_baseline_offset: int = 0
     num_line_height: int = 0
 
@@ -126,9 +131,11 @@ class ScheduleJsonSourceConfig:
     @classmethod
     def from_env(cls) -> "ScheduleJsonSourceConfig":
         return cls(
-            key=os.environ.get("MONTHLY_SCHEDULE_JSON_KEY", "schedule_index.json").strip() or "schedule_index.json",
+            key=os.environ.get("MONTHLY_SCHEDULE_JSON_KEY", "schedule_index.json").strip()
+            or "schedule_index.json",
             url=os.environ.get("MONTHLY_SCHEDULE_JSON_URL", "").strip(),
-            timezone=os.environ.get("MONTHLY_SCHEDULE_TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo",
+            timezone=os.environ.get("MONTHLY_SCHEDULE_TIMEZONE", "Asia/Tokyo").strip()
+            or "Asia/Tokyo",
         )
 
 

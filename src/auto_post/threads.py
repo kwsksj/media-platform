@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 class ThreadsAPIError(Exception):
     """Base exception for Threads API errors."""
+
     def __init__(self, message: str, code: int | None = None):
         super().__init__(message)
         self.code = code
@@ -26,7 +27,13 @@ class ThreadsClient:
         self.config = config
         self.access_token = config.access_token
 
-    def _request(self, method: str, endpoint: str, params: dict | None = None, data: dict | None = None) -> Any:
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Make a request to the Threads API."""
         url = f"{self.BASE_URL}/{endpoint}"
 
@@ -39,7 +46,10 @@ class ThreadsClient:
             response.raise_for_status()
 
             # Threads API responses are usually JSON
-            return response.json()
+            payload = response.json()
+            if isinstance(payload, dict):
+                return payload
+            raise ThreadsAPIError("Invalid Threads API response format")
         except requests.exceptions.RequestException as e:
             error_msg = str(e)
             error_code = None
@@ -53,7 +63,7 @@ class ThreadsClient:
                 try:
                     error_data = e.response.json()
                     if "error" in error_data:
-                        code_val = error_data['error'].get('code')
+                        code_val = error_data["error"].get("code")
                         error_msg = f"{error_data['error'].get('message')} (Code: {code_val})"
                         try:
                             error_code = int(code_val)
@@ -71,9 +81,14 @@ class ThreadsClient:
             return self.config.user_id
 
         data = self._request("GET", "me", params={"fields": "id,username"})
-        return data["id"]
+        user_id = data.get("id")
+        if not isinstance(user_id, str):
+            raise ThreadsAPIError("Failed to resolve Threads user id")
+        return user_id
 
-    def create_image_container(self, image_url: str, caption: str = "", is_carousel_item: bool = False) -> str:
+    def create_image_container(
+        self, image_url: str, caption: str = "", is_carousel_item: bool = False
+    ) -> str:
         """
         Create an image container (Item container).
 
@@ -97,7 +112,10 @@ class ThreadsClient:
         # Use 'data' instead of 'params' to send as JSON body
         response = self._request("POST", endpoint, data=data)
         logger.info(f"Created Threads container: {response.get('id')}")
-        return response["id"]
+        container_id = response.get("id")
+        if not isinstance(container_id, str):
+            raise ThreadsAPIError("Failed to create image container: missing id")
+        return container_id
 
     def create_carousel_container(self, children_ids: list[str], caption: str = "") -> str:
         """Create a carousel container."""
@@ -105,18 +123,18 @@ class ThreadsClient:
         data = {
             "media_type": "CAROUSEL",
             "children": children_ids,  # threads expects array, or comma-separated string? Graph API usually wants JSON array, let's check docs or keep string if params.
-                                     # With JSON body, it should be a list or a string?
-                                     # IG Graph API takes list of strings for 'children' in JSON body.
-                                     # BUT `data` in `_request` is sent as `json=data`.
-                                     # Let's keep existing logic but just verify if list is better.
-                                     # Original code: "children": ",".join(children_ids)
-                                     # Threads API docs often say list for JSON. Let's try list first?
-                                     # Actually, safe bet is to mirror what worked for IG if possible, but Threads might be different.
-                                     # Let's stick to what was there (string) unless we know JSON requires list.
-                                     # However, "Invalid parameter" often comes from format mismatch too.
-                                     # Wait, if I change to JSON body, I can pass the list directly if the API supports it.
-                                     # Documentation for Threads says: "children": ["<id>", "<id>"] for JSON.
-                                     # Let's try sending list first.
+            # With JSON body, it should be a list or a string?
+            # IG Graph API takes list of strings for 'children' in JSON body.
+            # BUT `data` in `_request` is sent as `json=data`.
+            # Let's keep existing logic but just verify if list is better.
+            # Original code: "children": ",".join(children_ids)
+            # Threads API docs often say list for JSON. Let's try list first?
+            # Actually, safe bet is to mirror what worked for IG if possible, but Threads might be different.
+            # Let's stick to what was there (string) unless we know JSON requires list.
+            # However, "Invalid parameter" often comes from format mismatch too.
+            # Wait, if I change to JSON body, I can pass the list directly if the API supports it.
+            # Documentation for Threads says: "children": ["<id>", "<id>"] for JSON.
+            # Let's try sending list first.
         }
         # Actually in the original code it was joining with comma.
         # If I send as JSON, list of strings is more standard.
@@ -137,7 +155,7 @@ class ThreadsClient:
 
         data = {
             "media_type": "CAROUSEL",
-            "children": children_ids  # Send as list of strings
+            "children": children_ids,  # Send as list of strings
         }
 
         if caption:
@@ -145,14 +163,17 @@ class ThreadsClient:
 
         response = self._request("POST", endpoint, data=data)
         logger.info(f"Created Threads carousel container: {response.get('id')}")
-        return response["id"]
+        container_id = response.get("id")
+        if not isinstance(container_id, str):
+            raise ThreadsAPIError("Failed to create carousel container: missing id")
+        return container_id
 
-    def publish_container(self, creation_id: str, max_attempts: int = 5, interval: float = 2.0) -> str:
+    def publish_container(
+        self, creation_id: str, max_attempts: int = 5, interval: float = 2.0
+    ) -> str:
         """Publish a container."""
         endpoint = "me/threads_publish"
-        data = {
-            "creation_id": creation_id
-        }
+        data = {"creation_id": creation_id}
 
         import time
 
@@ -160,7 +181,10 @@ class ThreadsClient:
             try:
                 response = self._request("POST", endpoint, data=data)
                 logger.info(f"Published Threads media: {response.get('id')}")
-                return response["id"]
+                media_id = response.get("id")
+                if not isinstance(media_id, str):
+                    raise ThreadsAPIError("Failed to publish container: missing id")
+                return media_id
             except ThreadsAPIError as e:
                 if e.code == 24 and attempt < max_attempts - 1:
                     logger.warning(
@@ -170,16 +194,17 @@ class ThreadsClient:
                     time.sleep(interval)
                     continue
                 raise
+        raise ThreadsAPIError("Failed to publish container after retries")
 
-    def check_container_status(self, container_id: str) -> dict:
+    def check_container_status(self, container_id: str) -> dict[str, Any]:
         """Check the status of a media container."""
         endpoint = container_id
-        params = {
-            "fields": "id,status,error_message"
-        }
+        params = {"fields": "id,status,error_message"}
         return self._request("GET", endpoint, params=params)
 
-    def wait_for_container_ready(self, container_id: str, max_attempts: int = 30, interval: float = 2.0) -> bool:
+    def wait_for_container_ready(
+        self, container_id: str, max_attempts: int = 30, interval: float = 2.0
+    ) -> bool:
         """
         Wait for container to be ready for publishing.
 
@@ -202,12 +227,16 @@ class ThreadsClient:
                     raise ThreadsAPIError(f"Container status is {status}")
                 else:
                     # IN_PROGRESS or other transient states
-                    logger.debug(f"Container {container_id} status: {status}, waiting... (attempt {attempt + 1}/{max_attempts})")
+                    logger.debug(
+                        f"Container {container_id} status: {status}, waiting... (attempt {attempt + 1}/{max_attempts})"
+                    )
                     time.sleep(interval)
             except ThreadsAPIError as e:
                 # If resource doesn't exist yet (Code 24), wait and retry
                 if e.code == 24:
-                    logger.warning(f"Container {container_id} not found (Code 24), retrying... (attempt {attempt + 1}/{max_attempts})")
+                    logger.warning(
+                        f"Container {container_id} not found (Code 24), retrying... (attempt {attempt + 1}/{max_attempts})"
+                    )
                     time.sleep(interval)
                     continue
                 raise
@@ -219,7 +248,9 @@ class ThreadsClient:
 
     def post_single_image(self, image_url: str, caption: str) -> str:
         """Helper to post a single image."""
-        container_id = self.create_image_container(image_url, caption=caption, is_carousel_item=False)
+        container_id = self.create_image_container(
+            image_url, caption=caption, is_carousel_item=False
+        )
 
         # Wait for container to be ready
         self.wait_for_container_ready(container_id)
@@ -238,7 +269,8 @@ class ThreadsClient:
 
             children_ids.append(child_id)
             import time
-            time.sleep(1.0) # Rate limit safety
+
+            time.sleep(1.0)  # Rate limit safety
 
         carousel_id = self.create_carousel_container(children_ids, caption)
 

@@ -2,15 +2,21 @@
 
 import logging
 from datetime import datetime, timedelta
+from typing import Protocol
 
 import requests
 
-from .config import InstagramConfig
 from .r2_storage import R2Storage
 
 logger = logging.getLogger(__name__)
 
 EXPIRY_THRESHOLD_DAYS = 20  # Refresh if less than 20 days remain
+
+
+class _TokenConfig(Protocol):
+    app_id: str
+    app_secret: str
+    access_token: str
 
 
 class TokenManager:
@@ -22,7 +28,7 @@ class TokenManager:
     def __init__(
         self,
         r2_storage: R2Storage,
-        config: InstagramConfig,
+        config: _TokenConfig,
         token_file_key: str = "config/instagram_token.json",
         base_url: str = "https://graph.facebook.com",
         api_version: str | None = "v19.0",
@@ -106,7 +112,7 @@ class TokenManager:
                 url = f"{self.base_url}/debug_token"
             params = {
                 "input_token": token,
-                "access_token": token # debug_token endpoint uses the token itself for auth usually, or app token
+                "access_token": token,  # debug_token endpoint uses the token itself for auth usually, or app token
             }
             resp = requests.get(url, params=params, timeout=10)
             data = resp.json()
@@ -114,7 +120,7 @@ class TokenManager:
             if "data" in data and "expires_at" in data["data"]:
                 # expires_at is unix timestamp
                 ts = data["data"]["expires_at"]
-                if ts == 0: # Never expires?
+                if ts == 0:  # Never expires?
                     return 999
                 expires_at = datetime.fromtimestamp(ts)
 
@@ -172,19 +178,27 @@ class TokenManager:
     def _build_refresh_attempts(self) -> list[dict]:
         attempts: list[dict] = []
 
-        def add_attempt(label: str, grant_type: str, exchange_param: str, token_endpoint: str, include_client_credentials: bool):
+        def add_attempt(
+            label: str,
+            grant_type: str,
+            exchange_param: str,
+            token_endpoint: str,
+            include_client_credentials: bool,
+        ):
             key = (grant_type, exchange_param, token_endpoint, include_client_credentials)
             for existing in attempts:
                 if existing["key"] == key:
                     return
-            attempts.append({
-                "label": label,
-                "grant_type": grant_type,
-                "exchange_param": exchange_param,
-                "token_endpoint": token_endpoint,
-                "include_client_credentials": include_client_credentials,
-                "key": key,
-            })
+            attempts.append(
+                {
+                    "label": label,
+                    "grant_type": grant_type,
+                    "exchange_param": exchange_param,
+                    "token_endpoint": token_endpoint,
+                    "include_client_credentials": include_client_credentials,
+                    "key": key,
+                }
+            )
 
         add_attempt(
             "primary",
@@ -194,7 +208,11 @@ class TokenManager:
             self.include_client_credentials,
         )
 
-        if self.fallback_grant_type and self.fallback_exchange_param and self.fallback_token_endpoint:
+        if (
+            self.fallback_grant_type
+            and self.fallback_exchange_param
+            and self.fallback_token_endpoint
+        ):
             add_attempt(
                 "fallback",
                 self.fallback_grant_type,
@@ -233,16 +251,15 @@ class TokenManager:
         include_client_credentials: bool,
     ) -> tuple[dict | None, dict | None]:
         try:
-            if include_client_credentials and (not self.config.app_id or not self.config.app_secret):
+            if include_client_credentials and (
+                not self.config.app_id or not self.config.app_secret
+            ):
                 logger.error("Token refresh missing app credentials (app_id/app_secret).")
             if self.api_version:
                 url = f"{self.base_url}/{self.api_version}/{token_endpoint}"
             else:
                 url = f"{self.base_url}/{token_endpoint}"
-            params = {
-                "grant_type": grant_type,
-                exchange_param: current_token
-            }
+            params = {"grant_type": grant_type, exchange_param: current_token}
             if include_client_credentials:
                 params["client_id"] = self.config.app_id
                 params["client_secret"] = self.config.app_secret
@@ -283,13 +300,20 @@ class TokenManager:
     def _log_attempt_error(self, label: str, error_data: dict | None):
         if not error_data:
             return
-        logger.error("Token refresh attempt error (%s): %s", label, self._format_error_json(error_data))
+        logger.error(
+            "Token refresh attempt error (%s): %s", label, self._format_error_json(error_data)
+        )
         if isinstance(error_data, dict) and "error" in error_data:
             err = error_data["error"]
             user_title = err.get("error_user_title")
             user_msg = err.get("error_user_msg")
             if user_title or user_msg:
-                logger.error("Token refresh attempt user message (%s): %s %s", label, user_title or "", user_msg or "")
+                logger.error(
+                    "Token refresh attempt user message (%s): %s %s",
+                    label,
+                    user_title or "",
+                    user_msg or "",
+                )
 
     def _log_refresh_error(self, error_data: dict | None):
         if not error_data:
@@ -304,6 +328,7 @@ class TokenManager:
 
     def _format_error_json(self, error_data: dict) -> str:
         import json
+
         return json.dumps(error_data, ensure_ascii=False)
 
     def _mask_token(self, token: str) -> str:
@@ -340,13 +365,16 @@ class TokenManager:
                 return new_token, expires_in
         return None, None
 
-    def _save_token(self, token: str, expires_in_seconds: int):
+    def _save_token(self, token: str, expires_in_seconds: int | None):
         """Save token and calculated expiry to R2."""
+        if expires_in_seconds is None:
+            # Graph API usually returns 60-day long-lived tokens.
+            expires_in_seconds = 5184000
         expires_at = datetime.now() + timedelta(seconds=expires_in_seconds)
         data = {
             "access_token": token,
             "expires_at": expires_at.isoformat(),
-            "updated_at": datetime.now().isoformat()
+            "updated_at": datetime.now().isoformat(),
         }
         self.r2.put_json(data, self.token_file_key)
         logger.info(f"Token saved to R2. Expires at: {expires_at}")

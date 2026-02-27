@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 
+# Keep module-level indirection so tests that monkeypatch
+# monthly_schedule._resolve_required_font_paths/_load_font_set continue to work.
+from . import monthly_schedule_render as _render_module
 from .monthly_schedule_fonts import (
     ASCII_RUN_RE,
     COURIER_ASCENT_OVERRIDE,
@@ -45,17 +48,16 @@ from .monthly_schedule_models import (
 from .monthly_schedule_render import (
     PALETTE,
     WEEKDAY_LABELS,
-    default_schedule_filename,
-    image_to_bytes,
-    save_image,
     _apply_clear_warm_background_style,
     _create_gradient_background,
     _draw_day_events,
     _pick_smaller_font_set,
+    default_schedule_filename,
+    image_to_bytes,
+    save_image,
 )
 from .monthly_schedule_sources import (
     MonthlyScheduleNotionClient,
-    extract_month_entries_from_json,
     _build_entry_from_any_date,
     _build_entry_from_dict,
     _extract_rich_text,
@@ -65,12 +67,12 @@ from .monthly_schedule_sources import (
     _parse_notion_datetime,
     _pick_text,
     _to_text,
+    extract_month_entries_from_json,
 )
 from .monthly_schedule_text import (
     CLASSROOM_CARD_STYLES,
     NIGHT_BADGE_STYLE,
     VENUE_BADGE_STYLES,
-    build_monthly_caption,
     _build_day_cards,
     _build_fixed_time_rows,
     _expand_time_values,
@@ -87,6 +89,7 @@ from .monthly_schedule_text import (
     _resolve_night_time_line_indexes,
     _short_classroom_name,
     _time_text_to_sort_key,
+    build_monthly_caption,
 )
 from .monthly_schedule_utils import (
     _calendar_visible_date_range,
@@ -96,10 +99,6 @@ from .monthly_schedule_utils import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Keep module-level indirection so tests that monkeypatch
-# monthly_schedule._resolve_required_font_paths/_load_font_set continue to work.
-from . import monthly_schedule_render as _render_module
 
 
 def render_monthly_schedule_image(

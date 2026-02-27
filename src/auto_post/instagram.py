@@ -3,6 +3,7 @@
 import logging
 import time
 from datetime import datetime, timedelta
+from typing import Any
 
 import requests
 
@@ -26,8 +27,12 @@ class InstagramClient:
         self.config = config
 
     def _request(
-        self, method: str, endpoint: str, params: dict | None = None, data: dict | None = None
-    ) -> dict:
+        self,
+        method: str,
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Make an API request."""
         url = f"{API_BASE}/{endpoint}"
         params = params or {}
@@ -36,6 +41,8 @@ class InstagramClient:
         response = requests.request(method, url, params=params, data=data, timeout=60)
 
         result = response.json()
+        if not isinstance(result, dict):
+            raise InstagramAPIError("Invalid Instagram API response format")
         if "error" in result:
             raise InstagramAPIError(result["error"].get("message", str(result["error"])))
 
@@ -79,8 +86,11 @@ class InstagramClient:
             f"{self.config.business_account_id}/media",
             data={"image_url": image_url, "caption": caption},
         )
-        logger.info(f"Created media container: {result['id']}")
-        return result["id"]
+        container_id = result.get("id")
+        if not isinstance(container_id, str):
+            raise InstagramAPIError("Failed to create media container: missing id")
+        logger.info(f"Created media container: {container_id}")
+        return container_id
 
     def _create_carousel_item(self, image_url: str) -> str:
         """Create a carousel item (child container)."""
@@ -89,8 +99,11 @@ class InstagramClient:
             f"{self.config.business_account_id}/media",
             data={"image_url": image_url, "is_carousel_item": "true"},
         )
-        logger.info(f"Created carousel item: {result['id']}")
-        return result["id"]
+        container_id = result.get("id")
+        if not isinstance(container_id, str):
+            raise InstagramAPIError("Failed to create carousel item: missing id")
+        logger.info(f"Created carousel item: {container_id}")
+        return container_id
 
     def _create_carousel_container(self, child_ids: list[str], caption: str) -> str:
         """Create a carousel container."""
@@ -103,13 +116,17 @@ class InstagramClient:
                 "caption": caption,
             },
         )
-        logger.info(f"Created carousel container: {result['id']}")
-        return result["id"]
+        container_id = result.get("id")
+        if not isinstance(container_id, str):
+            raise InstagramAPIError("Failed to create carousel container: missing id")
+        logger.info(f"Created carousel container: {container_id}")
+        return container_id
 
     def _get_media_status(self, container_id: str) -> str:
         """Get the status of a media container."""
         result = self._request("GET", container_id, params={"fields": "status_code"})
-        return result.get("status_code", "IN_PROGRESS")
+        status = result.get("status_code")
+        return status if isinstance(status, str) else "IN_PROGRESS"
 
     def _wait_for_media_ready(self, container_id: str, max_wait_seconds: int = 60):
         """Wait for media processing to complete."""
@@ -133,7 +150,7 @@ class InstagramClient:
         logging.info(f"Publishing media container: {container_id}")
 
         max_retries = 3
-        last_error = None
+        last_error: Exception | None = None
 
         for attempt in range(max_retries):
             try:
@@ -143,7 +160,7 @@ class InstagramClient:
                     data={"creation_id": container_id},
                 )
                 post_id = result.get("id")
-                if post_id:
+                if isinstance(post_id, str) and post_id:
                     logger.info(f"Published media: {post_id}")
                     return post_id
 
@@ -157,7 +174,9 @@ class InstagramClient:
                 last_error = e
                 time.sleep(5)
 
-        raise InstagramAPIError(f"Failed to publish media after {max_retries} attempts: {last_error}")
+        raise InstagramAPIError(
+            f"Failed to publish media after {max_retries} attempts: {last_error}"
+        )
 
     def refresh_token(self) -> tuple[str, datetime]:
         """Refresh the access token. Returns (new_token, expiry_date)."""
@@ -175,14 +194,18 @@ class InstagramClient:
         if "error" in result:
             raise InstagramAPIError(f"Token refresh failed: {result['error'].get('message')}")
 
-        new_token = result["access_token"]
+        new_token = result.get("access_token")
+        if not isinstance(new_token, str):
+            raise InstagramAPIError("Token refresh failed: missing access_token")
         # Long-lived tokens are valid for 60 days
         expiry = datetime.now() + timedelta(days=60)
 
         logger.info(f"Token refreshed, new expiry: {expiry.strftime('%Y-%m-%d')}")
         return new_token, expiry
 
-    def check_token_expiry(self, expiry_date: datetime | None, refresh_days_before: int = 15) -> bool:
+    def check_token_expiry(
+        self, expiry_date: datetime | None, refresh_days_before: int = 15
+    ) -> bool:
         """Check if token needs refresh. Returns True if refreshed."""
         if expiry_date is None:
             logger.warning("Token expiry date not set")

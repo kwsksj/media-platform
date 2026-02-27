@@ -4,14 +4,14 @@ import io
 import logging
 import time
 from contextlib import contextmanager
+from typing import Any, cast
 
-import boto3
-from botocore.config import Config as BotoConfig
+import boto3  # type: ignore[import-untyped]
+from botocore.config import Config as BotoConfig  # type: ignore[import-untyped]
 
 from .config import R2Config
 
 logger = logging.getLogger(__name__)
-
 
 
 class R2Storage:
@@ -71,7 +71,7 @@ class R2Storage:
             ExpiresIn=expires_in,
         )
         logger.debug(f"Generated presigned URL for {key}")
-        return url
+        return cast(str, url)
 
     def delete(self, key: str):
         """Delete an object from R2."""
@@ -110,6 +110,7 @@ class R2Storage:
     ):
         """Save a dictionary as JSON to R2."""
         import json
+
         logger.info(f"Saving JSON to R2: {key}")
         payload = json.dumps(data, ensure_ascii=ensure_ascii).encode("utf-8")
         self.upload(payload, key, "application/json", cache_control=cache_control)
@@ -118,13 +119,14 @@ class R2Storage:
         """Retrieve a dictionary from JSON in R2. Returns None if not found."""
         import json
 
-        from botocore.exceptions import ClientError
+        from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
         try:
             client = self._create_client()
             response = client.get_object(Bucket=self.config.bucket_name, Key=key)
             content = response["Body"].read().decode("utf-8")
-            return json.loads(content)
+            parsed = json.loads(content)
+            return cast(dict[Any, Any], parsed)
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
                 logger.info(f"JSON not found in R2: {key}")

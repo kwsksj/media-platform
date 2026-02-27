@@ -1,4 +1,3 @@
-
 """GPS utilities for location tagging."""
 
 import logging
@@ -28,17 +27,19 @@ LOCATION_MAPPING = {
     "Tsukuba": ("つくば教室", "つくば会場"),
 }
 
+
 @dataclass
 class LocationTag:
     classroom: str
     venue: str
+
 
 def get_exif_data(image_path: Path):
     """Returns a dictionary from the exif data of an PIL Image item."""
     try:
         image = Image.open(image_path)
         exif_data = {}
-        info = image._getexif()
+        info = image.getexif()
         if info:
             for tag, value in info.items():
                 decoded = TAGS.get(tag, tag)
@@ -55,12 +56,14 @@ def get_exif_data(image_path: Path):
         logger.debug(f"Failed to read EXIF from {image_path}: {e}")
         return None
 
+
 def _convert_to_degrees(value):
     """Helper function to convert the GPS coordinates to degrees."""
     d = float(value[0])
     m = float(value[1])
     s = float(value[2])
     return d + (m / 60.0) + (s / 3600.0)
+
 
 def get_lat_lon(exif_data):
     """Returns the latitude and longitude, if available, from the provided exif_data."""
@@ -88,6 +91,7 @@ def get_lat_lon(exif_data):
         logger.debug(f"Error converting GPS data: {e}")
         return None, None
 
+
 def haversine_distance(lat1, lon1, lat2, lon2):
     """Calculate the great circle distance between two points in km."""
     # Convert decimal degrees to radians
@@ -96,10 +100,11 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     # Haversine formula
     dlon = lon2 - lon1
     dlat = lat2 - lat1
-    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
     c = 2 * asin(sqrt(a))
-    r = 6371 # Radius of earth in kilometers
+    r = 6371  # Radius of earth in kilometers
     return c * r
+
 
 def identify_location(lat, lon, threshold_km=50.0) -> LocationTag | None:
     """Identify the nearest classroom/venue based on coordinates."""
@@ -117,6 +122,7 @@ def identify_location(lat, lon, threshold_km=50.0) -> LocationTag | None:
         return LocationTag(classroom=classroom, venue=venue)
 
     return None
+
 
 def get_location_for_file(image_path: Path) -> LocationTag | None:
     """High-level function to get location tag from an image file."""

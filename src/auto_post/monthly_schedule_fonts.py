@@ -14,8 +14,12 @@ logger = logging.getLogger(__name__)
 
 ZEN_REGULAR_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/zenkakugothicnew/ZenKakuGothicNew-Regular.ttf"
 ZEN_BOLD_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/zenkakugothicnew/ZenKakuGothicNew-Bold.ttf"
-COURIER_REGULAR_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/courierprime/CourierPrime-Regular.ttf"
-COURIER_BOLD_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/courierprime/CourierPrime-Bold.ttf"
+COURIER_REGULAR_URL = (
+    "https://raw.githubusercontent.com/google/fonts/main/ofl/courierprime/CourierPrime-Regular.ttf"
+)
+COURIER_BOLD_URL = (
+    "https://raw.githubusercontent.com/google/fonts/main/ofl/courierprime/CourierPrime-Bold.ttf"
+)
 
 COURIER_ASCENT_OVERRIDE = 0.85
 COURIER_DESCENT_OVERRIDE = 0.15
@@ -26,7 +30,11 @@ ASCII_RUN_RE = re.compile(r"[\x00-\x7F]+")
 
 
 def _resolve_required_font_paths(config: ScheduleRenderConfig) -> ScheduleFontPaths:
-    cache_dir = Path(config.font_cache_dir).expanduser() if config.font_cache_dir else Path.home() / ".cache" / "media-platform-fonts" / "monthly_schedule"
+    cache_dir = (
+        Path(config.font_cache_dir).expanduser()
+        if config.font_cache_dir
+        else Path.home() / ".cache" / "media-platform-fonts" / "monthly_schedule"
+    )
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     base_path = Path(config.font_path).expanduser() if config.font_path else None
@@ -185,7 +193,7 @@ def _load_font_set(paths: ScheduleFontPaths, size: int, *, bold: bool) -> Schedu
     return ScheduleFontSet(
         jp_font=jp_font,
         num_font=num_font,
-        num_baseline_offset=max(0, base_offset, optical_offset),
+        num_baseline_offset=int(max(0, base_offset, optical_offset)),
         num_line_height=target_line_height,
     )
 
@@ -219,7 +227,7 @@ def _draw_mixed_text(
         font = fonts.num_font if is_ascii else fonts.jp_font
         y_pos = y + fonts.num_baseline_offset if is_ascii else y
         draw.text((x, y_pos), chunk, font=font, fill=fill)
-        x += _text_width(draw, chunk, font)
+        x += float(_text_width(draw, chunk, font))
 
 
 def _split_text_runs(text: str) -> list[tuple[str, bool]]:
@@ -246,14 +254,14 @@ def _is_ascii_char(ch: str) -> bool:
     return bool(ASCII_RUN_RE.fullmatch(ch))
 
 
-def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
+def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont) -> int:
     left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
-    return max(0, right - left)
+    return max(0, int(right - left))
 
 
-def _font_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
+def _font_height(draw: ImageDraw.ImageDraw, font: ImageFont.FreeTypeFont) -> int:
     left, top, right, bottom = draw.textbbox((0, 0), "Ag", font=font)
-    return max(1, bottom - top)
+    return max(1, int(bottom - top))
 
 
 def _mixed_text_width(draw: ImageDraw.ImageDraw, text: str, fonts: ScheduleFontSet) -> int:
@@ -284,6 +292,7 @@ def _mixed_text_bbox(
             right = float(c_right)
             bottom = float(c_bottom)
         else:
+            assert left is not None and top is not None and right is not None and bottom is not None
             left = min(left, float(c_left))
             top = min(top, float(c_top))
             right = max(right, float(c_right))
@@ -295,7 +304,9 @@ def _mixed_text_bbox(
 
 
 def _mixed_font_height(draw: ImageDraw.ImageDraw, fonts: ScheduleFontSet) -> int:
-    num_h = fonts.num_line_height if fonts.num_line_height > 0 else _font_height(draw, fonts.num_font)
+    num_h = (
+        fonts.num_line_height if fonts.num_line_height > 0 else _font_height(draw, fonts.num_font)
+    )
     return max(_font_height(draw, fonts.jp_font), num_h)
 
 
@@ -310,7 +321,11 @@ def _scale_font_set(fonts: ScheduleFontSet, scale: float) -> ScheduleFontSet:
     except Exception:
         return fonts
     num_offset = int(round(fonts.num_baseline_offset * scale))
-    base_num_h = fonts.num_line_height if fonts.num_line_height > 0 else _font_height(ImageDraw.Draw(Image.new("RGB", (10, 10))), fonts.num_font)
+    base_num_h = (
+        fonts.num_line_height
+        if fonts.num_line_height > 0
+        else _font_height(ImageDraw.Draw(Image.new("RGB", (10, 10))), fonts.num_font)
+    )
     num_line_h = max(1, int(round(base_num_h * scale)))
     return ScheduleFontSet(
         jp_font=jp_font,
