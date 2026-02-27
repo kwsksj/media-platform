@@ -11,7 +11,7 @@ import requests
 
 from .config import Config
 from .instagram import InstagramAPIError, InstagramClient
-from .notion_db import NotionDB, WorkItem
+from .notion_db import MIN_SNS_COMPLETED_DATE, NotionDB, WorkItem
 from .r2_storage import R2Storage
 from .threads import ThreadsAPIError, ThreadsClient
 from .token_manager import TokenManager
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # Threads downloads images asynchronously after container is published
 # Increased to 20s to ensure reliable image downloads for multiple posts
 THREADS_IMAGE_DOWNLOAD_WAIT_SECONDS = 20
+
 
 def _env_int(name: str, default: int) -> int:
     """Read integer from env with fallback."""
@@ -57,12 +58,18 @@ def _now_jst() -> datetime:
     return datetime.now(tz=JST)
 
 
+def _is_postable_creation_date(creation_date: datetime | None) -> bool:
+    if creation_date is None:
+        return False
+    return creation_date.date() >= MIN_SNS_COMPLETED_DATE
+
+
 def generate_caption(
     work_name: str,
     custom_caption: str | None,
     tags: str | None,
     default_tags: str,
-    creation_date: datetime | None = None
+    creation_date: datetime | None = None,
 ) -> str:
     """Generate caption from work name and tags."""
     # Build caption: {作品名} の木彫りです！\n{キャプション}\n\n完成日: ...
@@ -162,7 +169,7 @@ class Poster:
         # We also need a different key for R2 storage.
         self.threads_token_manager = TokenManager(
             self.r2,
-            config.threads, # Duck typing: ThreadsConfig has same fields
+            config.threads,  # Duck typing: ThreadsConfig has same fields
             token_file_key="config/threads_token.json",
             base_url="https://graph.threads.net",
             api_version=None,
@@ -194,7 +201,9 @@ class Poster:
             except retry_exceptions as e:
                 if attempt >= POST_RETRY_MAX_ATTEMPTS:
                     raise
-                wait_seconds = POST_RETRY_BASE_DELAY_SECONDS * (POST_RETRY_BACKOFF_FACTOR ** (attempt - 1))
+                wait_seconds = POST_RETRY_BASE_DELAY_SECONDS * (
+                    POST_RETRY_BACKOFF_FACTOR ** (attempt - 1)
+                )
                 logger.warning(
                     f"{platform} post failed (attempt {attempt}/{POST_RETRY_MAX_ATTEMPTS}): {e}. "
                     f"Retrying in {wait_seconds:.1f}s"
@@ -275,7 +284,9 @@ class Poster:
 
         # 1. Date Designated (Global fetch, then assign to relevant platforms)
         date_works = self.notion.get_posts_for_date(target_date)
-        logger.info(f"Found {len(date_works)} date-designated posts for {target_date.strftime('%Y-%m-%d')}")
+        logger.info(
+            f"Found {len(date_works)} date-designated posts for {target_date.strftime('%Y-%m-%d')}"
+        )
 
         for work in date_works:
             unique_works[work.page_id] = work
@@ -342,7 +353,6 @@ class Poster:
                     f"(from {year_start_date.strftime('%Y-%m-%d')})"
                 )
 
-
         # --- Phase 2: Processing ---
 
         results = {
@@ -350,14 +360,14 @@ class Poster:
             "ig_success": [],
             "x_success": [],
             "threads_success": [],
-            "errors": []
+            "errors": [],
         }
 
         # Iterate through unique works
         # Sort by creation date (optional, for log readability)
         sorted_works = sorted(
             unique_works.values(),
-            key=lambda w: w.creation_date if w.creation_date else datetime.max
+            key=lambda w: w.creation_date if w.creation_date else datetime.max,
         )
 
         for work in sorted_works:
@@ -382,7 +392,8 @@ class Poster:
                     for err in post_results["errors"]:
                         results["errors"].append(f"{work.work_name} ({err})")
 
-                time.sleep(5)  # Global rate limit between works
+                if not dry_run:
+                    time.sleep(5)  # Global rate limit between works
             except Exception as e:
                 logger.error(f"Failed to process post {work.work_name}: {e}")
                 results["errors"].append(f"{work.work_name} ({e})")
@@ -390,7 +401,9 @@ class Poster:
 
         return results
 
-    def run_catchup_post(self, limit: int = 1, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
+    def run_catchup_post(
+        self, limit: int = 1, dry_run: bool = False, platforms: list[str] | None = None
+    ) -> dict:
         """
         Run catch-up posting only.
 
@@ -427,13 +440,13 @@ class Poster:
             "ig_success": [],
             "x_success": [],
             "threads_success": [],
-            "errors": []
+            "errors": [],
         }
 
         # Sort by creation date
         sorted_works = sorted(
             unique_works.values(),
-            key=lambda w: w.creation_date if w.creation_date else datetime.max
+            key=lambda w: w.creation_date if w.creation_date else datetime.max,
         )
 
         for work in sorted_works:
@@ -457,14 +470,17 @@ class Poster:
                     for err in post_results["errors"]:
                         results["errors"].append(f"{work.work_name} ({err})")
 
-                time.sleep(5)
+                if not dry_run:
+                    time.sleep(5)
             except Exception as e:
                 logger.error(f"Failed to process post {work.work_name}: {e}")
                 results["errors"].append(f"{work.work_name} ({e})")
 
         return results
 
-    def _process_post(self, post: WorkItem, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
+    def _process_post(
+        self, post: WorkItem, dry_run: bool = False, platforms: list[str] | None = None
+    ) -> dict:
         """Process a single post. Returns dict of success status by platform."""
         status = {"instagram": False, "x": False, "threads": False, "errors": []}
 
@@ -472,6 +488,21 @@ class Poster:
             platforms = ["instagram", "threads", "x"]  # Default to all
 
         logger.info(f"Processing: {post.work_name} (Dry Run: {dry_run}, Platforms: {platforms})")
+
+        if not post.ready:
+            message = "Skip posting because this work is not ready (整備済み=false)."
+            logger.warning(f"{message} work={post.work_name} page_id={post.page_id}")
+            status["errors"].append(message)
+            return status
+
+        if not _is_postable_creation_date(post.creation_date):
+            threshold = MIN_SNS_COMPLETED_DATE.strftime("%Y-%m-%d")
+            message = f"Skip posting because completed date is before {threshold} or missing."
+            logger.warning(
+                f"{message} work={post.work_name} page_id={post.page_id} completed={post.creation_date}"
+            )
+            status["errors"].append(message)
+            return status
 
         if not post.image_urls:
             raise ValueError(f"No images for post: {post.work_name}")
@@ -489,6 +520,20 @@ class Poster:
         if dry_run:
             logger.info(f"  Images: {len(post.image_urls)}")
             logger.info(f"  Caption:\n{caption}\n")
+            if "instagram" in platforms and not post.ig_posted:
+                logger.info("Dry Run: Would post to Instagram")
+                status["instagram"] = True
+            if "x" in platforms and not post.x_posted:
+                logger.info("Dry Run: Would post to X")
+                status["x"] = True
+            if (
+                "threads" in platforms
+                and hasattr(post, "threads_posted")
+                and not post.threads_posted
+            ):
+                logger.info("Dry Run: Would post to Threads")
+                status["threads"] = True
+            return status
 
         # Download images from URLs
         images_data = []
@@ -505,79 +550,61 @@ class Poster:
 
         # Post to Instagram (if not already posted AND platform is requested)
         if "instagram" in platforms and not post.ig_posted:
-            if dry_run:
-                logger.info("Dry Run: Would post to Instagram")
+            try:
+                ig_post_id = self._post_with_retry(
+                    "Instagram",
+                    lambda: self._post_to_instagram(images_data, caption),
+                    (InstagramAPIError,),
+                )
+                self.notion.update_post_status(
+                    post.page_id, ig_posted=True, ig_post_id=ig_post_id, posted_date=_now_jst()
+                )
                 status["instagram"] = True
-            else:
-                try:
-                    ig_post_id = self._post_with_retry(
-                        "Instagram",
-                        lambda: self._post_to_instagram(images_data, caption),
-                        (InstagramAPIError,),
-                    )
-                    self.notion.update_post_status(
-                        post.page_id,
-                        ig_posted=True,
-                        ig_post_id=ig_post_id,
-                        posted_date=_now_jst()
-                    )
-                    status["instagram"] = True
-                    logger.info(f"Instagram posted: {ig_post_id}")
-                except InstagramAPIError as e:
-                    logger.error(f"Instagram error: {e}")
-                    self.notion.update_post_status(post.page_id, error_log=f"Instagram: {e}")
-                    status["errors"].append(f"Instagram: {e}")
-                    # status["instagram"] stays False
+                logger.info(f"Instagram posted: {ig_post_id}")
+            except InstagramAPIError as e:
+                logger.error(f"Instagram error: {e}")
+                self.notion.update_post_status(post.page_id, error_log=f"Instagram: {e}")
+                status["errors"].append(f"Instagram: {e}")
+                # status["instagram"] stays False
 
         # Post to X (if not already posted AND platform is requested)
         if "x" in platforms and not post.x_posted:
-            if dry_run:
-                logger.info("Dry Run: Would post to X")
+            try:
+                x_post_id = self._post_with_retry(
+                    "X",
+                    lambda: self._post_to_x(images_data, caption),
+                    (XAPIError,),
+                )
+                self.notion.update_post_status(
+                    post.page_id, x_posted=True, x_post_id=x_post_id, posted_date=_now_jst()
+                )
                 status["x"] = True
-            else:
-                try:
-                    x_post_id = self._post_with_retry(
-                        "X",
-                        lambda: self._post_to_x(images_data, caption),
-                        (XAPIError,),
-                    )
-                    self.notion.update_post_status(
-                        post.page_id,
-                        x_posted=True,
-                        x_post_id=x_post_id,
-                        posted_date=_now_jst()
-                    )
-                    status["x"] = True
-                    logger.info(f"X posted: {x_post_id}")
-                except XAPIError as e:
-                    logger.error(f"X error: {e}")
-                    self.notion.update_post_status(post.page_id, error_log=f"X: {e}")
-                    status["errors"].append(f"X: {e}")
+                logger.info(f"X posted: {x_post_id}")
+            except XAPIError as e:
+                logger.error(f"X error: {e}")
+                self.notion.update_post_status(post.page_id, error_log=f"X: {e}")
+                status["errors"].append(f"X: {e}")
 
         # Post to Threads (if not already posted AND platform is requested)
-        if "threads" in platforms and hasattr(post, 'threads_posted') and not post.threads_posted:
-            if dry_run:
-                logger.info("Dry Run: Would post to Threads")
+        if "threads" in platforms and hasattr(post, "threads_posted") and not post.threads_posted:
+            try:
+                threads_post_id = self._post_with_retry(
+                    "Threads",
+                    lambda: self._post_to_threads(images_data, caption),
+                    (ThreadsAPIError,),
+                )
+                self.notion.update_post_status(
+                    post.page_id,
+                    threads_posted=True,
+                    threads_post_id=threads_post_id,
+                    posted_date=_now_jst(),
+                )
                 status["threads"] = True
-            else:
-                try:
-                    threads_post_id = self._post_with_retry(
-                        "Threads",
-                        lambda: self._post_to_threads(images_data, caption),
-                        (ThreadsAPIError,),
-                    )
-                    self.notion.update_post_status(
-                        post.page_id,
-                        threads_posted=True,
-                        threads_post_id=threads_post_id,
-                        posted_date=_now_jst()
-                    )
-                    status["threads"] = True
-                    logger.info(f"Threads posted: {threads_post_id}")
-                except ThreadsAPIError as e:
-                    logger.error(f"Threads error: {e}")
-                    self.notion.update_post_status(post.page_id, error_log=f"Threads: {e}")
-                    status["errors"].append(f"Threads: {e}")
+                logger.info(f"Threads posted: {threads_post_id}")
+            except ThreadsAPIError as e:
+                logger.error(f"Threads error: {e}")
+                self.notion.update_post_status(post.page_id, error_log=f"Threads: {e}")
+                status["errors"].append(f"Threads: {e}")
 
         return status
 
@@ -629,7 +656,9 @@ class Poster:
 
             # Wait for Threads to finish downloading images before deleting R2 files
             # Threads API downloads images asynchronously after publish, even after container is FINISHED
-            logger.info(f"Waiting {THREADS_IMAGE_DOWNLOAD_WAIT_SECONDS}s for Threads to download images...")
+            logger.info(
+                f"Waiting {THREADS_IMAGE_DOWNLOAD_WAIT_SECONDS}s for Threads to download images..."
+            )
             time.sleep(THREADS_IMAGE_DOWNLOAD_WAIT_SECONDS)
 
             return post_id
@@ -745,6 +774,15 @@ class Poster:
         if work is None:
             raise ValueError(f"Work not found: {page_id}")
 
+        if not work.ready:
+            raise ValueError(f"Work is not ready for posting (整備済み=false): {work.work_name}")
+
+        if not _is_postable_creation_date(work.creation_date):
+            threshold = MIN_SNS_COMPLETED_DATE.strftime("%Y-%m-%d")
+            raise ValueError(
+                f"Work completed date is before {threshold} or missing: {work.work_name}"
+            )
+
         if not work.image_urls:
             raise ValueError(f"No images for work: {work.work_name}")
 
@@ -780,6 +818,8 @@ class Poster:
         if platform in ("threads", "all"):
             threads_post_id = self._post_to_threads(images_data, caption)
             result["threads_post_id"] = threads_post_id
-            self.notion.update_post_status(page_id, threads_posted=True, threads_post_id=threads_post_id)
+            self.notion.update_post_status(
+                page_id, threads_posted=True, threads_post_id=threads_post_id
+            )
 
         return result

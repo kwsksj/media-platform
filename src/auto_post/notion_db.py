@@ -1,8 +1,9 @@
 """Notion database integration."""
 
 import logging
+import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from notion_client import Client
@@ -14,6 +15,13 @@ PLATFORM_POSTED_PROPERTY = {
     "x": "X投稿済",
     "threads": "Threads投稿済",
 }
+READY_PROP_ENV = "NOTION_WORKS_READY_PROP"
+READY_PROP_CANDIDATES = (
+    "整備済み",
+    "整備済",
+)
+MIN_SNS_COMPLETED_DATE = date(2025, 1, 1)
+MIN_SNS_COMPLETED_DATE_STR = MIN_SNS_COMPLETED_DATE.strftime("%Y-%m-%d")
 
 
 @dataclass
@@ -36,6 +44,7 @@ class WorkItem:
     x_post_id: str | None
     threads_posted: bool
     threads_post_id: str | None
+    ready: bool = False
 
 
 class NotionDB:
@@ -48,6 +57,8 @@ class NotionDB:
         self.known_properties = None
         self._property_schema = None
         self._schema_fetch_failed = False
+        self._ready_property_name: str | None = None
+        self._ready_property_type: str | None = None
 
     def _ensure_schema(self) -> None:
         if self._property_schema is None:
@@ -85,6 +96,100 @@ class NotionDB:
         if schema and schema.get("type") == "relation":
             return schema.get("relation", {}).get("database_id")
         return None
+
+    def _is_ready_schema_type(self, schema: dict | None) -> bool:
+        if not isinstance(schema, dict):
+            return False
+        # formula type can also represent a derived ready flag
+        return schema.get("type") in {"checkbox", "formula"}
+
+    def _resolve_ready_property(self) -> tuple[str, str]:
+        if self._ready_property_name and self._ready_property_type:
+            return self._ready_property_name, self._ready_property_type
+
+        db = self.get_database_info()
+        properties = db.get("properties", {})
+        preferred = (os.getenv(READY_PROP_ENV) or READY_PROP_CANDIDATES[0]).strip()
+        candidates = list(
+            dict.fromkeys(name for name in (preferred, *READY_PROP_CANDIDATES) if name)
+        )
+
+        for name in candidates:
+            schema = properties.get(name)
+            if self._is_ready_schema_type(schema):
+                self._ready_property_name = name
+                self._ready_property_type = schema.get("type", "checkbox")
+                return self._ready_property_name, self._ready_property_type
+
+        for name, schema in properties.items():
+            if not self._is_ready_schema_type(schema):
+                continue
+            normalized = str(name or "").strip().lower()
+            if "整備済" in normalized or "ready" in normalized:
+                self._ready_property_name = name
+                self._ready_property_type = schema.get("type", "checkbox")
+                return self._ready_property_name, self._ready_property_type
+
+        raise ValueError(
+            "Ready property not found. "
+            "Set NOTION_WORKS_READY_PROP to a checkbox or formula boolean property name."
+        )
+
+    def _build_ready_filter(self) -> dict:
+        ready_prop, ready_prop_type = self._resolve_ready_property()
+        if ready_prop_type == "formula":
+            return {
+                "property": ready_prop,
+                "formula": {"checkbox": {"equals": True}},
+            }
+        return {
+            "property": ready_prop,
+            "checkbox": {"equals": True},
+        }
+
+    def _build_min_completed_date_filter(self) -> dict:
+        return {
+            "property": "完成日",
+            "date": {"on_or_after": MIN_SNS_COMPLETED_DATE_STR},
+        }
+
+    def _extract_ready_value(self, prop: dict | None) -> bool | None:
+        if not isinstance(prop, dict):
+            return None
+        prop_type = prop.get("type")
+        if prop_type == "checkbox":
+            return bool(prop.get("checkbox"))
+        if prop_type == "formula":
+            formula = prop.get("formula") or {}
+            if formula.get("type") == "boolean":
+                return bool(formula.get("boolean"))
+        return None
+
+    def _is_page_ready(self, props: dict) -> bool:
+        # Prefer resolved ready property from schema.
+        try:
+            ready_prop, _ready_prop_type = self._resolve_ready_property()
+            ready = self._extract_ready_value(props.get(ready_prop))
+            if ready is not None:
+                return ready
+        except Exception:
+            # Fallback path below handles schema fetch failures gracefully.
+            pass
+
+        for name in READY_PROP_CANDIDATES:
+            ready = self._extract_ready_value(props.get(name))
+            if ready is not None:
+                return ready
+
+        for name, prop in props.items():
+            normalized = str(name or "").strip().lower()
+            if "整備済" not in normalized and "ready" not in normalized:
+                continue
+            ready = self._extract_ready_value(prop)
+            if ready is not None:
+                return ready
+
+        return False
 
     def _get_or_create_page_by_title(self, database_id: str, title: str) -> str | None:
         """Find or create a page in a database by its title property."""
@@ -159,8 +264,6 @@ class NotionDB:
             return None
         return self._get_or_create_page_by_title(target_database_id, tag_name)
 
-
-
     def add_work(
         self,
         work_name: str,
@@ -176,7 +279,10 @@ class NotionDB:
         properties = {
             "作品名": {"title": [{"text": {"content": work_name}}]},
             "画像": {
-                "files": [{"type": "external", "name": f"image_{i+1}", "external": {"url": url}} for i, url in enumerate(image_urls)]
+                "files": [
+                    {"type": "external", "name": f"image_{i + 1}", "external": {"url": url}}
+                    for i, url in enumerate(image_urls)
+                ]
             },
         }
 
@@ -265,6 +371,7 @@ class NotionDB:
     def get_posts_for_date(self, target_date: datetime) -> list[WorkItem]:
         """Get posts scheduled for a specific date."""
         date_str = target_date.strftime("%Y-%m-%d")
+        ready_filter = self._build_ready_filter()
 
         response = self.client.request(
             path=f"databases/{self.database_id}/query",
@@ -276,10 +383,9 @@ class NotionDB:
                             "property": "投稿予定日",
                             "date": {"equals": date_str},
                         },
-                        {
-                            "property": "スキップ",
-                            "checkbox": {"equals": False}
-                        },
+                        {"property": "スキップ", "checkbox": {"equals": False}},
+                        ready_filter,
+                        self._build_min_completed_date_filter(),
                     ]
                 }
             },
@@ -308,7 +414,9 @@ class NotionDB:
         # Extract title (作品名)
         work_name = ""
         if props.get("作品名", {}).get("title"):
-            work_name = props["作品名"]["title"][0]["plain_text"] if props["作品名"]["title"] else ""
+            work_name = (
+                props["作品名"]["title"][0]["plain_text"] if props["作品名"]["title"] else ""
+            )
 
         # Extract select / relation (生徒名 / 作者)
         student_name = None
@@ -383,6 +491,7 @@ class NotionDB:
 
         threads_posted = props.get("Threads投稿済", {}).get("checkbox", False)
         threads_post_id = self._get_rich_text(props, "Threads投稿ID")
+        ready = self._is_page_ready(props)
 
         return WorkItem(
             page_id=page["id"],
@@ -401,6 +510,7 @@ class NotionDB:
             x_post_id=x_post_id,
             threads_posted=threads_posted,
             threads_post_id=threads_post_id,
+            ready=ready,
         )
 
     def _get_rich_text(self, props: dict, key: str) -> str | None:
@@ -477,8 +587,9 @@ class NotionDB:
             self.client.pages.update(page_id=page_id, properties=properties)
             logger.info(f"Updated Notion page: {page_id}")
 
-
-    def list_works(self, filter_student: str | None = None, only_unposted: bool = False) -> list[WorkItem]:
+    def list_works(
+        self, filter_student: str | None = None, only_unposted: bool = False
+    ) -> list[WorkItem]:
         """List all work items, optionally filtered."""
         filters = []
 
@@ -502,13 +613,15 @@ class NotionDB:
                 filters.append({"property": prop_name, "select": {"equals": filter_student}})
 
         if only_unposted:
-            filters.append({
-                "or": [
-                    {"property": "Instagram投稿済", "checkbox": {"equals": False}},
-                    {"property": "X投稿済", "checkbox": {"equals": False}},
-                    {"property": "Threads投稿済", "checkbox": {"equals": False}},
-                ]
-            })
+            filters.append(
+                {
+                    "or": [
+                        {"property": "Instagram投稿済", "checkbox": {"equals": False}},
+                        {"property": "X投稿済", "checkbox": {"equals": False}},
+                        {"property": "Threads投稿済", "checkbox": {"equals": False}},
+                    ]
+                }
+            )
 
         query_params = {"database_id": self.database_id}
         if filters:
@@ -517,7 +630,7 @@ class NotionDB:
         response = self.client.request(
             path=f"databases/{self.database_id}/query",
             method="POST",
-            body=query_params.get("filter") and {"filter": query_params["filter"]} or {}
+            body=query_params.get("filter") and {"filter": query_params["filter"]} or {},
         )
         return [self._parse_page(page) for page in response["results"]]
 
@@ -574,7 +687,9 @@ class NotionDB:
                 title_map[page["id"]] = ""
         return title_map
 
-    def get_unscheduled_works(self, limit: int = 1, platforms: list[str] | None = None) -> list[WorkItem]:
+    def get_unscheduled_works(
+        self, limit: int = 1, platforms: list[str] | None = None
+    ) -> list[WorkItem]:
         """
         Get the oldest unposted works (by 完成日) that have no scheduled date.
         Used as fallback when no works are scheduled for today.
@@ -598,10 +713,7 @@ class NotionDB:
         for p in platforms:
             prop_name = platform_prop_map.get(p)
             if prop_name:
-                platform_filters.append({
-                    "property": prop_name,
-                    "checkbox": {"equals": False}
-                })
+                platform_filters.append({"property": prop_name, "checkbox": {"equals": False}})
 
         # Build full filter
         base_filters = [
@@ -611,10 +723,9 @@ class NotionDB:
                 "date": {"is_empty": True},
             },
             # Not skipped
-            {
-                "property": "スキップ",
-                "checkbox": {"equals": False}
-            },
+            {"property": "スキップ", "checkbox": {"equals": False}},
+            self._build_ready_filter(),
+            self._build_min_completed_date_filter(),
         ]
 
         # Platform filter: OR condition (any platform unposted)
@@ -627,13 +738,11 @@ class NotionDB:
             path=f"databases/{self.database_id}/query",
             method="POST",
             body={
-                "filter": {
-                    "and": base_filters
-                },
+                "filter": {"and": base_filters},
                 # Sort by 完成日 ascending (oldest first), then Created Time ascending (Oldest first for same day)
                 "sorts": [
                     {"property": "完成日", "direction": "ascending"},
-                    {"timestamp": "created_time", "direction": "ascending"}
+                    {"timestamp": "created_time", "direction": "ascending"},
                 ],
                 "page_size": limit,
             },
@@ -649,8 +758,7 @@ class NotionDB:
         try:
             # Search for the string (fuzzy match)
             response = self.client.search(
-                query=title,
-                filter={"property": "object", "value": "page"}
+                query=title, filter={"property": "object", "value": "page"}
             )
 
             for result in response["results"]:
@@ -708,12 +816,12 @@ class NotionDB:
         # Assuming "タグ" is Relation property key
         # (This relies on property name being valid)
         if "タグ" in page["properties"] and page["properties"]["タグ"]["type"] == "relation":
-             current_relation_ids = [{"id": r["id"]} for r in page["properties"]["タグ"]["relation"]]
+            current_relation_ids = [{"id": r["id"]} for r in page["properties"]["タグ"]["relation"]]
 
         # Check Multi-select
         current_ms_names = set()
         if "タグ" in page["properties"] and page["properties"]["タグ"]["type"] == "multi_select":
-             current_ms_names = {opt["name"] for opt in page["properties"]["タグ"]["multi_select"]}
+            current_ms_names = {opt["name"] for opt in page["properties"]["タグ"]["multi_select"]}
 
         # Prepare new tag
         tag_prop_type = page["properties"].get("タグ", {}).get("type")
@@ -731,9 +839,9 @@ class NotionDB:
 
         # Fallback to Multi-select
         if not relation_used and tag_prop_type == "multi_select":
-             current_ms_names.add(classroom)
-             ms_options = [{"name": t} for t in current_ms_names]
-             properties["タグ"] = {"multi_select": ms_options}
+            current_ms_names.add(classroom)
+            ms_options = [{"name": t} for t in current_ms_names]
+            properties["タグ"] = {"multi_select": ms_options}
 
         if properties:
             self.client.pages.update(page_id=page_id, properties=properties)
@@ -748,18 +856,14 @@ class NotionDB:
 
     def _build_unposted_filters(self, target_prop: str) -> list[dict]:
         return [
-            {
-                "property": target_prop,
-                "checkbox": {"equals": False}
-            },
+            {"property": target_prop, "checkbox": {"equals": False}},
             {
                 "property": "投稿予定日",
                 "date": {"is_empty": True},
             },
-            {
-                "property": "スキップ",
-                "checkbox": {"equals": False}
-            },
+            {"property": "スキップ", "checkbox": {"equals": False}},
+            self._build_ready_filter(),
+            self._build_min_completed_date_filter(),
         ]
 
     def _query_candidates(self, filters: list[dict], limit: int) -> list[WorkItem]:
@@ -767,19 +871,19 @@ class NotionDB:
             path=f"databases/{self.database_id}/query",
             method="POST",
             body={
-                "filter": {
-                    "and": filters
-                },
+                "filter": {"and": filters},
                 "sorts": [
                     {"property": "完成日", "direction": "ascending"},
-                    {"timestamp": "created_time", "direction": "ascending"}
+                    {"timestamp": "created_time", "direction": "ascending"},
                 ],
                 "page_size": limit,
             },
         )
         return [self._parse_page(page) for page in response["results"]]
 
-    def get_catchup_candidates(self, target_platform: str, other_platforms: list[str], limit: int = 10) -> list[WorkItem]:
+    def get_catchup_candidates(
+        self, target_platform: str, other_platforms: list[str], limit: int = 10
+    ) -> list[WorkItem]:
         """
         Get candidates for 'Catch-up Post'.
         Condition: Unposted on target_platform AND posted on at least one other_platform.
@@ -796,10 +900,7 @@ class NotionDB:
         for p in other_platforms:
             prop = PLATFORM_POSTED_PROPERTY.get(p)
             if prop:
-                other_filters.append({
-                    "property": prop,
-                    "checkbox": {"equals": True}
-                })
+                other_filters.append({"property": prop, "checkbox": {"equals": True}})
 
         if other_filters:
             filters.append({"or": other_filters})
