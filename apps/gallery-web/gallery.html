@@ -4198,6 +4198,10 @@
 				if (!nickname && parsed.nickname) nickname = parsed.nickname;
 				if (!realName && parsed.realName) realName = parsed.realName;
 				if (!label) label = nickname || realName;
+				const sameNameInRecord = isMaskTargetNamePair(
+					record?.nickname,
+					record?.realName,
+				);
 
 				const uniqueIds = uniqueStrings(ids.map(normalizeAuthorId).filter(Boolean));
 				const canonicalId =
@@ -4218,6 +4222,9 @@
 					label: trimText(label),
 					nickname: trimText(nickname),
 					realName: trimText(realName),
+					sameName:
+						Boolean(sameNameInRecord) ||
+						isMaskTargetNamePair(nickname, realName),
 					ids: uniqueIds,
 					matchKeys,
 				};
@@ -4241,6 +4248,7 @@
 						existing.nickname = resolved.nickname;
 					if (!existing.realName && resolved.realName)
 						existing.realName = resolved.realName;
+					existing.sameName = Boolean(existing.sameName || resolved.sameName);
 				});
 				return Array.from(byKey.values());
 			}
@@ -4285,11 +4293,32 @@
 				};
 			}
 
-			function shouldApplySameNameRule(author) {
-				const { nickname, realName } = resolveAuthorNames(author);
-				if (!realName || !nickname) return false;
-				return realName === nickname;
-			}
+				function isSameNamePair(nickname, realName) {
+					const nick = trimText(nickname);
+					const real = trimText(realName);
+					if (!nick || !real) return false;
+					return nick === real;
+				}
+
+				function isFirstTwoCharsPair(nickname, realName) {
+					const nick = trimText(nickname);
+					const real = trimText(realName);
+					if (!nick || !real) return false;
+					return nick === sliceFirstChars(real, 2);
+				}
+
+				function isMaskTargetNamePair(nickname, realName) {
+					return (
+						isSameNamePair(nickname, realName) ||
+						isFirstTwoCharsPair(nickname, realName)
+					);
+				}
+
+				function shouldApplySameNameRule(author) {
+					if (author?.sameName) return true;
+					const { nickname, realName } = resolveAuthorNames(author);
+					return isMaskTargetNamePair(nickname, realName);
+				}
 
 			function shouldMaskAuthorWithAlias(author) {
 				if (state.viewer.isLoggedIn) return false;
