@@ -3,6 +3,8 @@ import { debounce, el, formatIso, normalizeSearch, qs, qsa, showToast } from "..
 const ADMIN_API_TOKEN_STORAGE_KEY = "gallery.adminApiToken.v1";
 const COMPACT_HEADER_MEDIA_QUERY = "(max-width: 760px)";
 const JST_TIME_ZONE = "Asia/Tokyo";
+const DEFAULT_INITIAL_TAG_CANDIDATE_NAMES = Object.freeze(["どうぶつ", "だるま", "たべもの", "グループショット"]);
+const MAX_INITIAL_TAG_CANDIDATE_NAMES = 20;
 
 const state = {
 	config: null,
@@ -713,6 +715,46 @@ function findExistingTagIdByName(name) {
 	return trimText(state.tagsByNormalizedName.get(q));
 }
 
+function normalizeInitialTagCandidateNames(rawNames) {
+	const values = Array.isArray(rawNames) ? rawNames : [];
+	const out = [];
+	const seen = new Set();
+	for (const rawName of values) {
+		const name = trimText(rawName);
+		const key = normalizeTagNameKey(name);
+		if (!key || seen.has(key)) continue;
+		seen.add(key);
+		out.push(name);
+		if (out.length >= MAX_INITIAL_TAG_CANDIDATE_NAMES) break;
+	}
+	return out;
+}
+
+function getConfiguredInitialTagCandidateNames() {
+	if (Array.isArray(state.schema?.tagInitialCandidateNames)) {
+		return normalizeInitialTagCandidateNames(state.schema.tagInitialCandidateNames);
+	}
+	return normalizeInitialTagCandidateNames(DEFAULT_INITIAL_TAG_CANDIDATE_NAMES);
+}
+
+function resolveConfiguredInitialTagCandidates() {
+	const names = getConfiguredInitialTagCandidateNames();
+	const entries = [];
+	const seen = new Set();
+	for (const name of names) {
+		const found = findExistingTagIdByName(name);
+		const id = resolveMergedTagId(found);
+		if (!id || seen.has(id)) continue;
+		seen.add(id);
+		const tag = state.tagsById.get(id);
+		entries.push({
+			id,
+			name: trimText(tag?.name || name || id),
+		});
+	}
+	return entries;
+}
+
 function normalizeTagIdList(ids) {
 	if (!Array.isArray(ids)) return [];
 	const out = [];
@@ -1325,6 +1367,34 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 	};
 }
 
+function renderInitialTagSuggest(root, { explicitIds = [], onTagAdded = null } = {}) {
+	if (!root) return;
+	root.innerHTML = "";
+	const candidates = resolveConfiguredInitialTagCandidates();
+	if (candidates.length === 0) {
+		root.hidden = true;
+		return;
+	}
+
+	const selectedSet = new Set(normalizeTagIdList(explicitIds));
+	root.hidden = false;
+	root.appendChild(el("span", { class: "subnote", text: "初期候補：" }));
+	for (const candidate of candidates) {
+		const selected = selectedSet.has(candidate.id);
+		const chip = el("button", {
+			type: "button",
+			class: `chip chip--initial-tag-candidate${selected ? " is-selected" : ""}`,
+			disabled: selected,
+		});
+		chip.appendChild(el("span", { text: candidate.name }));
+		chip.addEventListener("click", () => {
+			if (selected) return;
+			onTagAdded?.(candidate.id);
+		});
+		root.appendChild(chip);
+	}
+}
+
 function renderTitleTagSuggest(root, { getTitle, getExplicitTagIds, onTagAdded }) {
 	root.innerHTML = "";
 	const title = trimText(getTitle());
@@ -1429,6 +1499,8 @@ async function loadSchemaAndIndexes() {
 	if (state.tagsIndex) {
 		state.tagsSearch = buildTagSearchList(state.tagsIndex);
 	}
+
+	refreshTagEditorsInitialCandidates();
 
 	setBanner(bannerText, { type: bannerType });
 
@@ -2527,6 +2599,7 @@ function createTagEditorController({
 } = {}) {
 	const root = el("div", { class: "tag-editor" });
 	const chipsRoot = el("div", { class: "chips", "aria-label": "選択中のタグ" });
+	const initialTagRoot = el("div", { class: "chips tag-initial-candidates", "aria-label": "初期候補タグ", hidden: true });
 	const queryEl = el("input", { class: "input", type: "text", placeholder: "1文字目から検索", autocomplete: "off" });
 	const suggestRoot = el("div", { class: "suggest" });
 	const queryWrap = el("div", { class: "tag-input" }, [queryEl, suggestRoot]);
@@ -2564,6 +2637,7 @@ function createTagEditorController({
 	});
 
 	root.appendChild(chipsRoot);
+	root.appendChild(initialTagRoot);
 	root.appendChild(queryWrap);
 	root.appendChild(derivedNote);
 	root.appendChild(childSuggestRoot);
@@ -2588,6 +2662,14 @@ function createTagEditorController({
 			explicitIds: normalizedExplicit,
 			derivedIds,
 			onAdd: (id) => setExplicitTagIds(Array.from(new Set([...normalizedExplicit, id]))),
+		});
+		renderInitialTagSuggest(initialTagRoot, {
+			explicitIds: normalizedExplicit,
+			onTagAdded: (id) => {
+				const resolvedId = resolveMergedTagId(id);
+				if (!resolvedId) return;
+				setExplicitTagIds(Array.from(new Set([...normalizedExplicit, resolvedId])));
+			},
 		});
 		refreshTitleTag();
 		relationEditor.refreshContext();
@@ -2658,6 +2740,16 @@ function createTagEditorController({
 		resetTagState: () => setExplicitTagIds([]),
 		resetRelationSelection: () => relationEditor.resetSelection(),
 		refreshRelationContext: () => relationEditor.refreshContext(),
+		refreshInitialTagSuggest: () => {
+			renderInitialTagSuggest(initialTagRoot, {
+				explicitIds: explicitTagIds,
+				onTagAdded: (id) => {
+					const resolvedId = resolveMergedTagId(id);
+					if (!resolvedId) return;
+					setExplicitTagIds(Array.from(new Set([...explicitTagIds, resolvedId])));
+				},
+			});
+		},
 		refreshTitleTag,
 		destroy: () => {
 			if (watchTitleInputEl) watchTitleInputEl.removeEventListener("input", onTitleInput);
@@ -3973,6 +4065,136 @@ function initHeaderActions() {
 	}
 }
 
+function refreshTagEditorsInitialCandidates() {
+	state.upload.tagEditor?.refreshInitialTagSuggest?.();
+}
+
+function createTagInitialCandidatesToolsEditor() {
+	const root = el("div", { class: "tag-initial-tools" });
+	const selectedRoot = el("div", { class: "chips", "aria-label": "設定中の初期候補タグ" });
+	const queryInput = el("input", {
+		class: "input input--sm",
+		type: "text",
+		placeholder: "タグを検索して追加",
+		autocomplete: "off",
+	});
+	const suggestRoot = el("div", { class: "suggest" });
+	const queryWrap = el("div", { class: "tag-input" }, [queryInput, suggestRoot]);
+	const actionsRoot = el("div", { class: "tag-initial-tools__actions" });
+	const saveBtn = el("button", { type: "button", class: "btn btn--primary", text: "保存" });
+	const applyDefaultBtn = el("button", { type: "button", class: "btn", text: "既定4件をセット" });
+	const hint = el("div", { class: "subnote", text: "アップロード/整備モードのタグ選択欄で先頭に表示されます。" });
+
+	actionsRoot.appendChild(saveBtn);
+	actionsRoot.appendChild(applyDefaultBtn);
+	root.appendChild(selectedRoot);
+	root.appendChild(queryWrap);
+	root.appendChild(actionsRoot);
+	root.appendChild(hint);
+
+	let selectedNames = getConfiguredInitialTagCandidateNames();
+
+	const setSelectedNames = (names) => {
+		selectedNames = normalizeInitialTagCandidateNames(names);
+		renderSelected();
+	};
+
+	const renderSelected = () => {
+		selectedRoot.innerHTML = "";
+		if (selectedNames.length === 0) {
+			selectedRoot.appendChild(el("span", { class: "subnote", text: "初期候補は未設定です。" }));
+			return;
+		}
+		for (const name of selectedNames) {
+			const resolvedId = resolveMergedTagId(findExistingTagIdByName(name));
+			const resolvedName = trimText(state.tagsById.get(resolvedId)?.name || name);
+			const chip = el("span", {
+				class: `chip chip--tag-selected${resolvedId ? "" : " is-unmatched"}`,
+				title: resolvedId ? "" : "タグインデックスに一致しません",
+			});
+			chip.appendChild(el("span", { text: resolvedId ? resolvedName : `${resolvedName}（未一致）` }));
+			const remove = el("button", { type: "button", "aria-label": "削除", text: "×" });
+			remove.addEventListener("click", (e) => {
+				e.stopPropagation();
+				setSelectedNames(selectedNames.filter((entry) => normalizeTagNameKey(entry) !== normalizeTagNameKey(name)));
+			});
+			chip.appendChild(remove);
+			selectedRoot.appendChild(chip);
+		}
+	};
+
+	const persist = async () => {
+		saveBtn.disabled = true;
+		applyDefaultBtn.disabled = true;
+		try {
+			const res = await apiFetch("/admin/ui-settings", {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ tagInitialCandidateNames: selectedNames }),
+			});
+			const names = normalizeInitialTagCandidateNames(res?.tagInitialCandidateNames);
+			state.schema = {
+				...(state.schema && typeof state.schema === "object" ? state.schema : {}),
+				tagInitialCandidateNames: names,
+			};
+			setSelectedNames(names);
+			refreshTagEditorsInitialCandidates();
+			showToast("初期候補タグを保存しました");
+		} catch (err) {
+			showToast(`初期候補タグの保存に失敗: ${err.message}`);
+		} finally {
+			saveBtn.disabled = false;
+			applyDefaultBtn.disabled = false;
+		}
+	};
+
+	const renderSuggest = () => {
+		const q = trimText(queryInput.value);
+		suggestRoot.innerHTML = "";
+		if (!q) return;
+		const selectedKeys = new Set(selectedNames.map((name) => normalizeTagNameKey(name)));
+		const list = searchTags(q).filter((tag) => !selectedKeys.has(normalizeTagNameKey(tag?.name)));
+		for (const tag of list) {
+			const hintText = tag.status === "merged" ? "統合タグ" : tag.usage_count ? `作品数 ${tag.usage_count}` : "";
+			const item = el("div", { class: "suggest-item" }, [
+				el("span", { text: tag.name }),
+				el("span", { class: "suggest-item__hint", text: hintText }),
+			]);
+			item.addEventListener("click", () => {
+				setSelectedNames([...selectedNames, tag.name]);
+				queryInput.value = "";
+				suggestRoot.innerHTML = "";
+				queryInput.focus();
+			});
+			suggestRoot.appendChild(item);
+		}
+	};
+
+	saveBtn.addEventListener("click", () => void persist());
+	applyDefaultBtn.addEventListener("click", () => {
+		setSelectedNames(DEFAULT_INITIAL_TAG_CANDIDATE_NAMES);
+		void persist();
+	});
+
+	queryInput.addEventListener("input", debounce(renderSuggest, 120));
+	queryInput.addEventListener("focus", () => {
+		if (trimText(queryInput.value)) renderSuggest();
+	});
+	queryInput.addEventListener("blur", () => {
+		window.setTimeout(() => {
+			suggestRoot.innerHTML = "";
+		}, 120);
+	});
+
+	renderSelected();
+	return {
+		root,
+		refreshFromState: () => {
+			setSelectedNames(getConfiguredInitialTagCandidateNames());
+		},
+	};
+}
+
 function initToolsActions() {
 	const tagEditorMount = qs("#tools-tag-relation-editor");
 	if (tagEditorMount) {
@@ -3981,6 +4203,14 @@ function initToolsActions() {
 			onTagAdded: () => {},
 		});
 		tagEditorMount.appendChild(relationEditor.root);
+	}
+
+	const initialCandidateEditorMount = qs("#tools-tag-initial-candidates-editor");
+	if (initialCandidateEditorMount) {
+		initialCandidateEditorMount.innerHTML = "";
+		const editor = createTagInitialCandidatesToolsEditor();
+		initialCandidateEditorMount.appendChild(editor.root);
+		editor.refreshFromState();
 	}
 
 	const recalcStatusEl = qs("#tools-tags-recalc-status");

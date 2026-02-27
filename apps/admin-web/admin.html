@@ -5,7 +5,7 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>先生専用アップロード</title>
 		<link rel="stylesheet" href="./shared/gallery-core.css" />
-			<link rel="stylesheet" href="./admin/admin.css?v=20260228-1" />
+		<link rel="stylesheet" href="./admin/admin.css?v=20260228-2" />
 	</head>
 	<body>
 		<div
@@ -254,14 +254,24 @@
 
 				<section id="view-tools" class="view" data-view="tools">
 					<h2 class="view-title">ツール</h2>
-						<div class="panel">
-							<div class="label">タグ管理（タグDB）</div>
-							<div id="tools-tag-relation-editor"></div>
-							<details class="help-toggle">
-								<summary class="help-toggle__summary" aria-label="タグ管理の説明を表示">?</summary>
-								<div class="help-toggle__body subnote">親/子の検索候補からタグを新規作成し、既存タグ同士の親子関係を追加できます。</div>
-							</details>
-						</div>
+					<div class="panel">
+						<div class="label">タグ管理（タグDB）</div>
+						<div id="tools-tag-relation-editor"></div>
+						<details class="help-toggle">
+							<summary class="help-toggle__summary" aria-label="タグ管理の説明を表示">?</summary>
+							<div class="help-toggle__body subnote">親/子の検索候補からタグを新規作成し、既存タグ同士の親子関係を追加できます。</div>
+						</details>
+					</div>
+					<div class="panel">
+						<div class="label">タグ選択の初期候補</div>
+						<div id="tools-tag-initial-candidates-editor"></div>
+						<details class="help-toggle">
+							<summary class="help-toggle__summary" aria-label="タグ初期候補の説明を表示">?</summary>
+							<div class="help-toggle__body subnote">
+								アップロード/整備モードのタグ選択欄に最初から表示する候補タグを設定できます。
+							</div>
+						</details>
+					</div>
 					<div class="panel">
 						<div class="toolbar">
 							<div>
@@ -303,6 +313,6 @@
 			<div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="true"></div>
 		</div>
 
-		<script type="module" src="./admin/admin.js?v=20260228-1"></script>
+		<script type="module" src="./admin/admin.js?v=20260228-2"></script>
 	</body>
 </html>

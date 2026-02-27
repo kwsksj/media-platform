@@ -394,6 +394,45 @@ select.input[multiple] option {
 	gap: 8px;
 }
 
+.tag-initial-candidates {
+	gap: 6px;
+}
+
+.chip--initial-tag-candidate {
+	cursor: pointer;
+	font: inherit;
+}
+
+.chip--initial-tag-candidate.is-selected {
+	border-color: rgba(43, 106, 255, 0.45);
+	background: rgba(43, 106, 255, 0.08);
+	color: #0d39a6;
+	font-weight: 700;
+	cursor: default;
+}
+
+.chip--initial-tag-candidate:disabled {
+	opacity: 1;
+}
+
+.tag-initial-tools {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.tag-initial-tools__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.chip--tag-selected.is-unmatched {
+	border-color: rgba(176, 125, 0, 0.48);
+	background: rgba(196, 124, 0, 0.12);
+	color: #6c4a00;
+}
+
 .tag-input {
 	position: relative;
 }

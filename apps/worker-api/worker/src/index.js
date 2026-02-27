@@ -8,6 +8,9 @@ const UPLOAD_NOTIFY_PENDING_WORK_PREFIX = "upload_notify:pending:work:";
 const UPLOAD_NOTIFY_STATUS_WORK_PREFIX = "upload_notify:status:work:";
 const UPLOAD_NOTIFY_DISABLED_WORK_PREFIX = "upload_notify:disabled:work:";
 const IMAGE_KEY_PREFIXES = ["photos/", "photos-light/", "images/", "images-light/", "uploads/", "uploads-light/"];
+const ADMIN_UI_SETTINGS_KEY = "admin:ui-settings:v1";
+const DEFAULT_TAG_INITIAL_CANDIDATE_NAMES = ["どうぶつ", "だるま", "たべもの", "グループショット"];
+const MAX_TAG_INITIAL_CANDIDATE_NAMES = 20;
 
 function withCors(headers = {}) {
   return { ...CORS_HEADERS, ...headers };
@@ -325,6 +328,65 @@ function normalizeTagAliasValues(raw) {
     }
   }
   return out;
+}
+
+function normalizeInitialTagCandidateNames(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const value of raw) {
+    const name = asString(value).trim();
+    const key = normalizeTagNameKey(name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+    if (out.length >= MAX_TAG_INITIAL_CANDIDATE_NAMES) break;
+  }
+  return out;
+}
+
+function getDefaultInitialTagCandidateNames() {
+  return DEFAULT_TAG_INITIAL_CANDIDATE_NAMES.slice();
+}
+
+async function loadAdminUiSettings(env) {
+  if (!env.STAR_KV) return { tagInitialCandidateNames: null };
+  const raw = await env.STAR_KV.get(ADMIN_UI_SETTINGS_KEY);
+  if (!raw) return { tagInitialCandidateNames: null };
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { tagInitialCandidateNames: null };
+    }
+    if (!Object.prototype.hasOwnProperty.call(parsed, "tagInitialCandidateNames")) {
+      return { tagInitialCandidateNames: null };
+    }
+    return {
+      tagInitialCandidateNames: normalizeInitialTagCandidateNames(parsed.tagInitialCandidateNames),
+    };
+  } catch {
+    return { tagInitialCandidateNames: null };
+  }
+}
+
+async function saveAdminUiSettings(env, { tagInitialCandidateNames }) {
+  if (!env.STAR_KV) return { ok: false, reason: "kv_not_configured", tagInitialCandidateNames: [] };
+  const names = normalizeInitialTagCandidateNames(tagInitialCandidateNames);
+  const current = await loadAdminUiSettings(env);
+  const payload = {
+    ...(current && typeof current === "object" ? current : {}),
+    tagInitialCandidateNames: names,
+    updatedAt: new Date().toISOString(),
+  };
+  await env.STAR_KV.put(ADMIN_UI_SETTINGS_KEY, JSON.stringify(payload));
+  return { ok: true, tagInitialCandidateNames: names };
+}
+
+function resolveInitialTagCandidateNames(uiSettings) {
+  if (Array.isArray(uiSettings?.tagInitialCandidateNames)) {
+    return uiSettings.tagInitialCandidateNames;
+  }
+  return getDefaultInitialTagCandidateNames();
 }
 
 function findExistingTagByNameOrAlias(tags, names) {
@@ -954,8 +1016,33 @@ async function handleNotionSchema(env) {
   const authorProp = worksProps.author ? properties[worksProps.author] : null;
   const supportsAuthor = Boolean(authorProp && authorProp.type === "relation");
   const supportsVenue = Boolean(worksProps.venue && properties[worksProps.venue]);
+  const uiSettings = await loadAdminUiSettings(env);
+  const tagInitialCandidateNames = resolveInitialTagCandidateNames(uiSettings);
 
-  return okResponse({ classroomOptions, venueOptions, supportsAuthor, supportsVenue });
+  return okResponse({ classroomOptions, venueOptions, supportsAuthor, supportsVenue, tagInitialCandidateNames });
+}
+
+async function handleAdminUiSettingsGet(env) {
+  const uiSettings = await loadAdminUiSettings(env);
+  const tagInitialCandidateNames = resolveInitialTagCandidateNames(uiSettings);
+  return okResponse({ tagInitialCandidateNames });
+}
+
+async function handleAdminUiSettingsPatch(request, env) {
+  const payload = await readJson(request);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return badRequest("invalid json");
+  if (!Object.prototype.hasOwnProperty.call(payload, "tagInitialCandidateNames")) {
+    return badRequest("missing tagInitialCandidateNames");
+  }
+  if (!Array.isArray(payload.tagInitialCandidateNames)) {
+    return badRequest("tagInitialCandidateNames must be an array");
+  }
+
+  const updated = await saveAdminUiSettings(env, {
+    tagInitialCandidateNames: payload.tagInitialCandidateNames,
+  });
+  if (!updated.ok) return serverError("KV binding not configured (STAR_KV)");
+  return okResponse({ tagInitialCandidateNames: updated.tagInitialCandidateNames });
 }
 
 async function handleNotionListWorks(url, env) {
@@ -4036,6 +4123,14 @@ export default {
     if (pathname.startsWith("/admin/")) {
       const authError = requireAdminAuthorization(request, env);
       if (authError) return authError;
+    }
+
+    if (pathname === "/admin/ui-settings" && request.method === "GET") {
+      return handleAdminUiSettingsGet(env);
+    }
+
+    if (pathname === "/admin/ui-settings" && request.method === "PATCH") {
+      return handleAdminUiSettingsPatch(request, env);
     }
 
     if (pathname === "/admin/notion/schema" && request.method === "GET") {
