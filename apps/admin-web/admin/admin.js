@@ -3936,6 +3936,19 @@ function renderWorkModal(work, index) {
 			ready: forceReady ? true : readyCb.checked,
 			notificationDisabled: notifyDisabledCb.checked,
 		};
+		if (Array.isArray(work.images)) {
+			payload.images = work.images.reduce((acc, image) => {
+				const url = trimText(image?.url);
+				if (!url) return acc;
+				const type = trimText(image?.type).toLowerCase();
+				acc.push({
+					url,
+					name: trimText(image?.name),
+					...(type === "file" || type === "external" ? { type } : {}),
+				});
+				return acc;
+			}, []);
+		}
 
 		try {
 			await apiFetch("/admin/notion/work", {
