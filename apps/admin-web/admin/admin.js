@@ -3937,16 +3937,17 @@ function renderWorkModal(work, index) {
 			notificationDisabled: notifyDisabledCb.checked,
 		};
 		if (Array.isArray(work.images)) {
-			payload.images = work.images
-				.map((image) => {
-					const type = trimText(image?.type).toLowerCase();
-					return {
-						url: trimText(image?.url),
-						name: trimText(image?.name),
-						...(type === "file" || type === "external" ? { type } : {}),
-					};
-				})
-				.filter((image) => image.url);
+			payload.images = work.images.reduce((acc, image) => {
+				const url = trimText(image?.url);
+				if (!url) return acc;
+				const type = trimText(image?.type).toLowerCase();
+				acc.push({
+					url,
+					name: trimText(image?.name),
+					...(type === "file" || type === "external" ? { type } : {}),
+				});
+				return acc;
+			}, []);
 		}
 
 		try {
