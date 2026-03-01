@@ -34,6 +34,9 @@
   - Approved review を契機に auto-merge を有効化（`--auto --squash --delete-branch`）
   - merge 後に head branch 削除をフォールバック実行
   - Worker/Gallery/Admin 関連変更時のみ `Worker Deploy` / `Daily Gallery Export` / `Admin Web Deploy` を merge 後に自動起動
+  - ローカル `make pr-merge-local` では AI レビュー待機を実施
+    - Gemini: review from `gemini-code-assist[bot]`（概要コメントのみは未完了扱い）
+    - Codex: comment/review or `+1` reaction from `chatgpt-codex-connector[bot]`
 
 Repository Variables:
 
@@ -60,9 +63,11 @@ make check-monorepo
 make check-markdown
 
 # PRマージ + ローカルブランチ整理
-make pr-merge-local PR=16
+make pr-merge-local PR=<number>
 # 例: 最大30秒だけ待機
-PR_MERGE_WAIT_SECONDS=30 make pr-merge-local PR=16
+PR_MERGE_WAIT_SECONDS=30 make pr-merge-local PR=<number>
+# 例: AIレビュー待機を最大20分に延長
+PR_AI_REVIEW_WAIT_SECONDS=1200 make pr-merge-local PR=<number>
 
 # ingest dry-run
 make ingest-preview TAKEOUT_DIR=./takeout-photos

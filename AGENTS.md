@@ -15,7 +15,7 @@ make check-changed-python
 make check-fast
 make check-monorepo
 make check-markdown
-make pr-merge-local PR=16
+make pr-merge-local PR=<number>
 ```
 
 Optional:
@@ -24,7 +24,7 @@ make setup-admin-web
 make pre-commit-install
 make fix-changed-python
 make check-markdown
-make pr-merge-local PR=16
+make pr-merge-local PR=<number>
 ```
 
 ## Preferred Validation Order
@@ -56,3 +56,6 @@ make pr-merge-local PR=16
 - Prefer `--auto --squash --delete-branch` merge style for this repository.
 - Use repository automation in `.github/workflows/pr-lifecycle.yml` for approval-to-merge and post-merge hooks.
 - For local cleanup, prefer `make pr-merge-local PR=<number>` to merge and delete the local branch after merge.
+- Before merge, wait for AI review signals from both Gemini and Codex:
+  - Gemini: review from `gemini-code-assist[bot]`（概要コメントだけでは不可）
+  - Codex: comment/review or `+1` reaction from `chatgpt-codex-connector[bot]`
