@@ -27,6 +27,9 @@ if ! command -v rclone >/dev/null 2>&1; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
 MODE="${1:-backup}"
 if [[ "$#" -gt 0 ]]; then
   shift
@@ -77,10 +80,10 @@ R2_BUCKET_NAME="${R2_BUCKET_NAME:-}"
 R2_BACKUP_REMOTE="${R2_BACKUP_REMOTE:-gdrive:media-platform-r2/current}"
 
 # Allow running via "make r2-backup*" without manual export.
-if [[ -f ".env" ]]; then
+if [[ -f "${REPO_DIR}/.env" ]]; then
   set -a
   # shellcheck disable=SC1091
-  source ".env"
+  source "${REPO_DIR}/.env"
   set +a
 fi
 

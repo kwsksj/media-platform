@@ -156,14 +156,14 @@ def build_recommendations(paths: list[str], strict: bool = False) -> list[Recomm
 
     if any(posting_related(path) for path in paths):
         add(
-            command="make publish-dry",
+            command="make publish-daily-dry",
             reason="validate posting flow with dry-run",
             required=False,
         )
 
     if any(gallery_related(path) for path in paths):
         add(
-            command="make gallery-export",
+            command="make gallery-build-dry",
             reason="validate gallery export path",
             required=False,
         )
@@ -184,7 +184,7 @@ def build_recommendations(paths: list[str], strict: bool = False) -> list[Recomm
 
     if any(has_prefix(path, "apps/worker-api") for path in paths):
         add(
-            command="make worker-dry",
+            command="make deploy-worker-dry",
             reason="run Worker deploy dry-run",
             required=False,
         )

@@ -262,7 +262,7 @@ auto-post check-notion
 auto-post list-works
 
 # 投稿 dry-run
-make publish-dry
+make publish-daily-dry
 
 # 月次日程画像のdry-run
 make publish-monthly-schedule-dry

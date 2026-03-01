@@ -58,27 +58,48 @@ make pre-commit-install
 ```
 
 `.vscode/tasks.json` を同梱しているため、VSCode では `Run Task` から
-`Check Changed Python` / `Check Fast` / `Publish Dry Run` を直接実行できます。
+`Check Changed Python` / `Check Fast` / `Publish Daily Dry Run` を直接実行できます。
 `check-required-strict` は、マージ前に cross-cutting な変更を強めに検証したいときに使います。
 
 ```bash
-# 投稿 dry-run
-make publish-dry
+# 投稿 dry-run（推奨）
+make publish-daily-dry
+
+# 投稿本番
+make publish-daily DATE=2026-03-01
 
 # catch-up dry-run
 make publish-catchup-dry
 
+# catch-up 本番
+make publish-catchup
+
 # monthly schedule dry-run
 make publish-monthly-schedule-dry
 
-# gallery export dry-run（R2アップロードなし）
-make gallery-export
+# monthly schedule 本番（例: next month）
+make publish-monthly-schedule MONTHLY_TARGET=next
+
+# gallery build dry-run（R2アップロードなし）
+make gallery-build-dry
+
+# gallery data deploy（gallery.json + thumbs + images_light）
+make deploy-gallery-data
+
+# gallery.html deploy
+make deploy-gallery-html
 
 # タグ再計算 dry-run
 make gallery-tag-recalc-dry
 
+# 先生専用UI deploy
+make deploy-admin
+
 # Worker deploy dry-run
-make worker-dry
+make deploy-worker-dry
+
+# Worker deploy 本番
+make deploy-worker
 ```
 
 詳細セットアップ: `docs/setup.md`
@@ -122,13 +143,20 @@ make check-markdown
 make pr-merge-local PR=16
 make ingest-preview TAKEOUT_DIR=./takeout-photos
 make ingest-import-dry TAKEOUT_DIR=./takeout-photos
-make publish-dry
+make publish-daily-dry
+make publish-daily
 make publish-catchup-dry
+make publish-catchup
 make publish-monthly-schedule-dry
-make gallery-export
+make publish-monthly-schedule
+make gallery-build-dry
+make gallery-build
 make gallery-tag-recalc-dry
+make deploy-gallery
+make deploy-admin
+make deploy-worker-dry
+make deploy-worker
 make admin-smoke
-make worker-dry
 ```
 
 ### 責務別エントリ

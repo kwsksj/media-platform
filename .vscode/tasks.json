@@ -50,9 +50,9 @@
       "group": "test"
     },
     {
-      "label": "Publish Dry Run",
+      "label": "Publish Daily Dry Run",
       "type": "shell",
-      "command": "make publish-dry",
+      "command": "make publish-daily-dry",
       "group": "test"
     }
   ]

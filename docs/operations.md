@@ -68,18 +68,27 @@ PR_MERGE_WAIT_SECONDS=30 make pr-merge-local PR=16
 make ingest-preview TAKEOUT_DIR=./takeout-photos
 make ingest-import-dry TAKEOUT_DIR=./takeout-photos
 
-# publish dry-run
-make publish-dry
+# publish (dry-run / live)
+make publish-daily-dry
+make publish-daily DATE=2026-03-01
 make publish-catchup-dry
+make publish-catchup
 make publish-monthly-schedule-dry
+make publish-monthly-schedule MONTHLY_TARGET=next
 
-# gallery build dry-run
-make gallery-export
+# gallery build (dry-run / live)
+make gallery-build-dry
+make gallery-build
 make gallery-tag-recalc-dry
 
-# app smoke / deploy dry-run
+# deploy (dry-run / live)
+make deploy-gallery
+make deploy-admin
+make deploy-worker-dry
+make deploy-worker
+
+# app smoke
 make admin-smoke
-make worker-dry
 
 # R2 backup / restore drill (rclone)
 make r2-backup-dry
