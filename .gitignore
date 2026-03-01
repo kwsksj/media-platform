@@ -62,3 +62,4 @@ Thumbs.db
 scripts/archive/
 archive/
 tmp/
+.codex/environments/environment.toml
