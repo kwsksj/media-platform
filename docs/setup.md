@@ -253,7 +253,7 @@ make check-monorepo
 make check-markdown
 
 # PRマージ + ローカルブランチ整理
-make pr-merge-local PR=16
+make pr-merge-local PR=<number>
 
 # Notion 接続確認
 auto-post check-notion

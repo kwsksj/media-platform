@@ -46,7 +46,7 @@ make check-changed-python
 make check-fast
 make check-monorepo
 make check-markdown
-make pr-merge-local PR=16
+make pr-merge-local PR=<number>
 ```
 
 ```bash
@@ -140,7 +140,7 @@ make check-fast
 make check-python
 make check-monorepo
 make check-markdown
-make pr-merge-local PR=16
+make pr-merge-local PR=<number>
 make ingest-preview TAKEOUT_DIR=./takeout-photos
 make ingest-import-dry TAKEOUT_DIR=./takeout-photos
 make publish-daily-dry
@@ -225,8 +225,13 @@ GitHub Repository Secrets:
 
 - `make pr-merge-local PR=<number>`
   - `gh pr merge --auto --squash --delete-branch` を実行
+  - マージ前に AI レビュー反応を待機
+    - Gemini: `gemini-code-assist[bot]` の review を優先（概要コメントのみの場合は猶予時間経過後に通過）
+    - Codex: `chatgpt-codex-connector[bot]` の comment/review または `+1` reaction
   - PR が `MERGED` になったら default branch に戻って `git branch -d` まで実施
   - 待機秒数は `PR_MERGE_WAIT_SECONDS`（既定: `600`）で調整可能
+  - AI待機は `PR_AI_REVIEW_WAIT_SECONDS`（既定: `900`）で調整可能
+  - Gemini の review 猶予は `PR_GEMINI_REVIEW_GRACE_SECONDS`（既定: `180`）で調整可能
 
 ### 画像リンク健全性チェックのオプション設定
 

@@ -9,12 +9,24 @@ Usage:
   scripts/gh_pr_merge_and_cleanup_local.sh [PR_NUMBER]
 
 Behavior:
-  1) gh pr merge --auto --squash --delete-branch
-  2) Wait for merge completion (default: 600s, configurable by PR_MERGE_WAIT_SECONDS)
-  3) If PR state is MERGED:
+  1) Wait for AI review signals (enabled by default)
+     - Gemini: review from gemini-code-assist[bot]
+       (fallback: if only summary comment arrives, proceed after grace period)
+     - Codex: comment/review OR +1 reaction from chatgpt-codex-connector[bot]
+  2) gh pr merge --auto --squash --delete-branch
+  3) Wait for merge completion (default: 600s, configurable by PR_MERGE_WAIT_SECONDS)
+  4) If PR state is MERGED:
      - switch to default branch
      - fast-forward pull
      - delete the original local branch (force-delete fallback for squash/rebase merge)
+
+Environment variables:
+  PR_REQUIRE_AI_REVIEW=true|false     (default: true)
+  PR_AI_REVIEW_WAIT_SECONDS=900       (default timeout)
+  PR_AI_REVIEW_POLL_SECONDS=10        (default poll interval)
+  PR_GEMINI_REVIEW_GRACE_SECONDS=180  (fallback grace after Gemini summary comment)
+  PR_GEMINI_BOT_LOGIN=...             (default: gemini-code-assist[bot])
+  PR_CODEX_BOT_LOGIN=...              (default: chatgpt-codex-connector[bot])
 EOF
 }
 
@@ -41,7 +53,24 @@ fi
 start_branch="$(git rev-parse --abbrev-ref HEAD)"
 repo_slug="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
 default_branch="$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')"
-wait_seconds="${PR_MERGE_WAIT_SECONDS:-600}"
+require_ai_review="$(echo "${PR_REQUIRE_AI_REVIEW:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
+gemini_bot_login="${PR_GEMINI_BOT_LOGIN:-gemini-code-assist[bot]}"
+codex_bot_login="${PR_CODEX_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+
+sanitize_non_negative_int() {
+  local value="$1"
+  local fallback="$2"
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    printf "%s" "$value"
+  else
+    printf "%s" "$fallback"
+  fi
+}
+
+wait_seconds="$(sanitize_non_negative_int "${PR_MERGE_WAIT_SECONDS:-600}" "600")"
+ai_wait_seconds="$(sanitize_non_negative_int "${PR_AI_REVIEW_WAIT_SECONDS:-900}" "900")"
+ai_poll_seconds="$(sanitize_non_negative_int "${PR_AI_REVIEW_POLL_SECONDS:-10}" "10")"
+gemini_review_grace_seconds="$(sanitize_non_negative_int "${PR_GEMINI_REVIEW_GRACE_SECONDS:-180}" "180")"
 
 pr_number="${1:-}"
 if [[ -z "$pr_number" ]]; then
@@ -53,6 +82,110 @@ echo "PR: #$pr_number"
 echo "Current branch: $start_branch"
 echo "Default branch: $default_branch"
 echo "Wait timeout (seconds): $wait_seconds"
+echo "Require AI review signals: $require_ai_review"
+
+table_has_actor() {
+  local actor="$1"
+  local table="$2"
+  awk -F'\t' -v actor="$actor" '$1 == actor {found=1; exit} END {exit found ? 0 : 1}' <<<"$table"
+}
+
+table_has_actor_content() {
+  local actor="$1"
+  local content="$2"
+  local table="$3"
+  awk -F'\t' -v actor="$actor" -v content="$content" '$1 == actor && $2 == content {found=1; exit} END {exit found ? 0 : 1}' <<<"$table"
+}
+
+if [[ "$require_ai_review" == "true" ]]; then
+  if [[ "$ai_poll_seconds" -lt 1 ]]; then
+    ai_poll_seconds=1
+  fi
+
+  echo "Waiting for AI review signals before merge..."
+  echo "- Gemini actor: $gemini_bot_login"
+  echo "- Codex actor:  $codex_bot_login"
+  echo "- Timeout (seconds): $ai_wait_seconds"
+  echo "- Gemini review grace (seconds): $gemini_review_grace_seconds"
+
+  ai_deadline=$((SECONDS + ai_wait_seconds))
+  gemini_ready=false
+  codex_ready=false
+  gemini_comment_seen_at=""
+
+  while true; do
+    issue_comments="$(
+      gh api "repos/$repo_slug/issues/$pr_number/comments" --paginate \
+        --jq '.[] | [.user.login, .created_at] | @tsv' || true
+    )"
+    reviews="$(
+      gh api "repos/$repo_slug/pulls/$pr_number/reviews" --paginate \
+        --jq '.[] | [.user.login, .state, .submitted_at] | @tsv' || true
+    )"
+    reactions="$(
+      gh api "repos/$repo_slug/issues/$pr_number/reactions" --paginate \
+        -H "Accept: application/vnd.github+json" \
+        --jq '.[] | [.user.login, .content, .created_at] | @tsv' || true
+    )"
+
+    gemini_ready=false
+    codex_ready=false
+
+    gemini_has_review=false
+    gemini_has_comment=false
+    if table_has_actor "$gemini_bot_login" "$reviews"; then
+      gemini_has_review=true
+    fi
+    if table_has_actor "$gemini_bot_login" "$issue_comments"; then
+      gemini_has_comment=true
+    fi
+
+    if [[ "$gemini_has_review" == "true" ]]; then
+      gemini_ready=true
+    elif [[ "$gemini_has_comment" == "true" ]]; then
+      if [[ -z "$gemini_comment_seen_at" ]]; then
+        gemini_comment_seen_at="$SECONDS"
+      fi
+      gemini_comment_elapsed=$((SECONDS - gemini_comment_seen_at))
+      if [[ "$gemini_review_grace_seconds" -le 0 || "$gemini_comment_elapsed" -ge "$gemini_review_grace_seconds" ]]; then
+        gemini_ready=true
+      fi
+    else
+      gemini_comment_seen_at=""
+    fi
+
+    if table_has_actor "$codex_bot_login" "$issue_comments" \
+      || table_has_actor "$codex_bot_login" "$reviews" \
+      || table_has_actor_content "$codex_bot_login" "+1" "$reactions"; then
+      codex_ready=true
+    fi
+
+    if [[ "$gemini_ready" == "true" && "$codex_ready" == "true" ]]; then
+      echo "AI review signals received (Gemini + Codex)."
+      break
+    fi
+
+    if [[ "$ai_wait_seconds" -le 0 || "$SECONDS" -ge "$ai_deadline" ]]; then
+      echo "Timed out waiting for AI review signals." >&2
+      if [[ "$gemini_ready" != "true" ]]; then
+        echo "- Missing Gemini signal (review, or comment after grace) from: $gemini_bot_login" >&2
+      fi
+      if [[ "$codex_ready" != "true" ]]; then
+        echo "- Missing Codex signal (+1/comment/review) from: $codex_bot_login" >&2
+      fi
+      echo "Merge aborted. Re-run after AI feedback arrives, or set PR_REQUIRE_AI_REVIEW=false to override." >&2
+      exit 1
+    fi
+
+    if [[ "$gemini_ready" == "false" && "${gemini_has_comment:-false}" == "true" && "${gemini_has_review:-false}" == "false" && -n "$gemini_comment_seen_at" ]]; then
+      gemini_comment_elapsed=$((SECONDS - gemini_comment_seen_at))
+      echo "Waiting... Gemini=${gemini_ready} (summary seen, waiting review/grace ${gemini_comment_elapsed}s/${gemini_review_grace_seconds}s) Codex=${codex_ready}"
+    else
+      echo "Waiting... Gemini=${gemini_ready} Codex=${codex_ready}"
+    fi
+    sleep "$ai_poll_seconds"
+  done
+fi
 
 gh pr merge "$pr_number" \
   --repo "$repo_slug" \
