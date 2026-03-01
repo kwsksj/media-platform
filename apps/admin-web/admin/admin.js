@@ -1384,8 +1384,8 @@ function renderInitialTagSuggest(root, { explicitIds = [], onTagAdded = null } =
 		const chip = el("button", {
 			type: "button",
 			class: `chip chip--initial-tag-candidate${selected ? " is-selected" : ""}`,
-			disabled: selected,
 		});
+		chip.disabled = selected;
 		chip.appendChild(el("span", { text: candidate.name }));
 		chip.addEventListener("click", () => {
 			if (selected) return;
