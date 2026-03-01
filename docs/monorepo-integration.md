@@ -42,19 +42,19 @@ docs
 make check-monorepo
 
 # auto-post CLI dry-run
-make publish-dry
+make publish-daily-dry
 
 # catch-up dry-run
 make publish-catchup-dry
 
 # gallery export dry-run (no R2 upload)
-make gallery-export
+make gallery-build-dry
 
 # tag recalc dry-run
 make gallery-tag-recalc-dry
 
 # worker deploy dry-run
-make worker-dry
+make deploy-worker-dry
 ```
 
 ## Legacy Record

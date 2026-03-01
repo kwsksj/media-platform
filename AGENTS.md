@@ -36,7 +36,7 @@ make pr-merge-local PR=16
 6. `make test` (when Python code is changed)
 7. `make check-monorepo` (structure guard)
 8. `make check-markdown` (Markdown changes only; practical rules)
-9. Target-specific dry-run command (`make publish-dry`, `make gallery-export`, etc.)
+9. Target-specific dry-run command (`make publish-daily-dry`, `make gallery-build-dry`, `make deploy-worker-dry`, etc.)
 
 ## Repo Map
 - `src/auto_post`: Python CLI implementation

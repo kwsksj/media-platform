@@ -10,6 +10,18 @@ BUCKET="${1:-woodcarving-photos}"
 ENV_FILE="${2:-$MONOREPO_ROOT/.env}"
 OUT_DIR="${3:-$(mktemp -d)}"
 
+# Normalize relative env file paths against monorepo root because this script
+# later changes cwd to apps/admin-web.
+if [[ "$ENV_FILE" != /* ]]; then
+  ENV_FILE="${MONOREPO_ROOT}/${ENV_FILE}"
+fi
+
+# Normalize relative output directory paths against monorepo root because this
+# script later changes cwd to apps/admin-web.
+if [[ "$OUT_DIR" != /* ]]; then
+  OUT_DIR="${MONOREPO_ROOT}/${OUT_DIR}"
+fi
+
 cleanup() {
   if [[ "${3:-}" == "" ]] && [[ -d "$OUT_DIR" ]]; then
     rm -rf "$OUT_DIR"
