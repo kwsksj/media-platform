@@ -35,7 +35,7 @@
   - merge 後に head branch 削除をフォールバック実行
   - Worker/Gallery/Admin 関連変更時のみ `Worker Deploy` / `Daily Gallery Export` / `Admin Web Deploy` を merge 後に自動起動
   - ローカル `make pr-merge-local` では AI レビュー待機を実施
-    - Gemini: review from `gemini-code-assist[bot]`（概要コメントのみは未完了扱い）
+    - Gemini: review from `gemini-code-assist[bot]` を優先（概要コメントのみの場合は猶予時間経過後に通過）
     - Codex: comment/review or `+1` reaction from `chatgpt-codex-connector[bot]`
 
 Repository Variables:
