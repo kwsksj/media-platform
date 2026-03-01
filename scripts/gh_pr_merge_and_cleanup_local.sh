@@ -53,13 +53,24 @@ fi
 start_branch="$(git rev-parse --abbrev-ref HEAD)"
 repo_slug="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
 default_branch="$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')"
-wait_seconds="${PR_MERGE_WAIT_SECONDS:-600}"
 require_ai_review="$(echo "${PR_REQUIRE_AI_REVIEW:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
-ai_wait_seconds="${PR_AI_REVIEW_WAIT_SECONDS:-900}"
-ai_poll_seconds="${PR_AI_REVIEW_POLL_SECONDS:-10}"
-gemini_review_grace_seconds="${PR_GEMINI_REVIEW_GRACE_SECONDS:-180}"
 gemini_bot_login="${PR_GEMINI_BOT_LOGIN:-gemini-code-assist[bot]}"
 codex_bot_login="${PR_CODEX_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+
+sanitize_non_negative_int() {
+  local value="$1"
+  local fallback="$2"
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    printf "%s" "$value"
+  else
+    printf "%s" "$fallback"
+  fi
+}
+
+wait_seconds="$(sanitize_non_negative_int "${PR_MERGE_WAIT_SECONDS:-600}" "600")"
+ai_wait_seconds="$(sanitize_non_negative_int "${PR_AI_REVIEW_WAIT_SECONDS:-900}" "900")"
+ai_poll_seconds="$(sanitize_non_negative_int "${PR_AI_REVIEW_POLL_SECONDS:-10}" "10")"
+gemini_review_grace_seconds="$(sanitize_non_negative_int "${PR_GEMINI_REVIEW_GRACE_SECONDS:-180}" "180")"
 
 pr_number="${1:-}"
 if [[ -z "$pr_number" ]]; then
@@ -76,20 +87,17 @@ echo "Require AI review signals: $require_ai_review"
 table_has_actor() {
   local actor="$1"
   local table="$2"
-  awk -F'\t' -v actor="$actor" '$1 == actor {found=1} END {exit found ? 0 : 1}' <<<"$table"
+  awk -F'\t' -v actor="$actor" '$1 == actor {found=1; exit} END {exit found ? 0 : 1}' <<<"$table"
 }
 
 table_has_actor_content() {
   local actor="$1"
   local content="$2"
   local table="$3"
-  awk -F'\t' -v actor="$actor" -v content="$content" '$1 == actor && $2 == content {found=1} END {exit found ? 0 : 1}' <<<"$table"
+  awk -F'\t' -v actor="$actor" -v content="$content" '$1 == actor && $2 == content {found=1; exit} END {exit found ? 0 : 1}' <<<"$table"
 }
 
 if [[ "$require_ai_review" == "true" ]]; then
-  if [[ "$ai_wait_seconds" -lt 0 ]]; then
-    ai_wait_seconds=0
-  fi
   if [[ "$ai_poll_seconds" -lt 1 ]]; then
     ai_poll_seconds=1
   fi
@@ -108,16 +116,16 @@ if [[ "$require_ai_review" == "true" ]]; then
   while true; do
     issue_comments="$(
       gh api "repos/$repo_slug/issues/$pr_number/comments" --paginate \
-        --jq '.[] | [.user.login, .created_at] | @tsv' 2>/dev/null || true
+        --jq '.[] | [.user.login, .created_at] | @tsv' || true
     )"
     reviews="$(
       gh api "repos/$repo_slug/pulls/$pr_number/reviews" --paginate \
-        --jq '.[] | [.user.login, .state, .submitted_at] | @tsv' 2>/dev/null || true
+        --jq '.[] | [.user.login, .state, .submitted_at] | @tsv' || true
     )"
     reactions="$(
       gh api "repos/$repo_slug/issues/$pr_number/reactions" --paginate \
         -H "Accept: application/vnd.github+json" \
-        --jq '.[] | [.user.login, .content, .created_at] | @tsv' 2>/dev/null || true
+        --jq '.[] | [.user.login, .content, .created_at] | @tsv' || true
     )"
 
     gemini_ready=false
