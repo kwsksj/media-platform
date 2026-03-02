@@ -424,11 +424,7 @@ ensure_ai_review_feedback_resolved() {
 
   local changes_requested_awk
   changes_requested_awk="$(cat <<'AWK'
-$2 == "CHANGES_REQUESTED" && (
-  (rg == "true" && $1 == g) ||
-  (rc == "true" && $1 == c) ||
-  (ra == "true" && $1 == a)
-) {print $0}
+$2 == "CHANGES_REQUESTED" && ((rg == "true" && $1 == g) || (rc == "true" && $1 == c) || (ra == "true" && $1 == a)) {print $0}
 AWK
 )"
 
