@@ -76,6 +76,8 @@ PR_FLAG_ARG = $(if $(PR),--pr $(PR),)
 	check-python \
 	check-monorepo \
 	check-markdown \
+	check-branch-protection \
+	pr-lifecycle \
 	pr-ready \
 	pr-fix-ci \
 	pr-comments \
@@ -177,6 +179,12 @@ check-markdown: ## Run markdown lint when npx is available
 	else \
 		echo "Skip: npx not found (install Node.js to run markdown lint)."; \
 	fi
+
+check-branch-protection: ## Check main branch protection required checks (including AI Review Gate)
+	@./scripts/check_branch_protection.sh
+
+pr-lifecycle: ## Run end-to-end PR lifecycle (checks -> merge -> post-merge deploy wait -> cleanup)
+	@./scripts/gh_pr_lifecycle.sh $(PR_POS_ARG)
 
 pr-ready: ## Run PR readiness flow (checks + status)
 	@./scripts/gh_pr_ready.sh $(PR_POS_ARG)

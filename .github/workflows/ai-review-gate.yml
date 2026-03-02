@@ -1,0 +1,238 @@
+name: AI Review Gate
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - labeled
+      - unlabeled
+  pull_request_review:
+    types:
+      - submitted
+      - edited
+      - dismissed
+  issue_comment:
+    types:
+      - created
+      - edited
+      - deleted
+  pull_request_review_comment:
+    types:
+      - created
+      - edited
+      - deleted
+  check_run:
+    types:
+      - completed
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  checks: read
+
+jobs:
+  gate:
+    name: ai-review-gate
+    if: |
+      github.event_name == 'pull_request' ||
+      github.event_name == 'pull_request_review' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null) ||
+      github.event_name == 'pull_request_review_comment' ||
+      (github.event_name == 'check_run' && github.event.check_run.name == 'claude-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve PR number
+        id: resolve-pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let prNumber = null;
+
+            if (context.payload.pull_request?.number) {
+              prNumber = context.payload.pull_request.number;
+            } else if (context.payload.issue?.pull_request && context.payload.issue?.number) {
+              prNumber = context.payload.issue.number;
+            } else if (context.payload.check_run?.pull_requests?.length) {
+              prNumber = context.payload.check_run.pull_requests[0].number;
+            }
+
+            if (!prNumber) {
+              core.info("No PR context for this event. Skipping gate evaluation.");
+              core.setOutput("skip", "true");
+              return;
+            }
+
+            core.setOutput("skip", "false");
+            core.setOutput("pr_number", String(prNumber));
+
+      - name: Evaluate AI review signals
+        if: steps.resolve-pr.outputs.skip != 'true'
+        id: evaluate
+        uses: actions/github-script@v7
+        env:
+          GEMINI_BOT_LOGIN: gemini-code-assist[bot]
+          CODEX_BOT_LOGIN: chatgpt-codex-connector[bot]
+          CLAUDE_BOT_LOGIN: claude[bot]
+          CLAUDE_CHECK_NAME: claude-review
+          OVERRIDE_LABEL: override-ai-gate
+          SKIP_GEMINI_LABEL: skip-gemini-gate
+          SKIP_CODEX_LABEL: skip-codex-gate
+          SKIP_CLAUDE_LABEL: skip-claude-gate
+          REQUIRE_GEMINI_DEFAULT: ${{ vars.AI_GATE_REQUIRE_GEMINI || 'true' }}
+          REQUIRE_CODEX_DEFAULT: ${{ vars.AI_GATE_REQUIRE_CODEX || 'true' }}
+          REQUIRE_CLAUDE_DEFAULT: ${{ vars.AI_GATE_REQUIRE_CLAUDE || 'true' }}
+          GEMINI_GRACE_SECONDS: "180"
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = Number("${{ steps.resolve-pr.outputs.pr_number }}");
+
+            const geminiBot = process.env.GEMINI_BOT_LOGIN;
+            const codexBot = process.env.CODEX_BOT_LOGIN;
+            const claudeBot = process.env.CLAUDE_BOT_LOGIN;
+            const claudeCheckName = process.env.CLAUDE_CHECK_NAME;
+            const overrideLabel = process.env.OVERRIDE_LABEL;
+            const skipGeminiLabel = process.env.SKIP_GEMINI_LABEL;
+            const skipCodexLabel = process.env.SKIP_CODEX_LABEL;
+            const skipClaudeLabel = process.env.SKIP_CLAUDE_LABEL;
+            const graceSeconds = Number(process.env.GEMINI_GRACE_SECONDS || "180");
+            const parseBool = (value, fallback = true) => {
+              const normalized = String(value ?? "").trim().toLowerCase();
+              if (["true", "1", "yes", "on"].includes(normalized)) return true;
+              if (["false", "0", "no", "off"].includes(normalized)) return false;
+              return fallback;
+            };
+            const requireGeminiDefault = parseBool(process.env.REQUIRE_GEMINI_DEFAULT, true);
+            const requireCodexDefault = parseBool(process.env.REQUIRE_CODEX_DEFAULT, true);
+            const requireClaudeDefault = parseBool(process.env.REQUIRE_CLAUDE_DEFAULT, true);
+
+            const now = Date.now();
+            const nowIso = new Date(now).toISOString();
+
+            const pr = (
+              await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: prNumber,
+              })
+            ).data;
+
+            const labels = (pr.labels || []).map((l) => l.name).filter(Boolean);
+            const hasOverride = labels.includes(overrideLabel);
+            if (hasOverride) {
+              core.setOutput("ok", "true");
+              core.setOutput("summary", `override label \`${overrideLabel}\` is set`);
+              core.setOutput("details", "AI review gate bypassed via manual override label.");
+              return;
+            }
+
+            const requireGemini = requireGeminiDefault && !labels.includes(skipGeminiLabel);
+            const requireCodex = requireCodexDefault && !labels.includes(skipCodexLabel);
+            const requireClaude = requireClaudeDefault && !labels.includes(skipClaudeLabel);
+
+            const issueComments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const reviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
+              owner,
+              repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+
+            const issueReactions = await github.paginate(github.rest.reactions.listForIssue, {
+              owner,
+              repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+
+            const commentsBy = (items, login) => items.filter((x) => x.user?.login === login);
+            const hasActor = (items, login) => commentsBy(items, login).length > 0;
+
+            const geminiHasReview =
+              hasActor(reviews, geminiBot) || hasActor(reviewComments, geminiBot);
+            const geminiComments = commentsBy(issueComments, geminiBot);
+            let geminiGraceSatisfied = false;
+            if (geminiComments.length > 0) {
+              const earliest = geminiComments
+                .map((c) => Date.parse(c.created_at))
+                .filter((t) => Number.isFinite(t))
+                .sort((a, b) => a - b)[0];
+              if (Number.isFinite(earliest)) {
+                geminiGraceSatisfied = now - earliest >= graceSeconds * 1000;
+              }
+            }
+            const geminiReady = !requireGemini || geminiHasReview || geminiGraceSatisfied;
+
+            const codexReady =
+              !requireCodex ||
+              hasActor(issueComments, codexBot) ||
+              hasActor(reviewComments, codexBot) ||
+              hasActor(reviews, codexBot) ||
+              issueReactions.some(
+                (r) => r.user?.login === codexBot && r.content === "+1"
+              );
+
+            const claudeReviewReady =
+              hasActor(reviews, claudeBot) || hasActor(reviewComments, claudeBot);
+            const checkRuns = await github.paginate(github.rest.checks.listForRef, {
+              owner,
+              repo,
+              ref: pr.head.sha,
+              per_page: 100,
+            });
+            const claudeCheckReady = checkRuns.some(
+              (run) =>
+                run.name === claudeCheckName &&
+                run.status === "completed" &&
+                run.conclusion === "success"
+            );
+            const claudeReady = !requireClaude || claudeReviewReady || claudeCheckReady;
+
+            const ok = geminiReady && codexReady && claudeReady;
+
+            const details = [
+              `evaluated_at=${nowIso}`,
+              `gemini_required=${requireGemini} gemini_ready=${geminiReady} (review=${geminiHasReview}, grace=${geminiGraceSatisfied})`,
+              `codex_required=${requireCodex} codex_ready=${codexReady}`,
+              `claude_required=${requireClaude} claude_ready=${claudeReady} (review=${claudeReviewReady}, check=${claudeCheckReady})`,
+            ].join("\n");
+
+            if (ok) {
+              core.setOutput("ok", "true");
+              core.setOutput("summary", "all AI review signals are satisfied");
+              core.setOutput("details", details);
+            } else {
+              const missing = [];
+              if (requireGemini && !geminiReady) missing.push(`Gemini (${geminiBot})`);
+              if (requireCodex && !codexReady) missing.push(`Codex (${codexBot})`);
+              if (requireClaude && !claudeReady) missing.push(`Claude (${claudeBot}/${claudeCheckName})`);
+              core.setOutput("ok", "false");
+              core.setOutput("summary", `missing AI signals: ${missing.join(", ")}`);
+              core.setOutput("details", details);
+            }
+
+      - name: Gate Result
+        if: steps.resolve-pr.outputs.skip != 'true'
+        run: |
+          echo "Summary: ${{ steps.evaluate.outputs.summary }}"
+          echo "${{ steps.evaluate.outputs.details }}"
+          if [ "${{ steps.evaluate.outputs.ok }}" != "true" ]; then
+            exit 1
+          fi
