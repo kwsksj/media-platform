@@ -56,6 +56,7 @@ make pr-merge-local PR=<number>
 - Prefer `--auto --squash --delete-branch` merge style for this repository.
 - Use repository automation in `.github/workflows/pr-lifecycle.yml` for approval-to-merge and post-merge hooks.
 - For local cleanup, prefer `make pr-merge-local PR=<number>` to merge and delete the local branch after merge.
-- Before merge, wait for AI review signals from both Gemini and Codex:
+- Before merge, wait for AI review signals from Gemini, Codex, and Claude:
   - Gemini: review from `gemini-code-assist[bot]` を優先。概要コメントのみの場合は猶予時間経過後に通過
   - Codex: comment/review or `+1` reaction from `chatgpt-codex-connector[bot]`
+  - Claude: `claude[bot]` の review/review-comment、または `claude-review` check 成功
