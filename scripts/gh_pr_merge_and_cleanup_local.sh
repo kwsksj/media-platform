@@ -90,34 +90,14 @@ echo "Require AI review signals: $require_ai_review"
 table_has_actor() {
   local actor="$1"
   local table="$2"
-  awk -F'\t' -v actor="$actor" '
-    function normalize(v) {
-      sub(/\[bot\]$/, "", v)
-      return v
-    }
-    BEGIN {
-      actor = normalize(actor)
-    }
-    normalize($1) == actor {found=1; exit}
-    END {exit found ? 0 : 1}
-  ' <<<"$table"
+  awk -F'\t' -v actor="$actor" '$1 == actor {found=1; exit} END {exit found ? 0 : 1}' <<<"$table"
 }
 
 table_has_actor_content() {
   local actor="$1"
   local content="$2"
   local table="$3"
-  awk -F'\t' -v actor="$actor" -v content="$content" '
-    function normalize(v) {
-      sub(/\[bot\]$/, "", v)
-      return v
-    }
-    BEGIN {
-      actor = normalize(actor)
-    }
-    normalize($1) == actor && $2 == content {found=1; exit}
-    END {exit found ? 0 : 1}
-  ' <<<"$table"
+  awk -F'\t' -v actor="$actor" -v content="$content" '$1 == actor && $2 == content {found=1; exit} END {exit found ? 0 : 1}' <<<"$table"
 }
 
 if [[ "$require_ai_review" == "true" ]]; then
