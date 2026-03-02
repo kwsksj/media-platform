@@ -15,6 +15,8 @@ make check-changed-python
 make check-fast
 make check-monorepo
 make check-markdown
+make check-branch-protection
+make pr-lifecycle PR=<number>
 make pr-merge-local PR=<number>
 ```
 
@@ -24,6 +26,7 @@ make setup-admin-web
 make pre-commit-install
 make fix-changed-python
 make check-markdown
+make pr-lifecycle PR=<number>
 make pr-merge-local PR=<number>
 ```
 
@@ -55,8 +58,28 @@ make pr-merge-local PR=<number>
 ## PR Flow
 - Prefer `--auto --squash --delete-branch` merge style for this repository.
 - Use repository automation in `.github/workflows/pr-lifecycle.yml` for approval-to-merge and post-merge hooks.
+- Prefer `make pr-lifecycle PR=<number>` for end-to-end operations:
+  - local checks
+  - AI review wait
+  - auto merge
+  - post-merge deploy wait
+  - local branch cleanup
 - For local cleanup, prefer `make pr-merge-local PR=<number>` to merge and delete the local branch after merge.
 - Before merge, wait for AI review signals from Gemini, Codex, and Claude:
   - Gemini: review from `gemini-code-assist[bot]` を優先。概要コメントのみの場合は猶予時間経過後に通過
   - Codex: comment/review or `+1` reaction from `chatgpt-codex-connector[bot]`
   - Claude: `claude[bot]` の review/review-comment、または `claude-review` check 成功
+- Emergency override:
+  - Add PR label `override-ai-gate` only when bot checks are unavailable and human reviewers explicitly approve bypass.
+  - Remove the label after use to restore normal gate behavior.
+- Per-AI optional gate controls:
+  - PR labels (per PR): `skip-gemini-gate`, `skip-codex-gate`, `skip-claude-gate`
+  - Repository variables (default behavior):
+    - `AI_GATE_REQUIRE_GEMINI` (`true`/`false`)
+    - `AI_GATE_REQUIRE_CODEX` (`true`/`false`)
+    - `AI_GATE_REQUIRE_CLAUDE` (`true`/`false`)
+  - If an AI is unavailable in your plan/time window, set that AI to optional (label or variable) and continue.
+- Branch protection recommendation:
+  - Configure `main` branch protection to require status checks:
+    - AI review gate job context (`ai-review-gate`)
+    - CI checks used by this repository (as applicable)
