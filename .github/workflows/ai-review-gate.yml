@@ -134,14 +134,13 @@ jobs:
               "上限",
             ];
             const geminiUnavailableHints = [
-              "unable to review",
-              "can't review",
-              "cannot review",
-              "rate limit",
-              "quota",
-              "usage limit",
+              "i'm unable to",
+              "i am unable to",
+              "i can't",
+              "i cannot",
               "temporarily unavailable",
-              "上限",
+              "limit reached",
+              "上限に達",
             ];
 
             const now = Date.now();
