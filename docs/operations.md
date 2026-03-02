@@ -37,7 +37,7 @@
   - ローカル `make pr-merge-local` では AI レビュー待機を実施
     - Gemini: review from `gemini-code-assist[bot]` を優先（概要コメントのみの場合は猶予時間経過後に通過）
     - Codex: comment/review or `+1` reaction from `chatgpt-codex-connector[bot]`
-    - Claude: review/review-comment from `claude[bot]`
+    - Claude: review/review-comment from `claude[bot]` または `claude-review` check 成功
 
 Repository Variables:
 

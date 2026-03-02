@@ -59,4 +59,4 @@ make pr-merge-local PR=<number>
 - Before merge, wait for AI review signals from Gemini, Codex, and Claude:
   - Gemini: review from `gemini-code-assist[bot]` を優先。概要コメントのみの場合は猶予時間経過後に通過
   - Codex: comment/review or `+1` reaction from `chatgpt-codex-connector[bot]`
-  - Claude: review/review-comment from `claude[bot]`
+  - Claude: `claude[bot]` の review/review-comment、または `claude-review` check 成功
