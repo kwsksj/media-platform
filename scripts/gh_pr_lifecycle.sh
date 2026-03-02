@@ -35,9 +35,16 @@ if ! gh auth status >/dev/null 2>&1; then
 fi
 
 repo_slug="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
-pr_number="${1:-}"
+pr_number="${1:-${PR:-}}"
 if [[ -z "$pr_number" ]]; then
-  pr_number="$(gh pr view --repo "$repo_slug" --json number --jq '.number')"
+  pr_number="$(gh pr view --repo "$repo_slug" --json number --jq '.number' 2>/dev/null || true)"
+  if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    echo "Could not auto-detect a valid PR number. Run from a PR branch or specify PR=<number>." >&2
+    exit 1
+  fi
+elif [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+  echo "Invalid PR number: '$pr_number' (must be numeric)." >&2
+  exit 1
 fi
 
 skip_local_checks="$(echo "${PR_LIFECYCLE_SKIP_LOCAL_CHECKS:-false}" | tr '[:upper:]' '[:lower:]' | xargs)"

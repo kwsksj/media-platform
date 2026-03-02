@@ -89,6 +89,8 @@ jobs:
           AUTO_SKIP_CODEX_LIMIT: ${{ vars.AI_GATE_AUTO_SKIP_CODEX_LIMIT || 'true' }}
           AUTO_SKIP_GEMINI_UNAVAILABLE: ${{ vars.AI_GATE_AUTO_SKIP_GEMINI_UNAVAILABLE || 'false' }}
           AUTO_SKIP_CLAUDE_CHECK_FAILURE: ${{ vars.AI_GATE_AUTO_SKIP_CLAUDE_CHECK_FAILURE || 'true' }}
+          REQUIRE_REVIEW_THREAD_RESOLUTION_DEFAULT: ${{ vars.AI_GATE_REQUIRE_REVIEW_THREAD_RESOLUTION || 'true' }}
+          REVIEW_RESOLUTION_OVERRIDE_LABEL: override-ai-review-resolution
         with:
           script: |
             const owner = context.repo.owner;
@@ -103,6 +105,7 @@ jobs:
             const skipGeminiLabel = process.env.SKIP_GEMINI_LABEL;
             const skipCodexLabel = process.env.SKIP_CODEX_LABEL;
             const skipClaudeLabel = process.env.SKIP_CLAUDE_LABEL;
+            const reviewResolutionOverrideLabel = process.env.REVIEW_RESOLUTION_OVERRIDE_LABEL;
             const parseBool = (value, fallback = true) => {
               const normalized = String(value ?? "").trim().toLowerCase();
               if (["true", "1", "yes", "on"].includes(normalized)) return true;
@@ -119,6 +122,10 @@ jobs:
             );
             const autoSkipClaudeCheckFailure = parseBool(
               process.env.AUTO_SKIP_CLAUDE_CHECK_FAILURE,
+              true
+            );
+            const requireReviewThreadResolutionDefault = parseBool(
+              process.env.REQUIRE_REVIEW_THREAD_RESOLUTION_DEFAULT,
               true
             );
             const toLower = (value) => String(value ?? "").toLowerCase();
@@ -160,6 +167,7 @@ jobs:
               core.setOutput("details", "AI review gate bypassed via manual override label.");
               return;
             }
+            const hasReviewResolutionOverride = labels.includes(reviewResolutionOverrideLabel);
 
             let requireGemini = requireGeminiDefault && !labels.includes(skipGeminiLabel);
             let requireCodex = requireCodexDefault && !labels.includes(skipCodexLabel);
@@ -196,6 +204,46 @@ jobs:
               ref: pr.head.sha,
               per_page: 100,
             });
+            const reviewThreadsQuery = `
+              query($owner: String!, $repo: String!, $prNumber: Int!, $cursor: String) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $prNumber) {
+                    reviewThreads(first: 100, after: $cursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        isResolved
+                        isOutdated
+                        path
+                        line
+                        startLine
+                        originalLine
+                        comments(first: 100) {
+                          totalCount
+                          nodes {
+                            author { login }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+            const reviewThreads = [];
+            let reviewThreadsCursor = null;
+            while (true) {
+              const threadPage = await github.graphql(reviewThreadsQuery, {
+                owner,
+                repo,
+                prNumber,
+                cursor: reviewThreadsCursor,
+              });
+              const page = threadPage?.repository?.pullRequest?.reviewThreads;
+              if (!page) break;
+              reviewThreads.push(...(page.nodes || []));
+              if (!page.pageInfo?.hasNextPage) break;
+              reviewThreadsCursor = page.pageInfo.endCursor;
+            }
 
             const codexBodies = [
               ...issueComments.filter((c) => c.user?.login === codexBot).map((c) => c.body || ""),
@@ -260,8 +308,34 @@ jobs:
                 run.conclusion === "success"
             );
             const claudeReady = !requireClaude || claudeReviewReady || claudeCheckReady;
+            const requireReviewThreadResolution =
+              !hasReviewResolutionOverride &&
+              requireReviewThreadResolutionDefault &&
+              (requireGemini || requireCodex || requireClaude);
+            const unresolvedRequiredAiThreads = reviewThreads.filter((thread) => {
+              if (thread.isResolved || thread.isOutdated) return false;
+              const authors = new Set(
+                (thread.comments?.nodes || [])
+                  .map((node) => node.author?.login)
+                  .filter(Boolean)
+              );
+              return (
+                (requireGemini && authors.has(geminiBot)) ||
+                (requireCodex && authors.has(codexBot)) ||
+                (requireClaude && authors.has(claudeBot))
+              );
+            });
+            const truncatedUnresolvedThreads = reviewThreads.filter((thread) => {
+              if (thread.isResolved || thread.isOutdated) return false;
+              const total = thread.comments?.totalCount ?? 0;
+              const visible = thread.comments?.nodes?.length ?? 0;
+              return total > visible;
+            });
+            const reviewThreadResolutionReady =
+              !requireReviewThreadResolution ||
+              (unresolvedRequiredAiThreads.length === 0 && truncatedUnresolvedThreads.length === 0);
 
-            const ok = geminiReady && codexReady && claudeReady;
+            const ok = geminiReady && codexReady && claudeReady && reviewThreadResolutionReady;
 
             const details = [
               `evaluated_at=${nowIso}`,
@@ -271,6 +345,7 @@ jobs:
               `gemini_required=${requireGemini} gemini_ready=${geminiReady} (review=${geminiHasReview})`,
               `codex_required=${requireCodex} codex_ready=${codexReady}`,
               `claude_required=${requireClaude} claude_ready=${claudeReady} (review=${claudeReviewReady}, check=${claudeCheckReady})`,
+              `review_thread_resolution_required=${requireReviewThreadResolution} ready=${reviewThreadResolutionReady} unresolved_required_ai_threads=${unresolvedRequiredAiThreads.length} truncated_unresolved_threads=${truncatedUnresolvedThreads.length}`,
             ].join("\n");
 
             if (ok) {
@@ -282,6 +357,16 @@ jobs:
               if (requireGemini && !geminiReady) missing.push(`Gemini (${geminiBot})`);
               if (requireCodex && !codexReady) missing.push(`Codex (${codexBot})`);
               if (requireClaude && !claudeReady) missing.push(`Claude (${claudeBot}/${claudeCheckName})`);
+              if (requireReviewThreadResolution && !reviewThreadResolutionReady) {
+                if (unresolvedRequiredAiThreads.length > 0) {
+                  missing.push(`Unresolved AI review threads (${unresolvedRequiredAiThreads.length})`);
+                }
+                if (truncatedUnresolvedThreads.length > 0) {
+                  missing.push(
+                    `Unresolved review threads exceed inline comment fetch window (${truncatedUnresolvedThreads.length})`
+                  );
+                }
+              }
               core.setOutput("ok", "false");
               core.setOutput("summary", `missing AI signals: ${missing.join(", ")}`);
               core.setOutput("details", details);

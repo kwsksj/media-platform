@@ -69,9 +69,13 @@ make pr-merge-local PR=<number>
   - Gemini: `gemini-code-assist[bot]` の review/review-comment を待つ（summary コメントのみでは通過しない）
   - Codex: comment/review or `+1` reaction from `chatgpt-codex-connector[bot]`
   - Claude: `claude[bot]` の review/review-comment、または `claude-review` check 成功
+- AIレビューで指摘が出た場合は、指摘に対応してからマージする:
+  - `ai-review-gate` は required なAI bot由来の未解決 review thread が残っている間は fail
+  - 指摘対応後に thread を resolve してからマージする
 - Emergency override:
   - Add PR label `override-ai-gate` only when bot checks are unavailable and human reviewers explicitly approve bypass.
   - Remove the label after use to restore normal gate behavior.
+  - If unresolved AI review threads must be bypassed in emergencies only, use `override-ai-review-resolution`.
 - Per-AI optional gate controls:
   - PR labels (per PR): `skip-gemini-gate`, `skip-codex-gate`, `skip-claude-gate`
   - Repository variables (default behavior):
@@ -81,6 +85,7 @@ make pr-merge-local PR=<number>
     - `AI_GATE_AUTO_SKIP_CODEX_LIMIT` (`true`/`false`)
     - `AI_GATE_AUTO_SKIP_GEMINI_UNAVAILABLE` (`true`/`false`, default recommended: `false`)
     - `AI_GATE_AUTO_SKIP_CLAUDE_CHECK_FAILURE` (`true`/`false`)
+    - `AI_GATE_REQUIRE_REVIEW_THREAD_RESOLUTION` (`true`/`false`, default recommended: `true`)
   - If an AI is unavailable in your plan/time window, set that AI to optional (label or variable) and continue.
 - Branch protection recommendation:
   - Configure `main` branch protection to require status checks:
