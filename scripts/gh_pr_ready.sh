@@ -32,12 +32,15 @@ fi
 
 repo_slug="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
 pr_number="${1:-${PR:-}}"
-if [[ -n "$pr_number" && ! "$pr_number" =~ ^[0-9]+$ ]]; then
+if [[ -z "$pr_number" ]]; then
+  pr_number="$(gh pr view --repo "$repo_slug" --json number --jq '.number' 2>/dev/null || true)"
+  if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    echo "Could not auto-detect a valid PR number. Run from a PR branch or specify PR=<number>." >&2
+    exit 1
+  fi
+elif [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
   echo "Invalid PR number: '$pr_number' (must be numeric)." >&2
   exit 1
-fi
-if [[ -z "$pr_number" ]]; then
-  pr_number="$(gh pr view --repo "$repo_slug" --json number --jq '.number')"
 fi
 
 echo "Repository: $repo_slug"

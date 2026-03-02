@@ -448,7 +448,7 @@ ensure_ai_review_feedback_resolved() {
       -F owner="$repo_owner" \
       -F repo="$repo_name" \
       -F number="$pr_number" \
-      -f query='query($owner:String!, $repo:String!, $number:Int!, $endCursor:String){ repository(owner:$owner,name:$repo){ pullRequest(number:$number){ reviewThreads(first:100, after:$endCursor){ nodes { isResolved isOutdated path line startLine originalLine comments(first:100){nodes{author{login}}} } pageInfo { hasNextPage endCursor } } } } }' \
+      -f query='query($owner:String!, $repo:String!, $number:Int!, $endCursor:String){ repository(owner:$owner,name:$repo){ pullRequest(number:$number){ reviewThreads(first:100, after:$endCursor){ nodes { isResolved isOutdated path line startLine originalLine comments(first:100){ totalCount nodes{author{login}} } } pageInfo { hasNextPage endCursor } } } } }' \
       --jq '.data.repository.pullRequest.reviewThreads.nodes[]' 2>/dev/null \
       | jq -s '.' || echo '[]'
   )"
@@ -474,6 +474,23 @@ ensure_ai_review_feedback_resolved() {
         | @tsv
       ' <<<"$review_threads"
   )"
+
+  local truncated_unresolved_threads
+  truncated_unresolved_threads="$(
+    jq -r '
+      .[]
+      | select((.isResolved | not) and ((.isOutdated // false) | not))
+      | select((.comments.totalCount // 0) > ((.comments.nodes // []) | length))
+      | [(.path // "(unknown path)"), ((.line // .startLine // .originalLine // 0) | tostring), ((.comments.totalCount // 0) | tostring)]
+      | @tsv
+    ' <<<"$review_threads"
+  )"
+  if [[ -n "$truncated_unresolved_threads" ]]; then
+    echo "Merge blocked: unresolved review threads have more than 100 comments, and author coverage is incomplete." >&2
+    echo "$truncated_unresolved_threads" | head -n 10 >&2
+    echo "Resolve those threads manually (or use '$ai_review_resolution_override_label' only for emergency bypass), then re-run merge." >&2
+    exit 1
+  fi
 
   if [[ -n "$unresolved_ai_threads" ]]; then
     echo "Merge blocked: unresolved AI review threads remain." >&2

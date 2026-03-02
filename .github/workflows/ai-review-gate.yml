@@ -218,6 +218,7 @@ jobs:
                         startLine
                         originalLine
                         comments(first: 100) {
+                          totalCount
                           nodes {
                             author { login }
                           }
@@ -324,8 +325,15 @@ jobs:
                 (requireClaude && authors.has(claudeBot))
               );
             });
+            const truncatedUnresolvedThreads = reviewThreads.filter((thread) => {
+              if (thread.isResolved || thread.isOutdated) return false;
+              const total = thread.comments?.totalCount ?? 0;
+              const visible = thread.comments?.nodes?.length ?? 0;
+              return total > visible;
+            });
             const reviewThreadResolutionReady =
-              !requireReviewThreadResolution || unresolvedRequiredAiThreads.length === 0;
+              !requireReviewThreadResolution ||
+              (unresolvedRequiredAiThreads.length === 0 && truncatedUnresolvedThreads.length === 0);
 
             const ok = geminiReady && codexReady && claudeReady && reviewThreadResolutionReady;
 
@@ -337,7 +345,7 @@ jobs:
               `gemini_required=${requireGemini} gemini_ready=${geminiReady} (review=${geminiHasReview})`,
               `codex_required=${requireCodex} codex_ready=${codexReady}`,
               `claude_required=${requireClaude} claude_ready=${claudeReady} (review=${claudeReviewReady}, check=${claudeCheckReady})`,
-              `review_thread_resolution_required=${requireReviewThreadResolution} ready=${reviewThreadResolutionReady} unresolved_required_ai_threads=${unresolvedRequiredAiThreads.length}`,
+              `review_thread_resolution_required=${requireReviewThreadResolution} ready=${reviewThreadResolutionReady} unresolved_required_ai_threads=${unresolvedRequiredAiThreads.length} truncated_unresolved_threads=${truncatedUnresolvedThreads.length}`,
             ].join("\n");
 
             if (ok) {
@@ -350,7 +358,14 @@ jobs:
               if (requireCodex && !codexReady) missing.push(`Codex (${codexBot})`);
               if (requireClaude && !claudeReady) missing.push(`Claude (${claudeBot}/${claudeCheckName})`);
               if (requireReviewThreadResolution && !reviewThreadResolutionReady) {
-                missing.push(`Unresolved AI review threads (${unresolvedRequiredAiThreads.length})`);
+                if (unresolvedRequiredAiThreads.length > 0) {
+                  missing.push(`Unresolved AI review threads (${unresolvedRequiredAiThreads.length})`);
+                }
+                if (truncatedUnresolvedThreads.length > 0) {
+                  missing.push(
+                    `Unresolved review threads exceed inline comment fetch window (${truncatedUnresolvedThreads.length})`
+                  );
+                }
               }
               core.setOutput("ok", "false");
               core.setOutput("summary", `missing AI signals: ${missing.join(", ")}`);
