@@ -228,10 +228,12 @@ GitHub Repository Secrets:
   - マージ前に AI レビュー反応を待機
     - Gemini: `gemini-code-assist[bot]` の review を優先（概要コメントのみの場合は猶予時間経過後に通過）
     - Codex: `chatgpt-codex-connector[bot]` の comment/review または `+1` reaction
+    - Claude: `claude[bot]` の review/review-comment
   - PR が `MERGED` になったら default branch に戻って `git branch -d` まで実施
   - 待機秒数は `PR_MERGE_WAIT_SECONDS`（既定: `600`）で調整可能
   - AI待機は `PR_AI_REVIEW_WAIT_SECONDS`（既定: `900`）で調整可能
   - Gemini の review 猶予は `PR_GEMINI_REVIEW_GRACE_SECONDS`（既定: `180`）で調整可能
+  - Claude の actor 上書きは `PR_CLAUDE_BOT_LOGIN`（既定: `claude[bot]`）
 
 ### 画像リンク健全性チェックのオプション設定
 

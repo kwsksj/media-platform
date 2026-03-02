@@ -13,7 +13,7 @@ Behavior:
      - Gemini: review from gemini-code-assist[bot]
        (fallback: if only summary comment arrives, proceed after grace period)
      - Codex: comment/review/review-comment OR +1 reaction from chatgpt-codex-connector[bot]
-     - Claude: review from claude[bot] (via claude-code-action)
+     - Claude: review/review-comment from claude[bot] (via claude-code-action)
   2) gh pr merge --auto --squash --delete-branch
   3) Wait for merge completion (default: 600s, configurable by PR_MERGE_WAIT_SECONDS)
   4) If PR state is MERGED:
@@ -209,10 +209,10 @@ if [[ "$require_ai_review" == "true" ]]; then
         echo "- Missing Gemini signal (review, or comment after grace) from: $gemini_bot_login" >&2
       fi
       if [[ "$codex_ready" != "true" ]]; then
-        echo "- Missing Codex signal (+1/comment/review) from: $codex_bot_login" >&2
+        echo "- Missing Codex signal (+1/comment/review/review-comment) from: $codex_bot_login" >&2
       fi
       if [[ "$claude_ready" != "true" ]]; then
-        echo "- Missing Claude signal (review) from: $claude_bot_login" >&2
+        echo "- Missing Claude signal (review/review-comment) from: $claude_bot_login" >&2
       fi
       echo "Merge aborted. Re-run after AI feedback arrives, or set PR_REQUIRE_AI_REVIEW=false to override." >&2
       exit 1
