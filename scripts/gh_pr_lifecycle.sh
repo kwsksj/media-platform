@@ -35,7 +35,11 @@ if ! gh auth status >/dev/null 2>&1; then
 fi
 
 repo_slug="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
-pr_number="${1:-}"
+pr_number="${1:-${PR:-}}"
+if [[ -n "$pr_number" && ! "$pr_number" =~ ^[0-9]+$ ]]; then
+  echo "Invalid PR number: '$pr_number' (must be numeric)." >&2
+  exit 1
+fi
 if [[ -z "$pr_number" ]]; then
   pr_number="$(gh pr view --repo "$repo_slug" --json number --jq '.number')"
 fi

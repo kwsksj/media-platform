@@ -51,8 +51,9 @@ GALLERY_LIGHT_QUALITY ?= 75
 GALLERY_OVERWRITE_THUMBS ?= false
 GALLERY_OVERWRITE_LIGHT ?= false
 
-PR_POS_ARG = $(if $(PR),$(PR),)
-PR_FLAG_ARG = $(if $(PR),--pr $(PR),)
+shell_quote = '$(subst ','"'"',$(1))'
+PR_POS_ARG = $(if $(PR),$(call shell_quote,$(PR)),)
+PR_FLAG_ARG = $(if $(PR),--pr $(call shell_quote,$(PR)),)
 
 .PHONY: \
 	help \
