@@ -31,6 +31,9 @@ Environment variables:
   PR_REQUIRE_GEMINI_REVIEW=true|false (default: true)
   PR_REQUIRE_CODEX_REVIEW=true|false  (default: true)
   PR_REQUIRE_CLAUDE_REVIEW=true|false (default: true)
+  PR_AUTO_SKIP_CODEX_LIMIT=true|false (default: true)
+  PR_AUTO_SKIP_GEMINI_UNAVAILABLE=true|false (default: true)
+  PR_AUTO_SKIP_CLAUDE_CHECK_FAILURE=true|false (default: true)
   PR_SKIP_GEMINI_LABEL=...            (default: skip-gemini-gate)
   PR_SKIP_CODEX_LABEL=...             (default: skip-codex-gate)
   PR_SKIP_CLAUDE_LABEL=...            (default: skip-claude-gate)
@@ -80,6 +83,9 @@ ai_override_label="${PR_AI_OVERRIDE_LABEL:-override-ai-gate}"
 require_gemini_review="$(echo "${PR_REQUIRE_GEMINI_REVIEW:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
 require_codex_review="$(echo "${PR_REQUIRE_CODEX_REVIEW:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
 require_claude_review="$(echo "${PR_REQUIRE_CLAUDE_REVIEW:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
+auto_skip_codex_limit="$(echo "${PR_AUTO_SKIP_CODEX_LIMIT:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
+auto_skip_gemini_unavailable="$(echo "${PR_AUTO_SKIP_GEMINI_UNAVAILABLE:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
+auto_skip_claude_check_failure="$(echo "${PR_AUTO_SKIP_CLAUDE_CHECK_FAILURE:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
 skip_gemini_label="${PR_SKIP_GEMINI_LABEL:-skip-gemini-gate}"
 skip_codex_label="${PR_SKIP_CODEX_LABEL:-skip-codex-gate}"
 skip_claude_label="${PR_SKIP_CLAUDE_LABEL:-skip-claude-gate}"
@@ -87,6 +93,8 @@ gemini_bot_login="${PR_GEMINI_BOT_LOGIN:-gemini-code-assist[bot]}"
 codex_bot_login="${PR_CODEX_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
 claude_bot_login="${PR_CLAUDE_BOT_LOGIN:-claude[bot]}"
 claude_check_name="${PR_CLAUDE_CHECK_NAME:-claude-review}"
+codex_unavailable_pattern="${PR_CODEX_UNAVAILABLE_PATTERN:-reached your codex usage limits|usage limits for code reviews|add credits|upgrade your account|上限}"
+gemini_unavailable_pattern="${PR_GEMINI_UNAVAILABLE_PATTERN:-unable to review|can\'t review|cannot review|rate limit|quota|usage limit|temporarily unavailable|上限}"
 wait_post_merge_deploys="$(echo "${PR_WAIT_POST_MERGE_DEPLOYS:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
 
 sanitize_non_negative_int() {
@@ -121,6 +129,9 @@ echo "AI override label: $ai_override_label"
 echo "Require Gemini signal: $require_gemini_review"
 echo "Require Codex signal: $require_codex_review"
 echo "Require Claude signal: $require_claude_review"
+echo "Auto skip Codex limit: $auto_skip_codex_limit"
+echo "Auto skip Gemini unavailable: $auto_skip_gemini_unavailable"
+echo "Auto skip Claude check failure: $auto_skip_claude_check_failure"
 echo "Wait post-merge deploy workflows: $wait_post_merge_deploys"
 
 table_has_actor() {
@@ -140,6 +151,25 @@ table_has_successful_check() {
   local check_name="$1"
   local table="$2"
   awk -F'\t' -v check_name="$check_name" '$1 == check_name && $2 == "COMPLETED" && $3 == "SUCCESS" {found=1; exit} END {exit found ? 0 : 1}' <<<"$table"
+}
+
+table_has_failed_check() {
+  local check_name="$1"
+  local table="$2"
+  awk -F'\t' -v check_name="$check_name" '
+    $1 == check_name && $2 == "COMPLETED" && ($3 == "FAILURE" || $3 == "TIMED_OUT" || $3 == "CANCELLED" || $3 == "ACTION_REQUIRED") {found=1; exit}
+    END {exit found ? 0 : 1}
+  ' <<<"$table"
+}
+
+table_actor_body_matches() {
+  local actor="$1"
+  local pattern="$2"
+  local table="$3"
+  awk -F'\t' -v actor="$actor" -v pattern="$pattern" '
+    tolower($1) == tolower(actor) && tolower($2) ~ pattern {found=1; exit}
+    END {exit found ? 0 : 1}
+  ' <<<"$table"
 }
 
 normalize_bool() {
@@ -343,6 +373,9 @@ wait_for_post_merge_deploys_fn() {
 }
 
 if [[ "$require_ai_review" == "true" ]]; then
+  codex_unavailable_pattern="$(echo "$codex_unavailable_pattern" | tr '[:upper:]' '[:lower:]')"
+  gemini_unavailable_pattern="$(echo "$gemini_unavailable_pattern" | tr '[:upper:]' '[:lower:]')"
+
   pr_labels="$(gh pr view "$pr_number" --repo "$repo_slug" --json labels --jq '.labels[].name' 2>/dev/null || true)"
   if grep -Fxq "$ai_override_label" <<<"$pr_labels"; then
     echo "AI review wait is bypassed because label '$ai_override_label' is present."
@@ -360,6 +393,49 @@ if [[ "$require_ai_review" == "true" ]]; then
     fi
     if grep -Fxq "$skip_claude_label" <<<"$pr_labels"; then
       echo "Claude gate is bypassed because label '$skip_claude_label' is present."
+      require_claude_review="false"
+    fi
+  fi
+
+  if [[ "$require_ai_review" == "true" ]]; then
+    issue_comment_bodies="$(
+      gh api "repos/$repo_slug/issues/$pr_number/comments" --paginate \
+        --jq '.[] | [.user.login, (.body // "" | gsub("[\\r\\n\\t]"; " "))] | @tsv' || true
+    )"
+    review_comment_bodies="$(
+      gh api "repos/$repo_slug/pulls/$pr_number/comments" --paginate \
+        --jq '.[] | [.user.login, (.body // "" | gsub("[\\r\\n\\t]"; " "))] | @tsv' || true
+    )"
+    review_bodies="$(
+      gh api "repos/$repo_slug/pulls/$pr_number/reviews" --paginate \
+        --jq '.[] | [.user.login, (.body // "" | gsub("[\\r\\n\\t]"; " "))] | @tsv' || true
+    )"
+    initial_checks="$(
+      gh pr view "$pr_number" --repo "$repo_slug" --json statusCheckRollup \
+        --jq '.statusCheckRollup[]? | [.name, .status, .conclusion] | @tsv' || true
+    )"
+
+    if [[ "$require_codex_review" == "true" && "$auto_skip_codex_limit" == "true" ]] && {
+      table_actor_body_matches "$codex_bot_login" "$codex_unavailable_pattern" "$issue_comment_bodies" \
+      || table_actor_body_matches "$codex_bot_login" "$codex_unavailable_pattern" "$review_comment_bodies" \
+      || table_actor_body_matches "$codex_bot_login" "$codex_unavailable_pattern" "$review_bodies";
+    }; then
+      echo "Codex appears unavailable (limit/unavailable message detected). Skipping Codex gate."
+      require_codex_review="false"
+    fi
+
+    if [[ "$require_gemini_review" == "true" && "$auto_skip_gemini_unavailable" == "true" ]] && {
+      table_actor_body_matches "$gemini_bot_login" "$gemini_unavailable_pattern" "$issue_comment_bodies" \
+      || table_actor_body_matches "$gemini_bot_login" "$gemini_unavailable_pattern" "$review_comment_bodies" \
+      || table_actor_body_matches "$gemini_bot_login" "$gemini_unavailable_pattern" "$review_bodies";
+    }; then
+      echo "Gemini appears unavailable (unavailable/limit message detected). Skipping Gemini gate."
+      require_gemini_review="false"
+    fi
+
+    if [[ "$require_claude_review" == "true" && "$auto_skip_claude_check_failure" == "true" ]] \
+      && table_has_failed_check "$claude_check_name" "$initial_checks"; then
+      echo "Claude review check is failing. Skipping Claude gate."
       require_claude_review="false"
     fi
   fi
@@ -400,13 +476,25 @@ if [[ "$require_ai_review" == "true" ]]; then
       gh api "repos/$repo_slug/issues/$pr_number/comments" --paginate \
         --jq '.[] | [.user.login, .created_at] | @tsv' || true
     )"
+    issue_comment_bodies="$(
+      gh api "repos/$repo_slug/issues/$pr_number/comments" --paginate \
+        --jq '.[] | [.user.login, (.body // "" | gsub("[\\r\\n\\t]"; " "))] | @tsv' || true
+    )"
     review_comments="$(
       gh api "repos/$repo_slug/pulls/$pr_number/comments" --paginate \
         --jq '.[] | [.user.login, .created_at] | @tsv' || true
     )"
+    review_comment_bodies="$(
+      gh api "repos/$repo_slug/pulls/$pr_number/comments" --paginate \
+        --jq '.[] | [.user.login, (.body // "" | gsub("[\\r\\n\\t]"; " "))] | @tsv' || true
+    )"
     reviews="$(
       gh api "repos/$repo_slug/pulls/$pr_number/reviews" --paginate \
         --jq '.[] | [.user.login, .state, .submitted_at] | @tsv' || true
+    )"
+    review_bodies="$(
+      gh api "repos/$repo_slug/pulls/$pr_number/reviews" --paginate \
+        --jq '.[] | [.user.login, (.body // "" | gsub("[\\r\\n\\t]"; " "))] | @tsv' || true
     )"
     reactions="$(
       gh api "repos/$repo_slug/issues/$pr_number/reactions" --paginate \
@@ -417,6 +505,30 @@ if [[ "$require_ai_review" == "true" ]]; then
       gh pr view "$pr_number" --repo "$repo_slug" --json statusCheckRollup \
         --jq '.statusCheckRollup[]? | [.name, .status, .conclusion] | @tsv' || true
     )"
+
+    if [[ "$require_codex_review" == "true" && "$auto_skip_codex_limit" == "true" ]] && {
+      table_actor_body_matches "$codex_bot_login" "$codex_unavailable_pattern" "$issue_comment_bodies" \
+      || table_actor_body_matches "$codex_bot_login" "$codex_unavailable_pattern" "$review_comment_bodies" \
+      || table_actor_body_matches "$codex_bot_login" "$codex_unavailable_pattern" "$review_bodies";
+    }; then
+      echo "Codex appears unavailable (limit/unavailable message detected). Skipping Codex gate."
+      require_codex_review="false"
+    fi
+
+    if [[ "$require_gemini_review" == "true" && "$auto_skip_gemini_unavailable" == "true" ]] && {
+      table_actor_body_matches "$gemini_bot_login" "$gemini_unavailable_pattern" "$issue_comment_bodies" \
+      || table_actor_body_matches "$gemini_bot_login" "$gemini_unavailable_pattern" "$review_comment_bodies" \
+      || table_actor_body_matches "$gemini_bot_login" "$gemini_unavailable_pattern" "$review_bodies";
+    }; then
+      echo "Gemini appears unavailable (unavailable/limit message detected). Skipping Gemini gate."
+      require_gemini_review="false"
+    fi
+
+    if [[ "$require_claude_review" == "true" && "$auto_skip_claude_check_failure" == "true" ]] \
+      && table_has_failed_check "$claude_check_name" "$checks"; then
+      echo "Claude review check is failing. Skipping Claude gate."
+      require_claude_review="false"
+    fi
 
     gemini_ready=false
     codex_ready=false
@@ -429,6 +541,13 @@ if [[ "$require_ai_review" == "true" ]]; then
     fi
     if [[ "$require_claude_review" != "true" ]]; then
       claude_ready=true
+    fi
+
+    if [[ "$require_gemini_review" != "true" \
+      && "$require_codex_review" != "true" \
+      && "$require_claude_review" != "true" ]]; then
+      echo "All AI gates are optional or unavailable for this PR. Skipping remaining AI wait."
+      break
     fi
 
     gemini_has_review=false

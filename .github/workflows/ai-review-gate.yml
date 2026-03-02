@@ -86,6 +86,9 @@ jobs:
           REQUIRE_GEMINI_DEFAULT: ${{ vars.AI_GATE_REQUIRE_GEMINI || 'true' }}
           REQUIRE_CODEX_DEFAULT: ${{ vars.AI_GATE_REQUIRE_CODEX || 'true' }}
           REQUIRE_CLAUDE_DEFAULT: ${{ vars.AI_GATE_REQUIRE_CLAUDE || 'true' }}
+          AUTO_SKIP_CODEX_LIMIT: ${{ vars.AI_GATE_AUTO_SKIP_CODEX_LIMIT || 'true' }}
+          AUTO_SKIP_GEMINI_UNAVAILABLE: ${{ vars.AI_GATE_AUTO_SKIP_GEMINI_UNAVAILABLE || 'true' }}
+          AUTO_SKIP_CLAUDE_CHECK_FAILURE: ${{ vars.AI_GATE_AUTO_SKIP_CLAUDE_CHECK_FAILURE || 'true' }}
           GEMINI_GRACE_SECONDS: "180"
         with:
           script: |
@@ -111,6 +114,35 @@ jobs:
             const requireGeminiDefault = parseBool(process.env.REQUIRE_GEMINI_DEFAULT, true);
             const requireCodexDefault = parseBool(process.env.REQUIRE_CODEX_DEFAULT, true);
             const requireClaudeDefault = parseBool(process.env.REQUIRE_CLAUDE_DEFAULT, true);
+            const autoSkipCodexLimit = parseBool(process.env.AUTO_SKIP_CODEX_LIMIT, true);
+            const autoSkipGeminiUnavailable = parseBool(
+              process.env.AUTO_SKIP_GEMINI_UNAVAILABLE,
+              true
+            );
+            const autoSkipClaudeCheckFailure = parseBool(
+              process.env.AUTO_SKIP_CLAUDE_CHECK_FAILURE,
+              true
+            );
+            const toLower = (value) => String(value ?? "").toLowerCase();
+            const containsAny = (text, hints) =>
+              hints.some((hint) => toLower(text).includes(hint));
+            const codexUnavailableHints = [
+              "reached your codex usage limits",
+              "usage limits for code reviews",
+              "add credits",
+              "upgrade your account",
+              "上限",
+            ];
+            const geminiUnavailableHints = [
+              "unable to review",
+              "can't review",
+              "cannot review",
+              "rate limit",
+              "quota",
+              "usage limit",
+              "temporarily unavailable",
+              "上限",
+            ];
 
             const now = Date.now();
             const nowIso = new Date(now).toISOString();
@@ -132,9 +164,9 @@ jobs:
               return;
             }
 
-            const requireGemini = requireGeminiDefault && !labels.includes(skipGeminiLabel);
-            const requireCodex = requireCodexDefault && !labels.includes(skipCodexLabel);
-            const requireClaude = requireClaudeDefault && !labels.includes(skipClaudeLabel);
+            let requireGemini = requireGeminiDefault && !labels.includes(skipGeminiLabel);
+            let requireCodex = requireCodexDefault && !labels.includes(skipCodexLabel);
+            let requireClaude = requireClaudeDefault && !labels.includes(skipClaudeLabel);
 
             const issueComments = await github.paginate(github.rest.issues.listComments, {
               owner,
@@ -161,6 +193,50 @@ jobs:
               issue_number: prNumber,
               per_page: 100,
             });
+            const checkRuns = await github.paginate(github.rest.checks.listForRef, {
+              owner,
+              repo,
+              ref: pr.head.sha,
+              per_page: 100,
+            });
+
+            const codexBodies = [
+              ...issueComments.filter((c) => c.user?.login === codexBot).map((c) => c.body || ""),
+              ...reviewComments
+                .filter((c) => c.user?.login === codexBot)
+                .map((c) => c.body || ""),
+              ...reviews.filter((c) => c.user?.login === codexBot).map((c) => c.body || ""),
+            ];
+            const geminiBodies = [
+              ...issueComments.filter((c) => c.user?.login === geminiBot).map((c) => c.body || ""),
+              ...reviewComments
+                .filter((c) => c.user?.login === geminiBot)
+                .map((c) => c.body || ""),
+              ...reviews.filter((c) => c.user?.login === geminiBot).map((c) => c.body || ""),
+            ];
+            const codexUnavailableDetected = codexBodies.some((body) =>
+              containsAny(body, codexUnavailableHints)
+            );
+            const geminiUnavailableDetected = geminiBodies.some((body) =>
+              containsAny(body, geminiUnavailableHints)
+            );
+            const claudeCheckFailed = checkRuns.some(
+              (run) =>
+                run.name === claudeCheckName &&
+                run.status === "completed" &&
+                ["failure", "timed_out", "cancelled", "action_required"].includes(
+                  run.conclusion || ""
+                )
+            );
+            if (requireCodex && autoSkipCodexLimit && codexUnavailableDetected) {
+              requireCodex = false;
+            }
+            if (requireGemini && autoSkipGeminiUnavailable && geminiUnavailableDetected) {
+              requireGemini = false;
+            }
+            if (requireClaude && autoSkipClaudeCheckFailure && claudeCheckFailed) {
+              requireClaude = false;
+            }
 
             const commentsBy = (items, login) => items.filter((x) => x.user?.login === login);
             const hasActor = (items, login) => commentsBy(items, login).length > 0;
@@ -191,12 +267,6 @@ jobs:
 
             const claudeReviewReady =
               hasActor(reviews, claudeBot) || hasActor(reviewComments, claudeBot);
-            const checkRuns = await github.paginate(github.rest.checks.listForRef, {
-              owner,
-              repo,
-              ref: pr.head.sha,
-              per_page: 100,
-            });
             const claudeCheckReady = checkRuns.some(
               (run) =>
                 run.name === claudeCheckName &&
@@ -209,6 +279,9 @@ jobs:
 
             const details = [
               `evaluated_at=${nowIso}`,
+              `auto_skip_codex_limit=${autoSkipCodexLimit} detected=${codexUnavailableDetected}`,
+              `auto_skip_gemini_unavailable=${autoSkipGeminiUnavailable} detected=${geminiUnavailableDetected}`,
+              `auto_skip_claude_check_failure=${autoSkipClaudeCheckFailure} detected=${claudeCheckFailed}`,
               `gemini_required=${requireGemini} gemini_ready=${geminiReady} (review=${geminiHasReview}, grace=${geminiGraceSatisfied})`,
               `codex_required=${requireCodex} codex_ready=${codexReady}`,
               `claude_required=${requireClaude} claude_ready=${claudeReady} (review=${claudeReviewReady}, check=${claudeCheckReady})`,
