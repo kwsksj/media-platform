@@ -422,18 +422,23 @@ ensure_ai_review_feedback_resolved() {
     return
   fi
 
+  local changes_requested_awk
+  changes_requested_awk="$(cat <<'AWK'
+$2 == "CHANGES_REQUESTED" && (
+  (rg == "true" && $1 == g) ||
+  (rc == "true" && $1 == c) ||
+  (ra == "true" && $1 == a)
+) {print $0}
+AWK
+)"
+
   local changes_requested
   changes_requested="$(
     gh api "repos/$repo_slug/pulls/$pr_number/reviews" --paginate \
       --jq '.[] | [.user.login, .state, .submitted_at] | @tsv' 2>/dev/null \
       | awk -F'\t' -v g="$gemini_bot_login" -v c="$codex_bot_login" -v a="$claude_bot_login" \
-          -v rg="$require_gemini_review" -v rc="$require_codex_review" -v ra="$require_claude_review" '
-            $2 == "CHANGES_REQUESTED" && (
-              (rg == "true" && $1 == g) ||
-              (rc == "true" && $1 == c) ||
-              (ra == "true" && $1 == a)
-            ) {print $0}
-          ' || true
+          -v rg="$require_gemini_review" -v rc="$require_codex_review" -v ra="$require_claude_review" \
+          "$changes_requested_awk" || true
   )"
   if [[ -n "$changes_requested" ]]; then
     echo "Merge blocked: required AI reviewers have CHANGES_REQUESTED reviews." >&2
@@ -442,16 +447,57 @@ ensure_ai_review_feedback_resolved() {
     exit 1
   fi
 
+  local review_threads_query
+  review_threads_query="$(cat <<'GRAPHQL'
+query($owner:String!, $repo:String!, $number:Int!, $endCursor:String){
+  repository(owner:$owner,name:$repo){
+    pullRequest(number:$number){
+      reviewThreads(first:100, after:$endCursor){
+        nodes {
+          isResolved
+          isOutdated
+          path
+          line
+          startLine
+          originalLine
+          comments(first:100){
+            totalCount
+            nodes{author{login}}
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}
+GRAPHQL
+)"
+
   local review_threads
   review_threads="$(
     gh api graphql --paginate \
       -F owner="$repo_owner" \
       -F repo="$repo_name" \
       -F number="$pr_number" \
-      -f query='query($owner:String!, $repo:String!, $number:Int!, $endCursor:String){ repository(owner:$owner,name:$repo){ pullRequest(number:$number){ reviewThreads(first:100, after:$endCursor){ nodes { isResolved isOutdated path line startLine originalLine comments(first:100){ totalCount nodes{author{login}} } } pageInfo { hasNextPage endCursor } } } } }' \
+      -f query="$review_threads_query" \
       --jq '.data.repository.pullRequest.reviewThreads.nodes[]' 2>/dev/null \
       | jq -s '.' || echo '[]'
   )"
+
+  local unresolved_ai_filter
+  unresolved_ai_filter="$(cat <<'JQ'
+.[]
+| select((.isResolved | not) and ((.isOutdated // false) | not))
+| .authors = ([.comments.nodes[]?.author.login] | unique)
+| select(
+    (($rg == "true") and (.authors | index($g) != null))
+    or (($rc == "true") and (.authors | index($c) != null))
+    or (($ra == "true") and (.authors | index($a) != null))
+  )
+| [(.path // "(unknown path)"), ((.line // .startLine // .originalLine // 0) | tostring), (.authors | join(","))]
+| @tsv
+JQ
+)"
 
   local unresolved_ai_threads
   unresolved_ai_threads="$(
@@ -461,18 +507,8 @@ ensure_ai_review_feedback_resolved() {
       --arg a "$claude_bot_login" \
       --arg rg "$require_gemini_review" \
       --arg rc "$require_codex_review" \
-      --arg ra "$require_claude_review" '
-        .[]
-        | select((.isResolved | not) and ((.isOutdated // false) | not))
-        | .authors = ([.comments.nodes[]?.author.login] | unique)
-        | select(
-            (($rg == "true") and (.authors | index($g) != null))
-            or (($rc == "true") and (.authors | index($c) != null))
-            or (($ra == "true") and (.authors | index($a) != null))
-          )
-        | [(.path // "(unknown path)"), ((.line // .startLine // .originalLine // 0) | tostring), (.authors | join(","))]
-        | @tsv
-      ' <<<"$review_threads"
+      --arg ra "$require_claude_review" \
+      "$unresolved_ai_filter" <<<"$review_threads"
   )"
 
   local truncated_unresolved_threads
