@@ -94,7 +94,7 @@ codex_bot_login="${PR_CODEX_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
 claude_bot_login="${PR_CLAUDE_BOT_LOGIN:-claude[bot]}"
 claude_check_name="${PR_CLAUDE_CHECK_NAME:-claude-review}"
 codex_unavailable_pattern="${PR_CODEX_UNAVAILABLE_PATTERN:-reached your codex usage limits|usage limits for code reviews|add credits|upgrade your account|上限}"
-gemini_unavailable_pattern="${PR_GEMINI_UNAVAILABLE_PATTERN:-unable to review|can\'t review|cannot review|rate limit|quota|usage limit|temporarily unavailable|上限}"
+gemini_unavailable_pattern="${PR_GEMINI_UNAVAILABLE_PATTERN:-i\'m unable to|i am unable to|i can\'t|i cannot|temporarily unavailable|limit reached|上限に達}"
 wait_post_merge_deploys="$(echo "${PR_WAIT_POST_MERGE_DEPLOYS:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
 
 sanitize_non_negative_int() {
