@@ -11,7 +11,6 @@ Usage:
 Behavior:
   1) Wait for AI review signals (enabled by default)
      - Gemini: review from gemini-code-assist[bot]
-       (fallback: if only summary comment arrives, proceed after grace period)
      - Codex: comment/review/review-comment OR +1 reaction from chatgpt-codex-connector[bot]
      - Claude: review/review-comment from claude[bot]
        or successful check run named "claude-review"
@@ -39,7 +38,6 @@ Environment variables:
   PR_SKIP_CLAUDE_LABEL=...            (default: skip-claude-gate)
   PR_AI_REVIEW_WAIT_SECONDS=900       (default timeout)
   PR_AI_REVIEW_POLL_SECONDS=10        (default poll interval)
-  PR_GEMINI_REVIEW_GRACE_SECONDS=180  (fallback grace after Gemini summary comment)
   PR_GEMINI_BOT_LOGIN=...             (default: gemini-code-assist[bot])
   PR_CODEX_BOT_LOGIN=...              (default: chatgpt-codex-connector[bot])
   PR_CLAUDE_BOT_LOGIN=...             (default: claude[bot])
@@ -110,7 +108,6 @@ sanitize_non_negative_int() {
 wait_seconds="$(sanitize_non_negative_int "${PR_MERGE_WAIT_SECONDS:-600}" "600")"
 ai_wait_seconds="$(sanitize_non_negative_int "${PR_AI_REVIEW_WAIT_SECONDS:-900}" "900")"
 ai_poll_seconds="$(sanitize_non_negative_int "${PR_AI_REVIEW_POLL_SECONDS:-10}" "10")"
-gemini_review_grace_seconds="$(sanitize_non_negative_int "${PR_GEMINI_REVIEW_GRACE_SECONDS:-180}" "180")"
 deploy_wait_seconds="$(sanitize_non_negative_int "${PR_DEPLOY_WAIT_SECONDS:-1800}" "1800")"
 deploy_poll_seconds="$(sanitize_non_negative_int "${PR_DEPLOY_POLL_SECONDS:-15}" "15")"
 
@@ -463,13 +460,11 @@ if [[ "$require_ai_review" == "true" ]]; then
   echo "- Codex required:  $require_codex_review"
   echo "- Claude required: $require_claude_review"
   echo "- Timeout (seconds): $ai_wait_seconds"
-  echo "- Gemini review grace (seconds): $gemini_review_grace_seconds"
 
   ai_deadline=$((SECONDS + ai_wait_seconds))
   gemini_ready=false
   codex_ready=false
   claude_ready=false
-  gemini_comment_seen_at=""
 
   while true; do
     issue_comments="$(
@@ -551,27 +546,13 @@ if [[ "$require_ai_review" == "true" ]]; then
     fi
 
     gemini_has_review=false
-    gemini_has_comment=false
     if table_has_actor "$gemini_bot_login" "$reviews" \
       || table_has_actor "$gemini_bot_login" "$review_comments"; then
       gemini_has_review=true
     fi
-    if table_has_actor "$gemini_bot_login" "$issue_comments"; then
-      gemini_has_comment=true
-    fi
 
     if [[ "$require_gemini_review" == "true" && "$gemini_has_review" == "true" ]]; then
       gemini_ready=true
-    elif [[ "$require_gemini_review" == "true" && "$gemini_has_comment" == "true" ]]; then
-      if [[ -z "$gemini_comment_seen_at" ]]; then
-        gemini_comment_seen_at="$SECONDS"
-      fi
-      gemini_comment_elapsed=$((SECONDS - gemini_comment_seen_at))
-      if [[ "$gemini_review_grace_seconds" -le 0 || "$gemini_comment_elapsed" -ge "$gemini_review_grace_seconds" ]]; then
-        gemini_ready=true
-      fi
-    else
-      gemini_comment_seen_at=""
     fi
 
     if [[ "$require_codex_review" == "true" ]] && { table_has_actor "$codex_bot_login" "$issue_comments" \
@@ -596,7 +577,7 @@ if [[ "$require_ai_review" == "true" ]]; then
     if [[ "$ai_wait_seconds" -le 0 || "$SECONDS" -ge "$ai_deadline" ]]; then
       echo "Timed out waiting for AI review signals." >&2
       if [[ "$require_gemini_review" == "true" && "$gemini_ready" != "true" ]]; then
-        echo "- Missing Gemini signal (review, or comment after grace) from: $gemini_bot_login" >&2
+        echo "- Missing Gemini signal (review/review-comment) from: $gemini_bot_login" >&2
       fi
       if [[ "$require_codex_review" == "true" && "$codex_ready" != "true" ]]; then
         echo "- Missing Codex signal (+1/comment/review/review-comment) from: $codex_bot_login" >&2
@@ -608,12 +589,7 @@ if [[ "$require_ai_review" == "true" ]]; then
       exit 1
     fi
 
-    if [[ "$gemini_ready" == "false" && "${gemini_has_comment:-false}" == "true" && "${gemini_has_review:-false}" == "false" && -n "$gemini_comment_seen_at" ]]; then
-      gemini_comment_elapsed=$((SECONDS - gemini_comment_seen_at))
-      echo "Waiting... Gemini=${gemini_ready} (summary seen, waiting review/grace ${gemini_comment_elapsed}s/${gemini_review_grace_seconds}s) Codex=${codex_ready} Claude=${claude_ready}"
-    else
-      echo "Waiting... Gemini=${gemini_ready} Codex=${codex_ready} Claude=${claude_ready}"
-    fi
+    echo "Waiting... Gemini=${gemini_ready} Codex=${codex_ready} Claude=${claude_ready}"
     sleep "$ai_poll_seconds"
   done
 fi

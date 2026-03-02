@@ -89,7 +89,6 @@ jobs:
           AUTO_SKIP_CODEX_LIMIT: ${{ vars.AI_GATE_AUTO_SKIP_CODEX_LIMIT || 'true' }}
           AUTO_SKIP_GEMINI_UNAVAILABLE: ${{ vars.AI_GATE_AUTO_SKIP_GEMINI_UNAVAILABLE || 'false' }}
           AUTO_SKIP_CLAUDE_CHECK_FAILURE: ${{ vars.AI_GATE_AUTO_SKIP_CLAUDE_CHECK_FAILURE || 'true' }}
-          GEMINI_GRACE_SECONDS: "180"
         with:
           script: |
             const owner = context.repo.owner;
@@ -104,7 +103,6 @@ jobs:
             const skipGeminiLabel = process.env.SKIP_GEMINI_LABEL;
             const skipCodexLabel = process.env.SKIP_CODEX_LABEL;
             const skipClaudeLabel = process.env.SKIP_CLAUDE_LABEL;
-            const graceSeconds = Number(process.env.GEMINI_GRACE_SECONDS || "180");
             const parseBool = (value, fallback = true) => {
               const normalized = String(value ?? "").trim().toLowerCase();
               if (["true", "1", "yes", "on"].includes(normalized)) return true;
@@ -242,18 +240,7 @@ jobs:
 
             const geminiHasReview =
               hasActor(reviews, geminiBot) || hasActor(reviewComments, geminiBot);
-            const geminiComments = commentsBy(issueComments, geminiBot);
-            let geminiGraceSatisfied = false;
-            if (geminiComments.length > 0) {
-              const earliest = geminiComments
-                .map((c) => Date.parse(c.created_at))
-                .filter((t) => Number.isFinite(t))
-                .sort((a, b) => a - b)[0];
-              if (Number.isFinite(earliest)) {
-                geminiGraceSatisfied = now - earliest >= graceSeconds * 1000;
-              }
-            }
-            const geminiReady = !requireGemini || geminiHasReview || geminiGraceSatisfied;
+            const geminiReady = !requireGemini || geminiHasReview;
 
             const codexReady =
               !requireCodex ||
@@ -281,7 +268,7 @@ jobs:
               `auto_skip_codex_limit=${autoSkipCodexLimit} detected=${codexUnavailableDetected}`,
               `auto_skip_gemini_unavailable=${autoSkipGeminiUnavailable} detected=${geminiUnavailableDetected}`,
               `auto_skip_claude_check_failure=${autoSkipClaudeCheckFailure} detected=${claudeCheckFailed}`,
-              `gemini_required=${requireGemini} gemini_ready=${geminiReady} (review=${geminiHasReview}, grace=${geminiGraceSatisfied})`,
+              `gemini_required=${requireGemini} gemini_ready=${geminiReady} (review=${geminiHasReview})`,
               `codex_required=${requireCodex} codex_ready=${codexReady}`,
               `claude_required=${requireClaude} claude_ready=${claudeReady} (review=${claudeReviewReady}, check=${claudeCheckReady})`,
             ].join("\n");
