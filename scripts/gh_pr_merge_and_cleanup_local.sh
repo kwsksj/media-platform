@@ -12,7 +12,8 @@ Behavior:
   1) Wait for AI review signals (enabled by default)
      - Gemini: review from gemini-code-assist[bot]
        (fallback: if only summary comment arrives, proceed after grace period)
-     - Codex: comment/review OR +1 reaction from chatgpt-codex-connector[bot]
+     - Codex: comment/review/review-comment OR +1 reaction from chatgpt-codex-connector[bot]
+     - Claude: review from claude[bot] (via claude-code-action)
   2) gh pr merge --auto --squash --delete-branch
   3) Wait for merge completion (default: 600s, configurable by PR_MERGE_WAIT_SECONDS)
   4) If PR state is MERGED:
@@ -27,6 +28,7 @@ Environment variables:
   PR_GEMINI_REVIEW_GRACE_SECONDS=180  (fallback grace after Gemini summary comment)
   PR_GEMINI_BOT_LOGIN=...             (default: gemini-code-assist[bot])
   PR_CODEX_BOT_LOGIN=...              (default: chatgpt-codex-connector[bot])
+  PR_CLAUDE_BOT_LOGIN=...             (default: claude[bot])
 EOF
 }
 
@@ -56,6 +58,7 @@ default_branch="$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.n
 require_ai_review="$(echo "${PR_REQUIRE_AI_REVIEW:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
 gemini_bot_login="${PR_GEMINI_BOT_LOGIN:-gemini-code-assist[bot]}"
 codex_bot_login="${PR_CODEX_BOT_LOGIN:-chatgpt-codex-connector[bot]}"
+claude_bot_login="${PR_CLAUDE_BOT_LOGIN:-claude[bot]}"
 
 sanitize_non_negative_int() {
   local value="$1"
@@ -87,14 +90,34 @@ echo "Require AI review signals: $require_ai_review"
 table_has_actor() {
   local actor="$1"
   local table="$2"
-  awk -F'\t' -v actor="$actor" '$1 == actor {found=1; exit} END {exit found ? 0 : 1}' <<<"$table"
+  awk -F'\t' -v actor="$actor" '
+    function normalize(v) {
+      sub(/\[bot\]$/, "", v)
+      return v
+    }
+    BEGIN {
+      actor = normalize(actor)
+    }
+    normalize($1) == actor {found=1; exit}
+    END {exit found ? 0 : 1}
+  ' <<<"$table"
 }
 
 table_has_actor_content() {
   local actor="$1"
   local content="$2"
   local table="$3"
-  awk -F'\t' -v actor="$actor" -v content="$content" '$1 == actor && $2 == content {found=1; exit} END {exit found ? 0 : 1}' <<<"$table"
+  awk -F'\t' -v actor="$actor" -v content="$content" '
+    function normalize(v) {
+      sub(/\[bot\]$/, "", v)
+      return v
+    }
+    BEGIN {
+      actor = normalize(actor)
+    }
+    normalize($1) == actor && $2 == content {found=1; exit}
+    END {exit found ? 0 : 1}
+  ' <<<"$table"
 }
 
 if [[ "$require_ai_review" == "true" ]]; then
@@ -105,17 +128,23 @@ if [[ "$require_ai_review" == "true" ]]; then
   echo "Waiting for AI review signals before merge..."
   echo "- Gemini actor: $gemini_bot_login"
   echo "- Codex actor:  $codex_bot_login"
+  echo "- Claude actor: $claude_bot_login"
   echo "- Timeout (seconds): $ai_wait_seconds"
   echo "- Gemini review grace (seconds): $gemini_review_grace_seconds"
 
   ai_deadline=$((SECONDS + ai_wait_seconds))
   gemini_ready=false
   codex_ready=false
+  claude_ready=false
   gemini_comment_seen_at=""
 
   while true; do
     issue_comments="$(
       gh api "repos/$repo_slug/issues/$pr_number/comments" --paginate \
+        --jq '.[] | [.user.login, .created_at] | @tsv' || true
+    )"
+    review_comments="$(
+      gh api "repos/$repo_slug/pulls/$pr_number/comments" --paginate \
         --jq '.[] | [.user.login, .created_at] | @tsv' || true
     )"
     reviews="$(
@@ -130,10 +159,12 @@ if [[ "$require_ai_review" == "true" ]]; then
 
     gemini_ready=false
     codex_ready=false
+    claude_ready=false
 
     gemini_has_review=false
     gemini_has_comment=false
-    if table_has_actor "$gemini_bot_login" "$reviews"; then
+    if table_has_actor "$gemini_bot_login" "$reviews" \
+      || table_has_actor "$gemini_bot_login" "$review_comments"; then
       gemini_has_review=true
     fi
     if table_has_actor "$gemini_bot_login" "$issue_comments"; then
@@ -155,13 +186,20 @@ if [[ "$require_ai_review" == "true" ]]; then
     fi
 
     if table_has_actor "$codex_bot_login" "$issue_comments" \
+      || table_has_actor "$codex_bot_login" "$review_comments" \
       || table_has_actor "$codex_bot_login" "$reviews" \
       || table_has_actor_content "$codex_bot_login" "+1" "$reactions"; then
       codex_ready=true
     fi
 
-    if [[ "$gemini_ready" == "true" && "$codex_ready" == "true" ]]; then
-      echo "AI review signals received (Gemini + Codex)."
+    # Claude: review or review-comment (claude-code-action posts PR reviews)
+    if table_has_actor "$claude_bot_login" "$reviews" \
+      || table_has_actor "$claude_bot_login" "$review_comments"; then
+      claude_ready=true
+    fi
+
+    if [[ "$gemini_ready" == "true" && "$codex_ready" == "true" && "$claude_ready" == "true" ]]; then
+      echo "AI review signals received (Gemini + Codex + Claude)."
       break
     fi
 
@@ -173,15 +211,18 @@ if [[ "$require_ai_review" == "true" ]]; then
       if [[ "$codex_ready" != "true" ]]; then
         echo "- Missing Codex signal (+1/comment/review) from: $codex_bot_login" >&2
       fi
+      if [[ "$claude_ready" != "true" ]]; then
+        echo "- Missing Claude signal (review) from: $claude_bot_login" >&2
+      fi
       echo "Merge aborted. Re-run after AI feedback arrives, or set PR_REQUIRE_AI_REVIEW=false to override." >&2
       exit 1
     fi
 
     if [[ "$gemini_ready" == "false" && "${gemini_has_comment:-false}" == "true" && "${gemini_has_review:-false}" == "false" && -n "$gemini_comment_seen_at" ]]; then
       gemini_comment_elapsed=$((SECONDS - gemini_comment_seen_at))
-      echo "Waiting... Gemini=${gemini_ready} (summary seen, waiting review/grace ${gemini_comment_elapsed}s/${gemini_review_grace_seconds}s) Codex=${codex_ready}"
+      echo "Waiting... Gemini=${gemini_ready} (summary seen, waiting review/grace ${gemini_comment_elapsed}s/${gemini_review_grace_seconds}s) Codex=${codex_ready} Claude=${claude_ready}"
     else
-      echo "Waiting... Gemini=${gemini_ready} Codex=${codex_ready}"
+      echo "Waiting... Gemini=${gemini_ready} Codex=${codex_ready} Claude=${claude_ready}"
     fi
     sleep "$ai_poll_seconds"
   done
