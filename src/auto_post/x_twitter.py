@@ -34,6 +34,20 @@ def _extract_tweepy_error_info(
     return status, api_errors, body
 
 
+def _is_cloudflare_challenge(body: str | None) -> bool:
+    """Return True when an HTTP body appears to be a Cloudflare challenge page."""
+    if not body:
+        return False
+
+    lowered = body.lower()
+    markers = (
+        "<title>just a moment...</title>",
+        "cf-browser-verification",
+        "challenges.cloudflare.com",
+    )
+    return any(marker in lowered for marker in markers)
+
+
 class XAPIError(Exception):
     """X API error."""
 
@@ -112,7 +126,7 @@ class XClient:
         Returns:
             Tweet ID
         """
-        # X allows max 4 images per tweet
+        # Repository policy currently posts only one image to X.
         images_to_post = image_contents[:X_MAX_IMAGES]
 
         if len(image_contents) > X_MAX_IMAGES:
@@ -128,7 +142,7 @@ class XClient:
             media_ids.append(media_id)
             time.sleep(0.5)  # Rate limit
 
-        # Post tweet
+        # Post tweet (v2 API first)
         try:
             response = self.client.create_tweet(text=text, media_ids=media_ids)
             data = getattr(response, "data", None)
@@ -150,10 +164,42 @@ class XClient:
                 detail_parts.append(f"body={body[:500]}")
             if detail_parts:
                 logger.error(f"X post error details: {', '.join(detail_parts)}")
+            if status == 403 and _is_cloudflare_challenge(body):
+                logger.warning(
+                    "X v2 create_tweet returned a Cloudflare challenge (403); "
+                    "retrying with v1.1 update_status"
+                )
+                return self._post_with_images_v1(text, media_ids)
             msg = f"Failed to post tweet: {e}"
             if status is not None:
                 msg += f" (status {status})"
             raise XAPIError(msg) from e
+
+    def _post_with_images_v1(self, text: str, media_ids: list[str]) -> str:
+        """Fallback posting via v1.1 statuses/update when v2 is blocked."""
+        try:
+            status_obj = self.api.update_status(status=text, media_ids=media_ids)
+        except tweepy.TweepyException as e:
+            status, api_errors, body = _extract_tweepy_error_info(e)
+            detail_parts = []
+            if status is not None:
+                detail_parts.append(f"status={status}")
+            if api_errors:
+                detail_parts.append(f"api_errors={api_errors}")
+            if body:
+                detail_parts.append(f"body={body[:500]}")
+            if detail_parts:
+                logger.error(f"X v1.1 fallback error details: {', '.join(detail_parts)}")
+            msg = f"Failed to post tweet via v1.1 fallback: {e}"
+            if status is not None:
+                msg += f" (status {status})"
+            raise XAPIError(msg) from e
+
+        tweet_id = str(getattr(status_obj, "id_str", "") or getattr(status_obj, "id", "") or "")
+        if not tweet_id:
+            raise XAPIError("Failed to post tweet via v1.1 fallback: missing tweet id")
+        logger.info(f"Posted tweet via v1.1 fallback: {tweet_id}")
+        return tweet_id
 
     def post_text_only(self, text: str) -> str:
         """Post a text-only tweet."""
