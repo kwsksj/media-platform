@@ -32,7 +32,7 @@ Environment variables:
   PR_REQUIRE_CODEX_REVIEW=true|false  (default: true)
   PR_REQUIRE_CLAUDE_REVIEW=true|false (default: true)
   PR_AUTO_SKIP_CODEX_LIMIT=true|false (default: true)
-  PR_AUTO_SKIP_GEMINI_UNAVAILABLE=true|false (default: true)
+  PR_AUTO_SKIP_GEMINI_UNAVAILABLE=true|false (default: false)
   PR_AUTO_SKIP_CLAUDE_CHECK_FAILURE=true|false (default: true)
   PR_SKIP_GEMINI_LABEL=...            (default: skip-gemini-gate)
   PR_SKIP_CODEX_LABEL=...             (default: skip-codex-gate)
@@ -84,7 +84,7 @@ require_gemini_review="$(echo "${PR_REQUIRE_GEMINI_REVIEW:-true}" | tr '[:upper:
 require_codex_review="$(echo "${PR_REQUIRE_CODEX_REVIEW:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
 require_claude_review="$(echo "${PR_REQUIRE_CLAUDE_REVIEW:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
 auto_skip_codex_limit="$(echo "${PR_AUTO_SKIP_CODEX_LIMIT:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
-auto_skip_gemini_unavailable="$(echo "${PR_AUTO_SKIP_GEMINI_UNAVAILABLE:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
+auto_skip_gemini_unavailable="$(echo "${PR_AUTO_SKIP_GEMINI_UNAVAILABLE:-false}" | tr '[:upper:]' '[:lower:]' | xargs)"
 auto_skip_claude_check_failure="$(echo "${PR_AUTO_SKIP_CLAUDE_CHECK_FAILURE:-true}" | tr '[:upper:]' '[:lower:]' | xargs)"
 skip_gemini_label="${PR_SKIP_GEMINI_LABEL:-skip-gemini-gate}"
 skip_codex_label="${PR_SKIP_CODEX_LABEL:-skip-codex-gate}"
