@@ -78,6 +78,9 @@ make pr-merge-local PR=<number>
     - `AI_GATE_REQUIRE_GEMINI` (`true`/`false`)
     - `AI_GATE_REQUIRE_CODEX` (`true`/`false`)
     - `AI_GATE_REQUIRE_CLAUDE` (`true`/`false`)
+    - `AI_GATE_AUTO_SKIP_CODEX_LIMIT` (`true`/`false`)
+    - `AI_GATE_AUTO_SKIP_GEMINI_UNAVAILABLE` (`true`/`false`)
+    - `AI_GATE_AUTO_SKIP_CLAUDE_CHECK_FAILURE` (`true`/`false`)
   - If an AI is unavailable in your plan/time window, set that AI to optional (label or variable) and continue.
 - Branch protection recommendation:
   - Configure `main` branch protection to require status checks:
