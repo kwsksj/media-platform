@@ -18,6 +18,7 @@ const state = {
 	tagsByNormalizedName: new Map(),
 	tagsSearch: [],
 	tagsIndexLoaded: false,
+	tagCreateInFlightByKey: new Map(),
 	upload: {
 		files: [],
 		coverIndex: 0,
@@ -40,6 +41,20 @@ const state = {
 		currentIndex: -1,
 		syncSnapshotAt: "",
 		syncStatusLoaded: false,
+		saveQueue: {
+			jobs: [],
+			running: false,
+			jobSeq: 1,
+		},
+		saveStatusByWorkId: new Map(),
+		selectedMergeSourceIds: [],
+		mergeTargetWorkId: "",
+		inlineTagEditor: {
+			workId: "",
+			explicitTagIds: [],
+			controller: null,
+		},
+		mergeRunning: false,
 	},
 };
 let schemaLoadSequence = 0;
@@ -790,97 +805,115 @@ function normalizeTagForState(rawTag, fallback = {}) {
 	};
 }
 
+function withInFlightTagCreate(tagName, taskFactory) {
+	const key = normalizeTagNameKey(tagName);
+	if (!key) return Promise.resolve().then(taskFactory);
+	const existing = state.tagCreateInFlightByKey.get(key);
+	if (existing) return existing;
+	const run = Promise.resolve()
+		.then(taskFactory)
+		.finally(() => {
+			if (state.tagCreateInFlightByKey.get(key) === run) {
+				state.tagCreateInFlightByKey.delete(key);
+			}
+		});
+	state.tagCreateInFlightByKey.set(key, run);
+	return run;
+}
+
 async function createTagFromUi(rawName, { parentIds = [], childIds = [] } = {}) {
 	const name = trimText(rawName);
 	if (!name) throw new Error("タグ名を入力してください");
-	if (!state.tagsIndexLoaded) {
-		throw new Error("タグインデックス未取得のため新規作成できません。再読み込み後にお試しください。");
-	}
-
-	const normalizedParentIds = normalizeTagIdList(parentIds);
-	const normalizedChildIds = normalizeTagIdList(childIds);
-	const attachRelationsIfNeeded = async (id) => {
-		const resolvedId = resolveMergedTagId(trimText(id));
-		if (!resolvedId) return;
-		if (normalizedParentIds.length === 0 && normalizedChildIds.length === 0) return;
-		const updated = await apiFetch("/admin/notion/tag", {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				id: resolvedId,
-				addParentIds: normalizedParentIds,
-				addChildIds: normalizedChildIds,
-			}),
-		});
-		const nextTag = normalizeTagForState(updated, state.tagsById.get(resolvedId) || { id: resolvedId });
-		upsertTagSearchEntry(nextTag);
-	};
-
-	const existingId = findExistingTagIdByName(name);
-	if (existingId) {
-		const id = resolveMergedTagId(existingId);
-		await attachRelationsIfNeeded(id);
-		return {
-			id,
-			created: false,
-			parentIds: normalizeTagIdList(state.tagsById.get(id)?.parents || []),
-			childIds: normalizeTagIdList(state.tagsById.get(id)?.children || []),
-		};
-	}
-
-	let created = null;
-	try {
-		created = await apiFetch("/admin/notion/tag", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				name,
-				parentIds: normalizedParentIds,
-				childIds: normalizedChildIds,
-			}),
-		});
-	} catch (err) {
-		const isDuplicate = Number(err?.status) === 409;
-		if (!isDuplicate) throw err;
-
-		const conflictTag = normalizeTagForState(err?.data?.existing_tag, {
-			id: trimText(err?.data?.existing_id),
-		});
-		if (conflictTag.id) upsertTagSearchEntry(conflictTag);
-
-		let resolvedId = resolveMergedTagId(conflictTag.id);
-		if (!resolvedId) {
-			try {
-				await loadSchemaAndIndexes();
-			} catch {}
-			resolvedId = resolveMergedTagId(findExistingTagIdByName(name));
+	return withInFlightTagCreate(name, async () => {
+		if (!state.tagsIndexLoaded) {
+			throw new Error("タグインデックス未取得のため新規作成できません。再読み込み後にお試しください。");
 		}
-		if (!resolvedId) throw err;
 
-		await attachRelationsIfNeeded(resolvedId);
-		return {
-			id: resolvedId,
-			created: false,
-			parentIds: normalizeTagIdList(state.tagsById.get(resolvedId)?.parents || []),
-			childIds: normalizeTagIdList(state.tagsById.get(resolvedId)?.children || []),
+		const normalizedParentIds = normalizeTagIdList(parentIds);
+		const normalizedChildIds = normalizeTagIdList(childIds);
+		const attachRelationsIfNeeded = async (id) => {
+			const resolvedId = resolveMergedTagId(trimText(id));
+			if (!resolvedId) return;
+			if (normalizedParentIds.length === 0 && normalizedChildIds.length === 0) return;
+			const updated = await apiFetch("/admin/notion/tag", {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					id: resolvedId,
+					addParentIds: normalizedParentIds,
+					addChildIds: normalizedChildIds,
+				}),
+			});
+			const nextTag = normalizeTagForState(updated, state.tagsById.get(resolvedId) || { id: resolvedId });
+			upsertTagSearchEntry(nextTag);
 		};
-	}
 
-	const id = trimText(created?.id);
-	if (!id) throw new Error("タグ作成結果が不正です（idなし）");
+		const existingId = findExistingTagIdByName(name);
+		if (existingId) {
+			const id = resolveMergedTagId(existingId);
+			await attachRelationsIfNeeded(id);
+			return {
+				id,
+				created: false,
+				parentIds: normalizeTagIdList(state.tagsById.get(id)?.parents || []),
+				childIds: normalizeTagIdList(state.tagsById.get(id)?.children || []),
+			};
+		}
 
-	const createdTag = normalizeTagForState(created, {
-		id,
-		name,
-		aliases: [],
-		status: "active",
-		merge_to: "",
-		parents: normalizedParentIds,
-		children: normalizedChildIds,
-		usage_count: 0,
+		let created = null;
+		try {
+			created = await apiFetch("/admin/notion/tag", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					name,
+					parentIds: normalizedParentIds,
+					childIds: normalizedChildIds,
+				}),
+			});
+		} catch (err) {
+			const isDuplicate = Number(err?.status) === 409;
+			if (!isDuplicate) throw err;
+
+			const conflictTag = normalizeTagForState(err?.data?.existing_tag, {
+				id: trimText(err?.data?.existing_id),
+			});
+			if (conflictTag.id) upsertTagSearchEntry(conflictTag);
+
+			let resolvedId = resolveMergedTagId(conflictTag.id);
+			if (!resolvedId) {
+				try {
+					await loadSchemaAndIndexes();
+				} catch {}
+				resolvedId = resolveMergedTagId(findExistingTagIdByName(name));
+			}
+			if (!resolvedId) throw err;
+
+			await attachRelationsIfNeeded(resolvedId);
+			return {
+				id: resolvedId,
+				created: false,
+				parentIds: normalizeTagIdList(state.tagsById.get(resolvedId)?.parents || []),
+				childIds: normalizeTagIdList(state.tagsById.get(resolvedId)?.children || []),
+			};
+		}
+
+		const id = trimText(created?.id);
+		if (!id) throw new Error("タグ作成結果が不正です（idなし）");
+
+		const createdTag = normalizeTagForState(created, {
+			id,
+			name,
+			aliases: [],
+			status: "active",
+			merge_to: "",
+			parents: normalizedParentIds,
+			children: normalizedChildIds,
+			usage_count: 0,
+		});
+		upsertTagSearchEntry(createdTag);
+		return { id: createdTag.id || id, created: true, parentIds: createdTag.parents, childIds: createdTag.children };
 	});
-	upsertTagSearchEntry(createdTag);
-	return { id: createdTag.id || id, created: true, parentIds: createdTag.parents, childIds: createdTag.children };
 }
 
 async function addTagParentChildRelations(parentIdsRaw, childIdsRaw) {
@@ -950,7 +983,7 @@ async function updateTagAliases(tagIdRaw, aliasesRaw) {
 	return nextTag;
 }
 
-function appendCreateTagSuggest(suggestRoot, query, onCreated, { relatedTagIds = [] } = {}) {
+function appendCreateTagSuggest(suggestRoot, query, onCreated, { relatedTagIds = [], onTagMutation = null } = {}) {
 	const q = trimText(query);
 	if (!q) return;
 	if (!state.tagsIndexLoaded) {
@@ -974,15 +1007,29 @@ function appendCreateTagSuggest(suggestRoot, query, onCreated, { relatedTagIds =
 		create.addEventListener("click", async () => {
 			if (creating) return;
 			creating = true;
-			try {
+			create.classList.add("is-creating");
+			const labelEl = create.querySelector("span");
+			const hintEl = create.querySelector(".suggest-item__hint");
+			if (labelEl) labelEl.textContent = "作成中…";
+			if (hintEl) hintEl.textContent = "";
+			const run = (async () => {
 				const result = await createTagFromUi(q, { parentIds, childIds });
 				const id = resolveMergedTagId(result.id);
 				showToast(result.created ? "タグを作成しました" : "既存タグを追加しました");
 				onCreated(id);
+			})();
+			if (typeof onTagMutation === "function") {
+				onTagMutation(run);
+			}
+			try {
+				await run;
 			} catch (err) {
 				showToast(`タグ作成に失敗: ${err.message}`);
 			} finally {
 				creating = false;
+				create.classList.remove("is-creating");
+				if (labelEl) labelEl.textContent = label;
+				if (hintEl) hintEl.textContent = hint;
 			}
 		});
 		suggestRoot.appendChild(create);
@@ -1047,7 +1094,15 @@ function renderPickedTagChips(root, { ids, roleLabel, onRemove }) {
 	});
 }
 
-function bindTagPickerInput({ inputEl, suggestRoot, onPick, getRelatedTagIds = () => [], onCreated = null, clearOnPick = false }) {
+function bindTagPickerInput({
+	inputEl,
+	suggestRoot,
+	onPick,
+	getRelatedTagIds = () => [],
+	onCreated = null,
+	clearOnPick = false,
+	onTagMutation = null,
+}) {
 	const renderSuggest = () => {
 		const q = trimText(inputEl.value);
 		suggestRoot.innerHTML = "";
@@ -1082,11 +1137,11 @@ function bindTagPickerInput({ inputEl, suggestRoot, onPick, getRelatedTagIds = (
 					inputEl.value = clearOnPick ? "" : state.tagsById.get(resolvedId)?.name || q;
 					suggestRoot.innerHTML = "";
 					if (clearOnPick) inputEl.focus();
-				},
-				{ relatedTagIds: getRelatedTagIds() },
-			);
-		}
-	};
+					},
+					{ relatedTagIds: getRelatedTagIds(), onTagMutation },
+				);
+			}
+		};
 
 	inputEl.addEventListener("input", debounce(renderSuggest, 120));
 	inputEl.addEventListener("focus", () => {
@@ -1113,7 +1168,7 @@ function createHelpToggle(text, { summary = "?", ariaLabel = "説明を表示" }
 	return details;
 }
 
-function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRelationAdded = null } = {}) {
+function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRelationAdded = null, onTagMutation = null } = {}) {
 	const root = el("div", { class: "tag-relation-editor" });
 	root.appendChild(
 		el("div", { class: "tag-relation-editor__header" }, [
@@ -1250,7 +1305,7 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 	refreshPicked();
 	refreshAliasEditor();
 
-	const parentBinder = bindTagPickerInput({
+		const parentBinder = bindTagPickerInput({
 		inputEl: parentInput,
 		suggestRoot: parentSuggest,
 		onPick: (id) => {
@@ -1258,10 +1313,11 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 			refreshPicked();
 		},
 		onCreated: (id) => onTagAdded?.(id),
-		getRelatedTagIds,
-		clearOnPick: true,
-	});
-	const childBinder = bindTagPickerInput({
+			getRelatedTagIds,
+			clearOnPick: true,
+			onTagMutation,
+		});
+		const childBinder = bindTagPickerInput({
 		inputEl: childInput,
 		suggestRoot: childSuggest,
 		onPick: (id) => {
@@ -1269,10 +1325,11 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 			refreshPicked();
 		},
 		onCreated: (id) => onTagAdded?.(id),
-		getRelatedTagIds,
-		clearOnPick: true,
-	});
-	const aliasBinder = bindTagPickerInput({
+			getRelatedTagIds,
+			clearOnPick: true,
+			onTagMutation,
+		});
+		const aliasBinder = bindTagPickerInput({
 		inputEl: aliasTargetInput,
 		suggestRoot: aliasTargetSuggest,
 		onPick: (id) => {
@@ -1280,9 +1337,10 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 			aliasTargetInput.value = state.tagsById.get(aliasTagId)?.name || "";
 			refreshAliasEditor({ syncInput: true });
 		},
-		onCreated: (id) => onTagAdded?.(id),
-		getRelatedTagIds,
-	});
+			onCreated: (id) => onTagAdded?.(id),
+			getRelatedTagIds,
+			onTagMutation,
+		});
 
 	const addRelationBtn = el("button", { type: "button", class: "btn", text: "親子関係を一括追加" });
 	addRelationBtn.addEventListener("click", async () => {
@@ -1395,7 +1453,7 @@ function renderInitialTagSuggest(root, { explicitIds = [], onTagAdded = null } =
 	}
 }
 
-function renderTitleTagSuggest(root, { getTitle, getExplicitTagIds, onTagAdded }) {
+function renderTitleTagSuggest(root, { getTitle, getExplicitTagIds, onTagAdded, onTagMutation = null }) {
 	root.innerHTML = "";
 	const title = trimText(getTitle());
 	if (!title || !state.tagsIndexLoaded) return;
@@ -1411,15 +1469,25 @@ function renderTitleTagSuggest(root, { getTitle, getExplicitTagIds, onTagAdded }
 	chip.addEventListener("click", async () => {
 		if (adding) return;
 		adding = true;
-		try {
+		chip.classList.add("is-creating");
+		chip.textContent = "作成中…";
+		const run = (async () => {
 			const result = await createTagFromUi(title);
 			const id = resolveMergedTagId(result.id);
 			showToast(result.created ? "タグを作成しました" : "既存タグを追加しました");
 			onTagAdded(id);
+		})();
+		if (typeof onTagMutation === "function") {
+			onTagMutation(run);
+		}
+		try {
+			await run;
 		} catch (err) {
 			showToast(`タグ追加に失敗: ${err.message}`);
 		} finally {
 			adding = false;
+			chip.classList.remove("is-creating");
+			chip.textContent = title;
 		}
 	});
 	root.appendChild(chip);
@@ -2607,11 +2675,29 @@ function createTagEditorController({
 	const childSuggestRoot = el("div", { class: "chips", "aria-label": "子タグ候補" });
 	const titleTagRoot = el("div", { class: "chips", "aria-label": "作品名由来タグ候補" });
 	let explicitTagIds = [];
+	const pendingTagMutations = new Set();
+
+	const trackPendingTagMutation = (promiseLike) => {
+		const task = Promise.resolve(promiseLike)
+			.catch(() => {})
+			.finally(() => {
+				pendingTagMutations.delete(task);
+			});
+		pendingTagMutations.add(task);
+		return task;
+	};
+
+	const awaitPendingTagMutations = async () => {
+		while (pendingTagMutations.size > 0) {
+			await Promise.allSettled(Array.from(pendingTagMutations));
+		}
+	};
 
 	const refreshTitleTag = () => {
 		renderTitleTagSuggest(titleTagRoot, {
 			getTitle,
 			getExplicitTagIds: () => explicitTagIds,
+			onTagMutation: trackPendingTagMutation,
 			onTagAdded: (id) => {
 				const resolvedId = resolveMergedTagId(id);
 				if (!resolvedId) return;
@@ -2630,11 +2716,12 @@ function createTagEditorController({
 			if (!resolvedId) return;
 			setExplicitTagIds(Array.from(new Set([...explicitTagIds, resolvedId])));
 		},
-		onRelationAdded: () => {
-			// Recompute with latest tag graph after parent/child relation updates.
-			setExplicitTagIds(explicitTagIds);
-		},
-	});
+			onRelationAdded: () => {
+				// Recompute with latest tag graph after parent/child relation updates.
+				setExplicitTagIds(explicitTagIds);
+			},
+			onTagMutation: trackPendingTagMutation,
+		});
 
 	root.appendChild(chipsRoot);
 	root.appendChild(initialTagRoot);
@@ -2704,18 +2791,18 @@ function createTagEditorController({
 			appendCreateTagSuggest(
 				suggestRoot,
 				q,
-				(id) => {
-					const resolved = resolveMergedTagId(id);
-					if (!resolved) return;
-					setExplicitTagIds(Array.from(new Set([...explicitTagIds, resolved])));
-					queryEl.value = "";
-					suggestRoot.innerHTML = "";
-					queryEl.focus();
-				},
-				{ relatedTagIds: explicitTagIds },
-			);
-		}
-	};
+					(id) => {
+						const resolved = resolveMergedTagId(id);
+						if (!resolved) return;
+						setExplicitTagIds(Array.from(new Set([...explicitTagIds, resolved])));
+						queryEl.value = "";
+						suggestRoot.innerHTML = "";
+						queryEl.focus();
+					},
+					{ relatedTagIds: explicitTagIds, onTagMutation: trackPendingTagMutation },
+				);
+			}
+		};
 
 	queryEl.addEventListener("input", debounce(renderSuggest, 120));
 	queryEl.addEventListener("blur", () => {
@@ -2750,12 +2837,13 @@ function createTagEditorController({
 				},
 			});
 		},
-		refreshTitleTag,
-		destroy: () => {
-			if (watchTitleInputEl) watchTitleInputEl.removeEventListener("input", onTitleInput);
-		},
-	};
-}
+			refreshTitleTag,
+			awaitPendingTagMutations,
+			destroy: () => {
+				if (watchTitleInputEl) watchTitleInputEl.removeEventListener("input", onTitleInput);
+			},
+		};
+	}
 
 function initTagInput(prefix) {
 	if (prefix !== "upload") return;
@@ -3047,6 +3135,367 @@ async function submitUpload({ all = false } = {}) {
 	}
 }
 
+function clonePlainData(value) {
+	if (value === undefined) return undefined;
+	return JSON.parse(JSON.stringify(value));
+}
+
+function findCurationWorkById(workIdRaw) {
+	const workId = trimText(workIdRaw);
+	if (!workId) return null;
+	return state.curation.works.find((work) => trimText(work?.id) === workId) || null;
+}
+
+function getCurationSaveState(workIdRaw) {
+	const workId = trimText(workIdRaw);
+	if (!workId) return { status: "idle", errorMessage: "", lastPayload: null };
+	return (
+		state.curation.saveStatusByWorkId.get(workId) || {
+			status: "idle",
+			errorMessage: "",
+			lastPayload: null,
+		}
+	);
+}
+
+function setCurationSaveState(workIdRaw, { status = "idle", errorMessage = "", lastPayload = undefined } = {}) {
+	const workId = trimText(workIdRaw);
+	if (!workId) return;
+	const prev = getCurationSaveState(workId);
+	const next = {
+		status,
+		errorMessage: trimText(errorMessage),
+		lastPayload: lastPayload === undefined ? prev.lastPayload : clonePlainData(lastPayload),
+	};
+	if (next.status === "idle" && !next.errorMessage) {
+		state.curation.saveStatusByWorkId.delete(workId);
+		return;
+	}
+	state.curation.saveStatusByWorkId.set(workId, next);
+}
+
+function updateCurationWorkInState(workIdRaw, patchRaw = {}) {
+	const workId = trimText(workIdRaw);
+	if (!workId || !patchRaw || typeof patchRaw !== "object") return null;
+	const patch = patchRaw;
+	let nextWork = null;
+	const merge = (baseWork) => {
+		const next = { ...baseWork };
+		if (Object.prototype.hasOwnProperty.call(patch, "title")) next.title = trimText(patch.title);
+		if (Object.prototype.hasOwnProperty.call(patch, "completedDate")) next.completedDate = trimText(patch.completedDate);
+		if (Object.prototype.hasOwnProperty.call(patch, "classroom")) next.classroom = trimText(patch.classroom);
+		if (Object.prototype.hasOwnProperty.call(patch, "authorIds")) next.authorIds = Array.isArray(patch.authorIds) ? patch.authorIds.slice() : [];
+		if (Object.prototype.hasOwnProperty.call(patch, "caption")) next.caption = trimText(patch.caption);
+		if (Object.prototype.hasOwnProperty.call(patch, "tagIds")) next.tagIds = Array.isArray(patch.tagIds) ? patch.tagIds.slice() : [];
+		if (Object.prototype.hasOwnProperty.call(patch, "ready")) next.ready = Boolean(patch.ready);
+		if (Object.prototype.hasOwnProperty.call(patch, "images")) {
+			next.images = Array.isArray(patch.images)
+				? patch.images
+						.map((image) => {
+							const url = trimText(image?.url);
+							if (!url) return null;
+							const type = trimText(image?.type);
+							return {
+								url,
+								name: trimText(image?.name),
+								...(type ? { type } : {}),
+							};
+						})
+						.filter(Boolean)
+				: [];
+		}
+		if (Object.prototype.hasOwnProperty.call(patch, "notificationDisabled")) {
+			next.notificationDisabled = Boolean(patch.notificationDisabled);
+			next.notificationPending = patch.notificationDisabled ? false : Boolean(next.notificationPending);
+			next.notificationState = patch.notificationDisabled ? "disabled" : trimText(next.notificationState);
+			next.notificationReason = patch.notificationDisabled ? "work_notify_disabled" : trimText(next.notificationReason);
+		}
+		nextWork = next;
+		return next;
+	};
+
+	const idxAll = state.curation.works.findIndex((work) => trimText(work?.id) === workId);
+	if (idxAll >= 0) {
+		state.curation.works[idxAll] = merge(state.curation.works[idxAll]);
+	}
+	const idxFiltered = state.curation.filtered.findIndex((work) => trimText(work?.id) === workId);
+	if (idxFiltered >= 0) {
+		state.curation.filtered[idxFiltered] = merge(state.curation.filtered[idxFiltered]);
+	}
+	return nextWork;
+}
+
+function getWorkImagePayload(imagesRaw) {
+	if (!Array.isArray(imagesRaw)) return [];
+	return imagesRaw.reduce((acc, image) => {
+		const url = trimText(image?.url);
+		if (!url) return acc;
+		const type = trimText(image?.type).toLowerCase();
+		acc.push({
+			url,
+			name: trimText(image?.name),
+			...(type === "file" || type === "external" ? { type } : {}),
+		});
+		return acc;
+	}, []);
+}
+
+async function runCurationSaveQueue() {
+	const queue = state.curation.saveQueue;
+	if (queue.running) return;
+	queue.running = true;
+	try {
+		while (queue.jobs.length > 0) {
+			const job = queue.jobs.shift();
+			if (!job) continue;
+			setCurationSaveState(job.workId, { status: "saving", errorMessage: "" });
+			renderCurationGrid();
+
+			let payload = null;
+			try {
+				payload = await job.buildPayload();
+			} catch (err) {
+				setCurationSaveState(job.workId, {
+					status: "failed",
+					errorMessage: trimText(err?.message) || "保存データの作成に失敗しました",
+				});
+				showToast(`保存に失敗: ${trimText(err?.message) || "unknown error"}`);
+				renderCurationGrid();
+				continue;
+			}
+
+			const normalizedPayload = payload && typeof payload === "object" ? { ...payload } : {};
+			normalizedPayload.id = trimText(normalizedPayload.id || job.workId);
+			setCurationSaveState(job.workId, {
+				status: "saving",
+				errorMessage: "",
+				lastPayload: normalizedPayload,
+			});
+			try {
+				await apiFetch("/admin/notion/work", {
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(normalizedPayload),
+				});
+				setCurationSaveState(job.workId, { status: "idle", errorMessage: "", lastPayload: normalizedPayload });
+				updateCurationWorkInState(job.workId, normalizedPayload);
+				job.onSuccess?.(normalizedPayload);
+				applyCurationFilters();
+			} catch (err) {
+				setCurationSaveState(job.workId, {
+					status: "failed",
+					errorMessage: trimText(err?.message),
+					lastPayload: normalizedPayload,
+				});
+				showToast(`保存に失敗: ${err.message}`);
+				job.onError?.(err);
+				renderCurationGrid();
+			}
+		}
+	} finally {
+		queue.running = false;
+		renderCurationGrid();
+	}
+}
+
+function enqueueCurationSaveJob(workIdRaw, buildPayload, { queuedMessage = "", onSuccess = null, onError = null } = {}) {
+	const workId = trimText(workIdRaw);
+	if (!workId || typeof buildPayload !== "function") return;
+	const queue = state.curation.saveQueue;
+	const jobId = queue.jobSeq++;
+	queue.jobs.push({
+		id: jobId,
+		workId,
+		buildPayload,
+		onSuccess,
+		onError,
+	});
+	setCurationSaveState(workId, { status: "queued", errorMessage: "" });
+	renderCurationGrid();
+	if (queuedMessage) showToast(queuedMessage);
+	void runCurationSaveQueue();
+}
+
+function retryCurationSave(workIdRaw) {
+	const workId = trimText(workIdRaw);
+	const saveState = getCurationSaveState(workId);
+	const lastPayload = clonePlainData(saveState.lastPayload);
+	if (!workId || !lastPayload) {
+		showToast("再試行できる保存データがありません");
+		return;
+	}
+	enqueueCurationSaveJob(workId, async () => clonePlainData(lastPayload), {
+		queuedMessage: "再試行をキューに追加しました",
+	});
+}
+
+function getCurationWorkTagSummary(work) {
+	const ids = normalizeTagIdList(Array.isArray(work?.tagIds) ? work.tagIds : []);
+	const names = ids.map((id) => trimText(state.tagsById.get(id)?.name || id)).filter(Boolean);
+	const maxVisible = 3;
+	return {
+		names: names.slice(0, maxVisible),
+		extraCount: Math.max(0, names.length - maxVisible),
+		total: names.length,
+	};
+}
+
+function getCurationSaveStatusBadge(workIdRaw) {
+	const saveState = getCurationSaveState(workIdRaw);
+	if (saveState.status === "queued") return { label: "保存: 待ち", tone: "pending" };
+	if (saveState.status === "saving") return { label: "保存: 実行中", tone: "pending" };
+	if (saveState.status === "failed") return { label: "保存: 失敗", tone: "warn" };
+	return null;
+}
+
+function renderCurationMergeStatus() {
+	const statusEl = qs("#curation-merge-status");
+	const runBtn = qs("#curation-merge-run");
+	const clearBtn = qs("#curation-merge-clear");
+	const sourceIds = state.curation.selectedMergeSourceIds.slice();
+	const targetId = trimText(state.curation.mergeTargetWorkId);
+	const target = targetId ? findCurationWorkById(targetId) : null;
+	const mergeSources = sourceIds.filter((id) => id !== targetId);
+	const canRun = Boolean(target && mergeSources.length > 0 && !state.curation.mergeRunning);
+	if (runBtn) runBtn.disabled = !canRun;
+	if (clearBtn) clearBtn.disabled = sourceIds.length === 0 && !targetId;
+	if (!statusEl) return;
+	const targetLabel = target ? trimText(target.title || "（無題）") : "未指定";
+	statusEl.textContent = `統合候補: ${sourceIds.length}件 / 統合元: ${mergeSources.length}件 / 統合先: ${targetLabel}`;
+}
+
+function setCurationMergeSourceChecked(workIdRaw, checked) {
+	const workId = trimText(workIdRaw);
+	if (!workId) return;
+	const nextSet = new Set(state.curation.selectedMergeSourceIds.map(trimText).filter(Boolean));
+	if (checked) nextSet.add(workId);
+	else nextSet.delete(workId);
+	const targetId = trimText(state.curation.mergeTargetWorkId);
+	if (targetId && !nextSet.has(targetId)) {
+		state.curation.mergeTargetWorkId = "";
+	}
+	state.curation.selectedMergeSourceIds = Array.from(nextSet);
+	renderCurationMergeStatus();
+	renderCurationGrid();
+}
+
+function setCurationMergeTarget(workIdRaw) {
+	const workId = trimText(workIdRaw);
+	if (!workId) return;
+	const nextSet = new Set(state.curation.selectedMergeSourceIds.map(trimText).filter(Boolean));
+	nextSet.add(workId);
+	state.curation.selectedMergeSourceIds = Array.from(nextSet);
+	state.curation.mergeTargetWorkId = workId;
+	renderCurationMergeStatus();
+	renderCurationGrid();
+}
+
+function clearCurationMergeSelection() {
+	state.curation.selectedMergeSourceIds = [];
+	state.curation.mergeTargetWorkId = "";
+	renderCurationMergeStatus();
+	renderCurationGrid();
+}
+
+async function runCurationMergeSelection() {
+	if (state.curation.mergeRunning) return;
+	const targetId = trimText(state.curation.mergeTargetWorkId);
+	const sourceIds = state.curation.selectedMergeSourceIds.map(trimText).filter(Boolean);
+	if (!targetId) return showToast("統合先を指定してください");
+	const mergeSources = sourceIds.filter((id) => id !== targetId);
+	if (mergeSources.length === 0) return showToast("統合元を1件以上選択してください");
+	if (!confirm(`${mergeSources.length}件の作品を統合しますか？（統合元はアーカイブ）`)) return;
+
+	state.curation.mergeRunning = true;
+	renderCurationMergeStatus();
+	try {
+		await apiFetch("/admin/image/merge", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				targetWorkId: targetId,
+				sourceWorkIds: mergeSources,
+				archiveSources: true,
+			}),
+		});
+		showToast("統合しました（反映は再読み込み後）");
+		clearCurationMergeSelection();
+		await loadCurationQueue();
+	} catch (err) {
+		showToast(`統合に失敗: ${err.message}`);
+	} finally {
+		state.curation.mergeRunning = false;
+		renderCurationMergeStatus();
+	}
+}
+
+function closeCurationInlineTagEditor() {
+	const panel = qs("#curation-inline-tag-panel");
+	const mount = qs("#curation-inline-tag-editor");
+	const title = qs("#curation-inline-tag-title");
+	const status = qs("#curation-inline-tag-status");
+	if (state.curation.inlineTagEditor.controller?.destroy) {
+		state.curation.inlineTagEditor.controller.destroy();
+	}
+	state.curation.inlineTagEditor.controller = null;
+	state.curation.inlineTagEditor.workId = "";
+	state.curation.inlineTagEditor.explicitTagIds = [];
+	if (mount) mount.innerHTML = "";
+	if (title) title.textContent = "-";
+	if (status) status.textContent = "-";
+	if (panel) panel.hidden = true;
+}
+
+function openCurationInlineTagEditor(workIdRaw) {
+	const workId = trimText(workIdRaw);
+	const work = findCurationWorkById(workId);
+	const panel = qs("#curation-inline-tag-panel");
+	const mount = qs("#curation-inline-tag-editor");
+	const title = qs("#curation-inline-tag-title");
+	const status = qs("#curation-inline-tag-status");
+	if (!work || !panel || !mount) return;
+	closeCurationInlineTagEditor();
+	const controller = createTagEditorController({
+		getTitle: () => trimText(work.title || ""),
+		initialExplicitIds: Array.isArray(work.tagIds) ? work.tagIds : [],
+		onExplicitTagIdsChanged: ({ explicitIds }) => {
+			state.curation.inlineTagEditor.explicitTagIds = explicitIds.slice();
+		},
+	});
+	state.curation.inlineTagEditor.controller = controller;
+	state.curation.inlineTagEditor.workId = workId;
+	state.curation.inlineTagEditor.explicitTagIds = controller.getExplicitTagIds();
+	mount.innerHTML = "";
+	mount.appendChild(controller.root);
+	if (title) {
+		title.textContent = `${trimText(work.title) || "（無題）"} / ${trimText(work.completedDate) || "-"} / ${trimText(work.classroom) || "-"}`;
+	}
+	if (status) status.textContent = "編集内容を保存するとキューに投入されます。";
+	panel.hidden = false;
+}
+
+function resolveNextCurationWorkIdFromSnapshot(workIdRaw, snapshotIds) {
+	const workId = trimText(workIdRaw);
+	const ids = Array.isArray(snapshotIds) ? snapshotIds.map(trimText).filter(Boolean) : [];
+	const idx = ids.indexOf(workId);
+	if (idx < 0) return "";
+	for (let i = idx + 1; i < ids.length; i += 1) {
+		const candidateId = ids[i];
+		if (!candidateId) continue;
+		if (state.curation.filtered.some((work) => trimText(work?.id) === candidateId)) return candidateId;
+	}
+	return "";
+}
+
+function openWorkModalById(workIdRaw) {
+	const workId = trimText(workIdRaw);
+	if (!workId) return false;
+	const idx = state.curation.filtered.findIndex((work) => trimText(work?.id) === workId);
+	if (idx < 0) return false;
+	openWorkModal(idx);
+	return true;
+}
+
 function applyCurationFilters() {
 	const from = qs("#curation-from").value;
 	const to = qs("#curation-to").value;
@@ -3240,10 +3689,18 @@ async function fetchCurationWorkSyncStatus(workIds) {
 }
 
 function renderWorkCard(work, index) {
+	const workId = trimText(work?.id);
 	const coverUrl = work.images?.[0]?.url || "";
 	const rawTitle = trimText(work.title);
 	const title = rawTitle || "（無題）";
-	const card = el("div", { class: "work-card", "data-index": String(index) });
+	const mergeSourceSelected = state.curation.selectedMergeSourceIds.includes(workId);
+	const mergeTargetSelected = trimText(state.curation.mergeTargetWorkId) === workId;
+	const cardClasses = [
+		"work-card",
+		...(mergeSourceSelected ? ["is-merge-source"] : []),
+		...(mergeTargetSelected ? ["is-merge-target"] : []),
+	].join(" ");
+	const card = el("div", { class: cardClasses, "data-index": String(index) });
 	const thumb = el("div", { class: "work-card__thumb" });
 	thumb.appendChild(el("img", { src: coverUrl, alt: "" }));
 	if ((work.images?.length || 0) > 1) thumb.appendChild(el("div", { class: "badge", text: `${work.images.length}` }));
@@ -3254,11 +3711,28 @@ function renderWorkCard(work, index) {
 	meta.appendChild(
 		el("div", { class: "work-card__sub" }, [
 			el("span", { text: work.completedDate || "-" }),
-			el("span", { text: work.ready ? "整備済" : "未整備" }),
 			el("span", { text: work.classroom || "-" }),
 		]),
 	);
 	const syncFlags = el("div", { class: "work-card__flags" });
+	const readyBadge = work.ready
+		? { label: "整備: 済", tone: "ok" }
+		: { label: "整備: 未", tone: "pending" };
+	syncFlags.appendChild(
+		el("span", {
+			class: `chip chip--sync ${toSyncToneClass(readyBadge.tone)}`,
+			text: readyBadge.label,
+		}),
+	);
+	const saveBadge = getCurationSaveStatusBadge(workId);
+	if (saveBadge) {
+		syncFlags.appendChild(
+			el("span", {
+				class: `chip chip--sync ${toSyncToneClass(saveBadge.tone)}`,
+				text: saveBadge.label,
+			}),
+		);
+	}
 	const gallerySync = resolveGallerySyncLabel(work);
 	const notificationSync = resolveNotificationSyncLabel(work);
 	syncFlags.appendChild(
@@ -3274,6 +3748,61 @@ function renderWorkCard(work, index) {
 		}),
 	);
 	meta.appendChild(syncFlags);
+
+	const tagSummary = getCurationWorkTagSummary(work);
+	const tagsRoot = el("div", { class: "work-card__tags" });
+	if (tagSummary.total === 0) {
+		tagsRoot.appendChild(el("span", { class: "chip chip--sync chip--sync-neutral", text: "タグなし" }));
+	} else {
+		tagSummary.names.forEach((name) => {
+			tagsRoot.appendChild(el("span", { class: "chip chip--tag-selected", text: name }));
+		});
+		if (tagSummary.extraCount > 0) {
+			tagsRoot.appendChild(el("span", { class: "chip chip--sync chip--sync-neutral", text: `+${tagSummary.extraCount}` }));
+		}
+	}
+	meta.appendChild(tagsRoot);
+
+	const actions = el("div", { class: "work-card__actions" });
+	const tagEditBtn = el("button", { type: "button", class: "btn", text: "タグ編集" });
+	tagEditBtn.addEventListener("click", (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		openCurationInlineTagEditor(workId);
+	});
+	actions.appendChild(tagEditBtn);
+
+	const mergeSourceCheck = el("input", { type: "checkbox" });
+	mergeSourceCheck.checked = mergeSourceSelected;
+	mergeSourceCheck.addEventListener("click", (e) => e.stopPropagation());
+	mergeSourceCheck.addEventListener("change", () => {
+		setCurationMergeSourceChecked(workId, mergeSourceCheck.checked);
+	});
+	actions.appendChild(
+		el("label", { class: "checkbox checkbox--sm" }, [mergeSourceCheck, el("span", { text: "統合候補" })]),
+	);
+
+	const targetBtn = el("button", { type: "button", class: "btn", text: mergeTargetSelected ? "統合先: 設定中" : "統合先に指定" });
+	targetBtn.addEventListener("click", (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setCurationMergeTarget(workId);
+	});
+	actions.appendChild(targetBtn);
+
+	const saveState = getCurationSaveState(workId);
+	if (saveState.status === "failed") {
+		const retryBtn = el("button", { type: "button", class: "btn", text: "保存を再試行" });
+		if (saveState.errorMessage) retryBtn.title = saveState.errorMessage;
+		retryBtn.addEventListener("click", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			retryCurationSave(workId);
+		});
+		actions.appendChild(retryBtn);
+	}
+	actions.addEventListener("click", (e) => e.stopPropagation());
+	meta.appendChild(actions);
 	card.appendChild(meta);
 
 	card.addEventListener("click", () => openWorkModal(index));
@@ -3314,6 +3843,7 @@ function renderCurationGrid() {
 		` / 反映済${reflectedCount}件 / 通知送信済${sentNotifyCount}件 / 通知待ち${pendingNotifyCount}件` +
 		syncSuffix +
 		syncWarn;
+	renderCurationMergeStatus();
 }
 
 async function loadCurationQueue() {
@@ -3332,10 +3862,25 @@ async function loadCurationQueue() {
 			works = works.map((work) => mergeCurationWorkSyncStatus(work, null));
 			showToast("同期状態の取得に失敗しました（作品一覧は表示しています）");
 		}
-		state.curation.works = works;
-		state.curation.filtered = [...state.curation.works];
+			state.curation.works = works;
+			state.curation.filtered = [...state.curation.works];
+			const workIdSet = new Set(state.curation.works.map((work) => trimText(work?.id)).filter(Boolean));
+			for (const key of Array.from(state.curation.saveStatusByWorkId.keys())) {
+				if (!workIdSet.has(trimText(key))) {
+					state.curation.saveStatusByWorkId.delete(key);
+				}
+			}
+			state.curation.selectedMergeSourceIds = state.curation.selectedMergeSourceIds
+				.map((id) => trimText(id))
+				.filter((id) => workIdSet.has(id));
+			if (!workIdSet.has(trimText(state.curation.mergeTargetWorkId))) {
+				state.curation.mergeTargetWorkId = "";
+			}
+			if (state.curation.inlineTagEditor.workId && !workIdSet.has(trimText(state.curation.inlineTagEditor.workId))) {
+				closeCurationInlineTagEditor();
+			}
 
-		const classroomSelect = qs("#curation-classroom");
+			const classroomSelect = qs("#curation-classroom");
 		const currentClassroom = classroomSelect.value;
 		const classrooms = Array.from(new Set(state.curation.works.map((w) => w.classroom).filter(Boolean))).sort((a, b) => a.localeCompare(b, "ja"));
 		populateSelect(classroomSelect, { placeholder: "すべて", items: classrooms.map((v) => ({ value: v })) });
@@ -3917,83 +4462,63 @@ function renderWorkModal(work, index) {
 	footer.appendChild(saveOnly);
 	footer.appendChild(saveNext);
 
-	const doSave = async ({ forceReady, goNext }) => {
+	const doSave = ({ forceReady, goNext }) => {
 		saveOnly.disabled = true;
 		saveNext.disabled = true;
 		skip.disabled = true;
+		const currentWorkId = trimText(work.id);
+		const snapshotIds = state.curation.filtered.map((item) => trimText(item?.id)).filter(Boolean);
+		const nextWorkId = goNext ? resolveNextCurationWorkIdFromSnapshot(currentWorkId, snapshotIds) : "";
+		const editorRef = tagEditor;
 
-		const derived = computeDerivedParentTagIds(explicitTagIds);
-		const rawTagIds = Array.from(new Set([...explicitTagIds, ...derived]));
-		const tagIds = filterOutClassroomTagIds(rawTagIds, classroomSelect.value);
-		const payload = {
-			id: work.id,
-			title: titleInput.value.trim(),
-			completedDate: completedDateInput.value.trim(),
-			classroom: classroomSelect.value,
-			authorIds: getSelectedAuthorIds(authorSelect),
-			caption: captionInput.value.trim(),
-			tagIds,
-			ready: forceReady ? true : readyCb.checked,
-			notificationDisabled: notifyDisabledCb.checked,
-		};
-		if (Array.isArray(work.images)) {
-			payload.images = work.images.reduce((acc, image) => {
-				const url = trimText(image?.url);
-				if (!url) return acc;
-				const type = trimText(image?.type).toLowerCase();
-				acc.push({
-					url,
-					name: trimText(image?.name),
-					...(type === "file" || type === "external" ? { type } : {}),
-				});
-				return acc;
-			}, []);
-		}
-
-		try {
-			await apiFetch("/admin/notion/work", {
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(payload),
-			});
-			showToast("保存しました");
-
-			const nextWork = {
-				...work,
-				...payload,
-				authorIds: payload.authorIds || [],
-				tagIds,
-				ready: payload.ready,
-				notificationDisabled: Boolean(payload.notificationDisabled),
-				notificationPending: payload.notificationDisabled ? false : Boolean(work.notificationPending),
-				notificationState: payload.notificationDisabled ? "disabled" : work.notificationState,
-				notificationReason: payload.notificationDisabled ? "work_notify_disabled" : work.notificationReason,
-			};
-			const idxAll = state.curation.works.findIndex((w) => w.id === work.id);
-			if (idxAll >= 0) state.curation.works[idxAll] = nextWork;
-			else state.curation.works.unshift(nextWork);
-
-			applyCurationFilters();
-			if (goNext) {
-				close();
-				openWorkModal(Math.min(index, state.curation.filtered.length - 1));
-			} else {
-				close();
+		enqueueCurationSaveJob(
+			currentWorkId,
+			async () => {
+				await editorRef?.awaitPendingTagMutations?.();
+				const latestExplicitTagIds = editorRef?.getExplicitTagIds?.() || explicitTagIds;
+				const derived = computeDerivedParentTagIds(latestExplicitTagIds);
+				const rawTagIds = Array.from(new Set([...(latestExplicitTagIds || []), ...derived]));
+				const tagIds = filterOutClassroomTagIds(rawTagIds, classroomSelect.value);
+				const payload = {
+					id: currentWorkId,
+					title: titleInput.value.trim(),
+					completedDate: completedDateInput.value.trim(),
+					classroom: classroomSelect.value,
+					authorIds: getSelectedAuthorIds(authorSelect),
+					caption: captionInput.value.trim(),
+					tagIds,
+					ready: forceReady ? true : readyCb.checked,
+					notificationDisabled: notifyDisabledCb.checked,
+				};
+				payload.images = getWorkImagePayload(work.images);
+				return payload;
+			},
+			{
+				queuedMessage: "保存をキューに追加しました",
+			},
+		);
+		close();
+		if (goNext) {
+			if (!nextWorkId) {
+				showToast("次の作品はありません");
+				return;
 			}
-		} catch (err) {
-			showToast(`保存に失敗: ${err.message}`);
-		} finally {
-			saveOnly.disabled = false;
-			saveNext.disabled = false;
-			skip.disabled = false;
+			if (!openWorkModalById(nextWorkId)) {
+				showToast("次の作品はありません");
+			}
 		}
 	};
 
 	saveOnly.addEventListener("click", () => doSave({ forceReady: false, goNext: false }));
 	saveNext.addEventListener("click", () => doSave({ forceReady: true, goNext: true }));
 	skip.addEventListener("click", () => {
+		const currentWorkId = trimText(work.id);
+		const snapshotIds = state.curation.filtered.map((item) => trimText(item?.id)).filter(Boolean);
+		const nextWorkId = resolveNextCurationWorkIdFromSnapshot(currentWorkId, snapshotIds);
 		close();
-		openWorkModal(Math.min(index + 1, state.curation.filtered.length - 1));
+		if (!nextWorkId || !openWorkModalById(nextWorkId)) {
+			showToast("次の作品はありません");
+		}
 	});
 
 	const modal = el("div", { class: "modal" }, [header, el("div", { class: "modal-body" }, [viewerWrap]), footer]);
@@ -4022,7 +4547,62 @@ function initCuration() {
 	).forEach((elx) => {
 		elx.addEventListener("change", () => applyCurationFilters());
 	});
+	const mergeClearBtn = qs("#curation-merge-clear");
+	if (mergeClearBtn) {
+		mergeClearBtn.addEventListener("click", () => clearCurationMergeSelection());
+	}
+	const mergeRunBtn = qs("#curation-merge-run");
+	if (mergeRunBtn) {
+		mergeRunBtn.addEventListener("click", async () => {
+			await runCurationMergeSelection();
+		});
+	}
+
+	const inlineSaveBtn = qs("#curation-inline-tag-save");
+	const inlineCancelBtn = qs("#curation-inline-tag-cancel");
+	const inlineStatusEl = qs("#curation-inline-tag-status");
+	if (inlineSaveBtn) {
+		inlineSaveBtn.addEventListener("click", () => {
+			const workId = trimText(state.curation.inlineTagEditor.workId);
+			const controller = state.curation.inlineTagEditor.controller;
+			const work = findCurationWorkById(workId);
+			if (!workId || !controller || !work) {
+				showToast("タグ編集対象の作品が見つかりません");
+				return;
+			}
+			if (inlineStatusEl) inlineStatusEl.textContent = "保存キューへ追加中…";
+			enqueueCurationSaveJob(
+				workId,
+				async () => {
+					await controller.awaitPendingTagMutations?.();
+					const explicitIds = controller.getExplicitTagIds?.() || [];
+					const derived = computeDerivedParentTagIds(explicitIds);
+					const rawTagIds = Array.from(new Set([...(explicitIds || []), ...derived]));
+					const tagIds = filterOutClassroomTagIds(rawTagIds, trimText(work.classroom));
+					return {
+						id: workId,
+						tagIds,
+					};
+				},
+				{
+					queuedMessage: "タグ保存をキューに追加しました",
+					onSuccess: () => {
+						if (inlineStatusEl) inlineStatusEl.textContent = "保存完了";
+					},
+					onError: () => {
+						if (inlineStatusEl) inlineStatusEl.textContent = "保存失敗";
+					},
+				},
+			);
+		});
+	}
+	if (inlineCancelBtn) {
+		inlineCancelBtn.addEventListener("click", () => {
+			closeCurationInlineTagEditor();
+		});
+	}
 	syncCurationClassroomBadge();
+	renderCurationMergeStatus();
 }
 
 function initHeaderActions() {
@@ -4080,6 +4660,8 @@ function initHeaderActions() {
 
 function refreshTagEditorsInitialCandidates() {
 	state.upload.tagEditor?.refreshInitialTagSuggest?.();
+	state.curation.inlineTagEditor.controller?.refreshInitialTagSuggest?.();
+	state.curation.inlineTagEditor.controller?.refreshRelationContext?.();
 }
 
 function createTagInitialCandidatesToolsEditor() {
