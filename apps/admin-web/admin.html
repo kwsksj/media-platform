@@ -196,7 +196,7 @@
 							<div id="curation-status" class="status"></div>
 						</div>
 
-						<div class="toolbar toolbar--filters">
+							<div class="toolbar toolbar--filters">
 							<label class="label-inline">
 								完成日（from）
 								<input id="curation-from" class="input input--sm" type="date" />
@@ -242,15 +242,32 @@
 								<input id="curation-missing-author" type="checkbox" />
 								<span>作者なし</span>
 							</label>
-							<label class="checkbox checkbox--sm">
-								<input id="curation-missing-tags" type="checkbox" />
-								<span>タグなし</span>
-							</label>
+								<label class="checkbox checkbox--sm">
+									<input id="curation-missing-tags" type="checkbox" />
+									<span>タグなし</span>
+								</label>
+							</div>
+							<div class="toolbar toolbar--curation-ops">
+								<button id="curation-merge-clear" class="btn" type="button">統合選択をクリア</button>
+								<button id="curation-merge-run" class="btn btn--primary" type="button">選択を統合</button>
+								<div id="curation-merge-status" class="status">統合候補: 0件 / 統合先: 未指定</div>
+							</div>
 						</div>
-					</div>
 
-					<div id="curation-grid" class="card-grid" aria-label="作品一覧"></div>
-				</section>
+						<div id="curation-grid" class="card-grid" aria-label="作品一覧"></div>
+						<div id="curation-inline-tag-panel" class="panel" hidden>
+							<div class="label">一覧からタグ編集</div>
+							<div id="curation-inline-tag-title" class="status">-</div>
+							<div class="form-row">
+								<div id="curation-inline-tag-editor"></div>
+							</div>
+							<div class="form-row form-actions">
+								<button id="curation-inline-tag-save" class="btn btn--primary" type="button">タグを保存</button>
+								<button id="curation-inline-tag-cancel" class="btn" type="button">閉じる</button>
+								<div id="curation-inline-tag-status" class="status">-</div>
+							</div>
+						</div>
+					</section>
 
 				<section id="view-tools" class="view" data-view="tools">
 					<h2 class="view-title">ツール</h2>

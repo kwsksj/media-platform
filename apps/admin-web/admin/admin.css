@@ -29,6 +29,10 @@
 	gap: 12px 16px;
 }
 
+.toolbar--curation-ops {
+	align-items: center;
+}
+
 .form-actions {
 	display: flex;
 	gap: 12px;
@@ -338,6 +342,43 @@ select.input[multiple] option {
 	justify-content: center;
 }
 
+.work-card__tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.work-card__tags .chip {
+	padding: 3px 7px;
+	font-size: 11px;
+}
+
+.work-card__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+}
+
+.work-card__actions .btn {
+	padding: 6px 8px;
+	font-size: 11px;
+}
+
+.work-card__actions .checkbox {
+	font-size: 11px;
+}
+
+.work-card.is-merge-source {
+	border-color: rgba(43, 106, 255, 0.6);
+	box-shadow: 0 0 0 1px rgba(43, 106, 255, 0.24) inset;
+}
+
+.work-card.is-merge-target {
+	border-color: rgba(20, 128, 76, 0.6);
+	box-shadow: 0 0 0 1px rgba(20, 128, 76, 0.24) inset;
+}
+
 .chip--sync {
 	border-style: solid;
 }
@@ -415,6 +456,11 @@ select.input[multiple] option {
 	opacity: 1;
 }
 
+.chip.is-creating {
+	opacity: 0.7;
+	pointer-events: none;
+}
+
 .tag-initial-tools {
 	display: flex;
 	flex-direction: column;
@@ -458,6 +504,11 @@ select.input[multiple] option {
 
 .tag-input .suggest-item {
 	padding: 10px 10px;
+}
+
+.tag-input .suggest-item.is-creating {
+	opacity: 0.7;
+	pointer-events: none;
 }
 
 .tag-relation-editor {

@@ -2799,12 +2799,60 @@ async function handleNotionCreateTag(request, env, executionCtx = null) {
   if (childIds.length > 0 && !childrenProp) return badRequest("子タグプロパティが見つかりません");
   if (aliases.length > 0 && !aliasesProp) return badRequest("別名プロパティが見つかりません");
 
-  const tagsQueryRes = await queryAllDatabasePages(env, tagsDbId);
-  if (!tagsQueryRes.ok) {
-    return jsonResponse({ ok: false, error: "failed to query tags database", detail: tagsQueryRes.data }, 500);
+  const candidateFilters = [];
+  const duplicateLookupValues = uniqueIds([name, ...aliases].map((value) => asString(value).trim()).filter(Boolean));
+  const aliasesPropSchema = aliasesProp ? tagsDb?.properties?.[aliasesProp] || null : null;
+  for (const token of duplicateLookupValues) {
+    if (titleProp) {
+      candidateFilters.push({
+        property: titleProp,
+        title: { contains: token },
+      });
+    }
+    if (aliasesProp) {
+      if (aliasesPropSchema?.type === "multi_select") {
+        candidateFilters.push({
+          property: aliasesProp,
+          multi_select: { contains: token },
+        });
+      } else {
+        candidateFilters.push({
+          property: aliasesProp,
+          rich_text: { contains: token },
+        });
+      }
+    }
   }
-  const tagsIndexSnapshot = buildTagsIndexFromNotion(env, tagsDbId, tagsDb, tagsQueryRes.pages);
-  const duplicateTag = findExistingTagByNameOrAlias(tagsIndexSnapshot.tags, [name, ...aliases]);
+
+  const resolveDuplicateTagFromPages = (pages) => {
+    const snapshot = buildTagsIndexFromNotion(env, tagsDbId, tagsDb, pages);
+    return findExistingTagByNameOrAlias(snapshot.tags, [name, ...aliases]);
+  };
+
+  let duplicateTag = null;
+  let shouldFallbackToFullScan = false;
+  if (candidateFilters.length > 0) {
+    const candidateBody = {
+      filter: candidateFilters.length === 1 ? candidateFilters[0] : { or: candidateFilters },
+    };
+    const candidateQueryRes = await queryAllDatabasePages(env, tagsDbId, candidateBody);
+    if (candidateQueryRes.ok) {
+      duplicateTag = resolveDuplicateTagFromPages(candidateQueryRes.pages);
+    } else {
+      shouldFallbackToFullScan = true;
+    }
+  } else {
+    shouldFallbackToFullScan = true;
+  }
+
+  if (!duplicateTag && shouldFallbackToFullScan) {
+    const tagsQueryRes = await queryAllDatabasePages(env, tagsDbId);
+    if (!tagsQueryRes.ok) {
+      return jsonResponse({ ok: false, error: "failed to query tags database", detail: tagsQueryRes.data }, 500);
+    }
+    duplicateTag = resolveDuplicateTagFromPages(tagsQueryRes.pages);
+  }
+
   if (duplicateTag) {
     return jsonResponse(
       {
