@@ -3178,7 +3178,6 @@ function updateCurationWorkInState(workIdRaw, patchRaw = {}) {
 	const workId = trimText(workIdRaw);
 	if (!workId || !patchRaw || typeof patchRaw !== "object") return null;
 	const patch = patchRaw;
-	let nextWork = null;
 	const merge = (baseWork) => {
 		const next = { ...baseWork };
 		if (Object.prototype.hasOwnProperty.call(patch, "title")) next.title = trimText(patch.title);
@@ -3210,17 +3209,18 @@ function updateCurationWorkInState(workIdRaw, patchRaw = {}) {
 			next.notificationState = patch.notificationDisabled ? "disabled" : trimText(next.notificationState);
 			next.notificationReason = patch.notificationDisabled ? "work_notify_disabled" : trimText(next.notificationReason);
 		}
-		nextWork = next;
 		return next;
 	};
 
+	let nextWork = null;
 	const idxAll = state.curation.works.findIndex((work) => trimText(work?.id) === workId);
 	if (idxAll >= 0) {
-		state.curation.works[idxAll] = merge(state.curation.works[idxAll]);
+		nextWork = merge(state.curation.works[idxAll]);
+		state.curation.works[idxAll] = nextWork;
 	}
 	const idxFiltered = state.curation.filtered.findIndex((work) => trimText(work?.id) === workId);
 	if (idxFiltered >= 0) {
-		state.curation.filtered[idxFiltered] = merge(state.curation.filtered[idxFiltered]);
+		state.curation.filtered[idxFiltered] = nextWork || merge(state.curation.filtered[idxFiltered]);
 	}
 	return nextWork;
 }
@@ -4499,11 +4499,7 @@ function renderWorkModal(work, index) {
 		);
 		close();
 		if (goNext) {
-			if (!nextWorkId) {
-				showToast("次の作品はありません");
-				return;
-			}
-			if (!openWorkModalById(nextWorkId)) {
+			if (!nextWorkId || !openWorkModalById(nextWorkId)) {
 				showToast("次の作品はありません");
 			}
 		}
