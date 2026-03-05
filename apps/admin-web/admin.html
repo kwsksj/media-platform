@@ -1,335 +1,518 @@
 <!doctype html>
 <html lang="ja">
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<title>先生専用アップロード</title>
-		<link rel="stylesheet" href="./shared/gallery-core.css" />
-		<link rel="stylesheet" href="./admin/admin.css?v=20260228-2" />
-	</head>
-	<body>
-		<div
-			id="app"
-			class="app"
-			data-api-base="https://media-platform-api.shiawasenahito3000.workers.dev"
-			data-gallery-json="./gallery.json"
-		>
-			<header class="app-header">
-				<div class="app-header__left">
-					<div class="app-header__title-row">
-						<div class="app-title">先生専用アップロード</div>
-						<button
-							id="app-header-tools-toggle"
-							class="btn header-tools-toggle"
-							type="button"
-							aria-expanded="false"
-							aria-controls="app-header-tools"
-						>
-							操作
-						</button>
-					</div>
-					<nav class="tabs" aria-label="画面切替">
-						<button type="button" class="tab is-active" data-tab="upload">
-							アップロード
-						</button>
-						<button type="button" class="tab" data-tab="curation">
-							整備モード
-						</button>
-						<button type="button" class="tab" data-tab="tools">ツール</button>
-					</nav>
-				</div>
-				<div id="app-header-tools" class="app-header__right">
-					<div id="admin-auth-controls" class="inline-controls admin-auth-controls" aria-label="管理API認証">
-						<span id="admin-auth-state" class="auth-state" data-auth-role="state" aria-live="polite"></span>
-						<input
-							id="admin-api-token"
-							class="input input--sm"
-							data-auth-role="input"
-							type="password"
-							placeholder="管理APIトークン"
-							autocomplete="off"
-						/>
-						<button id="admin-api-token-save" class="btn" data-auth-role="save" type="button">
-							認証
-						</button>
-						<button id="admin-api-token-edit" class="btn" data-auth-role="edit" type="button">
-							変更
-						</button>
-						<button id="admin-api-token-clear" class="btn" data-auth-role="clear" type="button">
-							解除
-						</button>
-					</div>
-					<div class="header-meta">
-						<span class="header-meta__label">gallery.json</span>
-						<span id="gallery-updated-at" class="header-meta__value">-</span>
-					</div>
-						<button id="trigger-gallery-update" class="btn btn--primary" type="button">
-							ギャラリー更新
-						</button>
-						<button id="trigger-student-notify" class="btn" type="button">
-							通知送信（キュー）
-						</button>
-					</div>
-				</header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>先生専用アップロード</title>
+    <link rel="stylesheet" href="./shared/gallery-core.css" />
+    <link rel="stylesheet" href="./admin/admin.css?v=20260228-2" />
+  </head>
+  <body>
+    <div
+      id="app"
+      class="app"
+      data-api-base="https://api.kibori-class.net"
+      data-gallery-json="./gallery.json"
+    >
+      <header class="app-header">
+        <div class="app-header__left">
+          <div class="app-header__title-row">
+            <div class="app-title">先生専用アップロード</div>
+            <button
+              id="app-header-tools-toggle"
+              class="btn header-tools-toggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="app-header-tools"
+            >
+              操作
+            </button>
+          </div>
+          <nav class="tabs" aria-label="画面切替">
+            <button type="button" class="tab is-active" data-tab="upload">
+              アップロード
+            </button>
+            <button type="button" class="tab" data-tab="curation">
+              整備モード
+            </button>
+            <button type="button" class="tab" data-tab="tools">ツール</button>
+          </nav>
+        </div>
+        <div id="app-header-tools" class="app-header__right">
+          <div
+            id="admin-auth-controls"
+            class="inline-controls admin-auth-controls"
+            aria-label="管理API認証"
+          >
+            <span
+              id="admin-auth-state"
+              class="auth-state"
+              data-auth-role="state"
+              aria-live="polite"
+            ></span>
+            <input
+              id="admin-api-token"
+              class="input input--sm"
+              data-auth-role="input"
+              type="password"
+              placeholder="管理APIトークン"
+              autocomplete="off"
+            />
+            <button
+              id="admin-api-token-save"
+              class="btn"
+              data-auth-role="save"
+              type="button"
+            >
+              認証
+            </button>
+            <button
+              id="admin-api-token-edit"
+              class="btn"
+              data-auth-role="edit"
+              type="button"
+            >
+              変更
+            </button>
+            <button
+              id="admin-api-token-clear"
+              class="btn"
+              data-auth-role="clear"
+              type="button"
+            >
+              解除
+            </button>
+          </div>
+          <div class="header-meta">
+            <span class="header-meta__label">gallery.json</span>
+            <span id="gallery-updated-at" class="header-meta__value">-</span>
+          </div>
+          <button
+            id="trigger-gallery-update"
+            class="btn btn--primary"
+            type="button"
+          >
+            ギャラリー更新
+          </button>
+          <button id="trigger-student-notify" class="btn" type="button">
+            通知送信（キュー）
+          </button>
+        </div>
+      </header>
 
-			<div id="banner" class="banner" hidden></div>
+      <div id="banner" class="banner" hidden></div>
 
-			<main class="app-main">
-				<section id="view-upload" class="view is-active" data-view="upload">
-					<h2 class="view-title">新規登録</h2>
+      <main class="app-main">
+        <section id="view-upload" class="view is-active" data-view="upload">
+          <h2 class="view-title">新規登録</h2>
 
-					<form id="upload-form" class="panel">
-						<div class="form-row">
-							<label class="label" for="upload-files">画像</label>
-							<input id="upload-files" class="input" type="file" accept="image/*" multiple />
-							<details class="help-toggle">
-								<summary class="help-toggle__summary" aria-label="画像項目の説明を表示">?</summary>
-								<div class="help-toggle__body subnote">複数作品ぶんをまとめて選択できます。選択後に作品キューで分割・統合して登録します。</div>
-							</details>
-						</div>
+          <form id="upload-form" class="panel">
+            <div class="form-row">
+              <label class="label" for="upload-files">画像</label>
+              <input
+                id="upload-files"
+                class="input"
+                type="file"
+                accept="image/*"
+                multiple
+              />
+              <details class="help-toggle">
+                <summary
+                  class="help-toggle__summary"
+                  aria-label="画像項目の説明を表示"
+                >
+                  ?
+                </summary>
+                <div class="help-toggle__body subnote">
+                  複数作品ぶんをまとめて選択できます。選択後に作品キューで分割・統合して登録します。
+                </div>
+              </details>
+            </div>
 
-						<div class="form-row">
-							<div class="toolbar toolbar--upload-drafts">
-								<div>
-									<div class="label">作品キュー</div>
-									<div id="upload-draft-status" class="subnote">画像を選択すると作品キューが作成されます。</div>
-								</div>
-								<div class="upload-draft-actions">
-									<button id="upload-draft-merge" class="btn" type="button">選択作品を統合</button>
-								</div>
-							</div>
-							<div id="upload-draft-list" class="upload-draft-list" aria-label="作品キュー"></div>
-						</div>
+            <div class="form-row">
+              <div class="toolbar toolbar--upload-drafts">
+                <div>
+                  <div class="label">作品キュー</div>
+                  <div id="upload-draft-status" class="subnote">
+                    画像を選択すると作品キューが作成されます。
+                  </div>
+                </div>
+                <div class="upload-draft-actions">
+                  <button id="upload-draft-merge" class="btn" type="button">
+                    選択作品を統合
+                  </button>
+                </div>
+              </div>
+              <div
+                id="upload-draft-list"
+                class="upload-draft-list"
+                aria-label="作品キュー"
+              ></div>
+            </div>
 
-						<div class="form-row">
-							<details class="help-toggle">
-								<summary class="help-toggle__summary" aria-label="画像ビューアの説明を表示">?</summary>
-								<div class="help-toggle__body help">
-									表示中の作品の画像です。大画像で確認し、サムネイル選択後に「この画像を表紙にする」で代表画像を設定できます。
-								</div>
-							</details>
-							<div id="upload-previews" class="upload-viewer" aria-label="画像ビューア"></div>
-							<div class="toolbar toolbar--upload-images">
-								<div id="upload-image-selection-status" class="subnote">画像をチェックして作品を分割できます。</div>
-								<button id="upload-split-selected" class="btn" type="button">選択画像を新しい作品に分ける</button>
-							</div>
-						</div>
+            <div class="form-row">
+              <details class="help-toggle">
+                <summary
+                  class="help-toggle__summary"
+                  aria-label="画像ビューアの説明を表示"
+                >
+                  ?
+                </summary>
+                <div class="help-toggle__body help">
+                  表示中の作品の画像です。大画像で確認し、サムネイル選択後に「この画像を表紙にする」で代表画像を設定できます。
+                </div>
+              </details>
+              <div
+                id="upload-previews"
+                class="upload-viewer"
+                aria-label="画像ビューア"
+              ></div>
+              <div class="toolbar toolbar--upload-images">
+                <div id="upload-image-selection-status" class="subnote">
+                  画像をチェックして作品を分割できます。
+                </div>
+                <button id="upload-split-selected" class="btn" type="button">
+                  選択画像を新しい作品に分ける
+                </button>
+              </div>
+            </div>
 
-							<div class="form-grid form-grid--meta">
-								<div class="form-row">
-									<label class="label" for="upload-completed-date">完成日（撮影日）</label>
-									<input id="upload-completed-date" class="input" type="date" />
-									<div id="upload-exif-note" class="subnote"></div>
-								</div>
+            <div class="form-grid form-grid--meta">
+              <div class="form-row">
+                <label class="label" for="upload-completed-date"
+                  >完成日（撮影日）</label
+                >
+                <input id="upload-completed-date" class="input" type="date" />
+                <div id="upload-exif-note" class="subnote"></div>
+              </div>
 
-								<div class="form-row">
-									<label class="label" for="upload-classroom">教室（Notion保存値）</label>
-									<select id="upload-classroom" class="input"></select>
-									<div id="upload-classroom-selected" class="chips chips--classroom-selected" hidden></div>
-									<details class="help-toggle">
-										<summary class="help-toggle__summary" aria-label="教室項目の説明を表示">?</summary>
-										<div class="help-toggle__body subnote">保存時に「〇〇教室」へ正規化します。</div>
-									</details>
-								</div>
-							</div>
+              <div class="form-row">
+                <label class="label" for="upload-classroom"
+                  >教室（Notion保存値）</label
+                >
+                <select id="upload-classroom" class="input"></select>
+                <div
+                  id="upload-classroom-selected"
+                  class="chips chips--classroom-selected"
+                  hidden
+                ></div>
+                <details class="help-toggle">
+                  <summary
+                    class="help-toggle__summary"
+                    aria-label="教室項目の説明を表示"
+                  >
+                    ?
+                  </summary>
+                  <div class="help-toggle__body subnote">
+                    保存時に「〇〇教室」へ正規化します。
+                  </div>
+                </details>
+              </div>
+            </div>
 
-							<div class="form-grid">
-							<div class="form-row">
-								<div id="upload-author-label" class="label">作者</div>
-								<select id="upload-author" class="input author-select-native" multiple size="6" hidden aria-hidden="true"></select>
-								<details class="help-toggle">
-									<summary class="help-toggle__summary" aria-label="作者選択の説明を表示">?</summary>
-									<div class="help-toggle__body subnote">
-										候補ボタン + 名簿検索で複数選択できます。表示は「ニックネーム｜本名」です。
-									</div>
-								</details>
-								<div class="author-picker" role="group" aria-labelledby="upload-author-label">
-									<div id="upload-author-selected" class="chips" aria-label="選択中の作者" hidden></div>
-									<div id="upload-author-candidate-notes" class="candidate-notes" hidden></div>
-									<div class="author-picker__search">
-										<div class="subnote">名簿検索</div>
-										<input id="upload-author-search" class="input" type="text" placeholder="例：けい" aria-label="作者を名簿検索" />
-										<div id="upload-author-search-results" class="suggest"></div>
-									</div>
-								</div>
-							</div>
-						</div>
+            <div class="form-grid">
+              <div class="form-row">
+                <div id="upload-author-label" class="label">作者</div>
+                <select
+                  id="upload-author"
+                  class="input author-select-native"
+                  multiple
+                  size="6"
+                  hidden
+                  aria-hidden="true"
+                ></select>
+                <details class="help-toggle">
+                  <summary
+                    class="help-toggle__summary"
+                    aria-label="作者選択の説明を表示"
+                  >
+                    ?
+                  </summary>
+                  <div class="help-toggle__body subnote">
+                    候補ボタン +
+                    名簿検索で複数選択できます。表示は「ニックネーム｜本名」です。
+                  </div>
+                </details>
+                <div
+                  class="author-picker"
+                  role="group"
+                  aria-labelledby="upload-author-label"
+                >
+                  <div
+                    id="upload-author-selected"
+                    class="chips"
+                    aria-label="選択中の作者"
+                    hidden
+                  ></div>
+                  <div
+                    id="upload-author-candidate-notes"
+                    class="candidate-notes"
+                    hidden
+                  ></div>
+                  <div class="author-picker__search">
+                    <div class="subnote">名簿検索</div>
+                    <input
+                      id="upload-author-search"
+                      class="input"
+                      type="text"
+                      placeholder="例：けい"
+                      aria-label="作者を名簿検索"
+                    />
+                    <div
+                      id="upload-author-search-results"
+                      class="suggest"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-						<div class="form-row">
-							<label class="label" for="upload-title">作品名</label>
-							<input id="upload-title" class="input" type="text" placeholder="例：木彫りのねこ" />
-						</div>
+            <div class="form-row">
+              <label class="label" for="upload-title">作品名</label>
+              <input
+                id="upload-title"
+                class="input"
+                type="text"
+                placeholder="例：木彫りのねこ"
+              />
+            </div>
 
-						<div class="form-row">
-							<label class="label" for="upload-caption">キャプション（任意）</label>
-							<textarea id="upload-caption" class="input" rows="3"></textarea>
-						</div>
+            <div class="form-row">
+              <label class="label" for="upload-caption"
+                >キャプション（任意）</label
+              >
+              <textarea id="upload-caption" class="input" rows="3"></textarea>
+            </div>
 
-						<div class="form-row">
-							<label id="upload-tag-label" class="label">タグ</label>
-							<div id="upload-tag-editor" role="group" aria-labelledby="upload-tag-label"></div>
-						</div>
+            <div class="form-row">
+              <label id="upload-tag-label" class="label">タグ</label>
+              <div
+                id="upload-tag-editor"
+                role="group"
+                aria-labelledby="upload-tag-label"
+              ></div>
+            </div>
 
-						<div class="form-row">
-							<label class="checkbox">
-								<input id="upload-ready" type="checkbox" />
-								<span>整備済として確定（公開ギャラリーに出してよい）</span>
-							</label>
-						</div>
+            <div class="form-row">
+              <label class="checkbox">
+                <input id="upload-ready" type="checkbox" />
+                <span>整備済として確定（公開ギャラリーに出してよい）</span>
+              </label>
+            </div>
 
-						<div class="form-row form-actions">
-							<button id="upload-submit" class="btn btn--primary" type="submit">
-								現在の作品を登録
-							</button>
-							<button id="upload-submit-all" class="btn" type="button">未登録の作品を一括登録</button>
-							<div id="upload-status" class="status"></div>
-						</div>
-					</form>
-				</section>
+            <div class="form-row form-actions">
+              <button id="upload-submit" class="btn btn--primary" type="submit">
+                現在の作品を登録
+              </button>
+              <button id="upload-submit-all" class="btn" type="button">
+                未登録の作品を一括登録
+              </button>
+              <div id="upload-status" class="status"></div>
+            </div>
+          </form>
+        </section>
 
-				<section id="view-curation" class="view" data-view="curation">
-					<h2 class="view-title">整備モード（作品キュー）</h2>
+        <section id="view-curation" class="view" data-view="curation">
+          <h2 class="view-title">整備モード（作品キュー）</h2>
 
-					<div class="panel">
-						<div class="toolbar">
-							<button id="curation-refresh" class="btn" type="button">再読み込み</button>
-							<div id="curation-status" class="status"></div>
-						</div>
+          <div class="panel">
+            <div class="toolbar">
+              <button id="curation-refresh" class="btn" type="button">
+                再読み込み
+              </button>
+              <div id="curation-status" class="status"></div>
+            </div>
 
-							<div class="toolbar toolbar--filters">
-							<label class="label-inline">
-								完成日（from）
-								<input id="curation-from" class="input input--sm" type="date" />
-							</label>
-							<label class="label-inline">
-								完成日（to）
-								<input id="curation-to" class="input input--sm" type="date" />
-							</label>
-							<label class="label-inline">
-								教室
-								<select id="curation-classroom" class="input input--sm"></select>
-							</label>
-							<div id="curation-classroom-selected" class="chips chips--classroom-selected" hidden></div>
-							<label class="label-inline">
-								整備状態
-								<select id="curation-ready-filter" class="input input--sm">
-									<option value="all">すべて</option>
-									<option value="unprepared">未整備のみ</option>
-									<option value="ready">整備済みのみ</option>
-								</select>
-							</label>
-							<label class="label-inline">
-								ギャラリー反映
-								<select id="curation-gallery-filter" class="input input--sm">
-									<option value="all">すべて</option>
-									<option value="reflected">反映済み</option>
-									<option value="unreflected">未反映のみ</option>
-								</select>
-							</label>
-							<label class="label-inline">
-								通知送信
-								<select id="curation-notify-filter" class="input input--sm">
-									<option value="all">すべて</option>
-									<option value="sent">通知済み</option>
-									<option value="unsent">未通知のみ</option>
-								</select>
-							</label>
-							<label class="checkbox checkbox--sm">
-								<input id="curation-missing-title" type="checkbox" />
-								<span>作品名なし</span>
-							</label>
-							<label class="checkbox checkbox--sm">
-								<input id="curation-missing-author" type="checkbox" />
-								<span>作者なし</span>
-							</label>
-								<label class="checkbox checkbox--sm">
-									<input id="curation-missing-tags" type="checkbox" />
-									<span>タグなし</span>
-								</label>
-							</div>
-							<div class="toolbar toolbar--curation-ops">
-								<button id="curation-merge-clear" class="btn" type="button">統合選択をクリア</button>
-								<button id="curation-merge-run" class="btn btn--primary" type="button">選択を統合</button>
-								<div id="curation-merge-status" class="status">統合候補: 0件 / 統合先: 未指定</div>
-							</div>
-						</div>
+            <div class="toolbar toolbar--filters">
+              <label class="label-inline">
+                完成日（from）
+                <input id="curation-from" class="input input--sm" type="date" />
+              </label>
+              <label class="label-inline">
+                完成日（to）
+                <input id="curation-to" class="input input--sm" type="date" />
+              </label>
+              <label class="label-inline">
+                教室
+                <select
+                  id="curation-classroom"
+                  class="input input--sm"
+                ></select>
+              </label>
+              <div
+                id="curation-classroom-selected"
+                class="chips chips--classroom-selected"
+                hidden
+              ></div>
+              <label class="label-inline">
+                整備状態
+                <select id="curation-ready-filter" class="input input--sm">
+                  <option value="all">すべて</option>
+                  <option value="unprepared">未整備のみ</option>
+                  <option value="ready">整備済みのみ</option>
+                </select>
+              </label>
+              <label class="label-inline">
+                ギャラリー反映
+                <select id="curation-gallery-filter" class="input input--sm">
+                  <option value="all">すべて</option>
+                  <option value="reflected">反映済み</option>
+                  <option value="unreflected">未反映のみ</option>
+                </select>
+              </label>
+              <label class="label-inline">
+                通知送信
+                <select id="curation-notify-filter" class="input input--sm">
+                  <option value="all">すべて</option>
+                  <option value="sent">通知済み</option>
+                  <option value="unsent">未通知のみ</option>
+                </select>
+              </label>
+              <label class="checkbox checkbox--sm">
+                <input id="curation-missing-title" type="checkbox" />
+                <span>作品名なし</span>
+              </label>
+              <label class="checkbox checkbox--sm">
+                <input id="curation-missing-author" type="checkbox" />
+                <span>作者なし</span>
+              </label>
+              <label class="checkbox checkbox--sm">
+                <input id="curation-missing-tags" type="checkbox" />
+                <span>タグなし</span>
+              </label>
+            </div>
+            <div class="toolbar toolbar--curation-ops">
+              <button id="curation-merge-clear" class="btn" type="button">
+                統合選択をクリア
+              </button>
+              <button
+                id="curation-merge-run"
+                class="btn btn--primary"
+                type="button"
+              >
+                選択を統合
+              </button>
+              <div id="curation-merge-status" class="status">
+                統合候補: 0件 / 統合先: 未指定
+              </div>
+            </div>
+          </div>
 
-						<div id="curation-grid" class="card-grid" aria-label="作品一覧"></div>
-						<div id="curation-inline-tag-panel" class="panel" hidden>
-							<div class="label">一覧からタグ編集</div>
-							<div id="curation-inline-tag-title" class="status">-</div>
-							<div class="form-row">
-								<div id="curation-inline-tag-editor"></div>
-							</div>
-							<div class="form-row form-actions">
-								<button id="curation-inline-tag-save" class="btn btn--primary" type="button">タグを保存</button>
-								<button id="curation-inline-tag-cancel" class="btn" type="button">閉じる</button>
-								<div id="curation-inline-tag-status" class="status">-</div>
-							</div>
-						</div>
-					</section>
+          <div id="curation-grid" class="card-grid" aria-label="作品一覧"></div>
+          <div id="curation-inline-tag-panel" class="panel" hidden>
+            <div class="label">一覧からタグ編集</div>
+            <div id="curation-inline-tag-title" class="status">-</div>
+            <div class="form-row">
+              <div id="curation-inline-tag-editor"></div>
+            </div>
+            <div class="form-row form-actions">
+              <button
+                id="curation-inline-tag-save"
+                class="btn btn--primary"
+                type="button"
+              >
+                タグを保存
+              </button>
+              <button id="curation-inline-tag-cancel" class="btn" type="button">
+                閉じる
+              </button>
+              <div id="curation-inline-tag-status" class="status">-</div>
+            </div>
+          </div>
+        </section>
 
-				<section id="view-tools" class="view" data-view="tools">
-					<h2 class="view-title">ツール</h2>
-					<div class="panel">
-						<div class="label">タグ管理（タグDB）</div>
-						<div id="tools-tag-relation-editor"></div>
-						<details class="help-toggle">
-							<summary class="help-toggle__summary" aria-label="タグ管理の説明を表示">?</summary>
-							<div class="help-toggle__body subnote">親/子の検索候補からタグを新規作成し、既存タグ同士の親子関係を追加できます。</div>
-						</details>
-					</div>
-					<div class="panel">
-						<div class="label">タグ選択の初期候補</div>
-						<div id="tools-tag-initial-candidates-editor"></div>
-						<details class="help-toggle">
-							<summary class="help-toggle__summary" aria-label="タグ初期候補の説明を表示">?</summary>
-							<div class="help-toggle__body subnote">
-								アップロード/整備モードのタグ選択欄に最初から表示する候補タグを設定できます。
-							</div>
-						</details>
-					</div>
-					<div class="panel">
-						<div class="toolbar">
-							<div>
-								<div class="label">タグ親子関係の作品反映</div>
-								<div id="tools-tags-recalc-status" class="status">-</div>
-							</div>
-							<button id="trigger-tags-recalc-apply" class="btn btn--primary" type="button">
-								タグ親子関係を作品へ反映
-							</button>
-						</div>
-						<details class="help-toggle">
-							<summary class="help-toggle__summary" aria-label="タグ親子関係反映の説明を表示">?</summary>
-							<div class="help-toggle__body subnote">
-								タグDBの親子関係・統合（merged）を基準に、既存作品タグを再計算してNotionへ反映します。
-							</div>
-						</details>
-					</div>
-					<div class="panel">
-						<div class="toolbar">
-							<div>
-								<div class="label">タグインデックス</div>
-								<div id="tools-tags-generated-at" class="status">-</div>
-							</div>
-							<button id="trigger-tags-index-update" class="btn" type="button">
-								タグインデックス再生成
-							</button>
-						</div>
-						<details class="help-toggle">
-							<summary class="help-toggle__summary" aria-label="タグインデックスの説明を表示">?</summary>
-							<div class="help-toggle__body subnote">
-								NotionのタグDBを読み直して `tags_index.json` を再生成します。
-							</div>
-						</details>
-					</div>
-				</section>
-			</main>
+        <section id="view-tools" class="view" data-view="tools">
+          <h2 class="view-title">ツール</h2>
+          <div class="panel">
+            <div class="label">タグ管理（タグDB）</div>
+            <div id="tools-tag-relation-editor"></div>
+            <details class="help-toggle">
+              <summary
+                class="help-toggle__summary"
+                aria-label="タグ管理の説明を表示"
+              >
+                ?
+              </summary>
+              <div class="help-toggle__body subnote">
+                親/子の検索候補からタグを新規作成し、既存タグ同士の親子関係を追加できます。
+              </div>
+            </details>
+          </div>
+          <div class="panel">
+            <div class="label">タグ選択の初期候補</div>
+            <div id="tools-tag-initial-candidates-editor"></div>
+            <details class="help-toggle">
+              <summary
+                class="help-toggle__summary"
+                aria-label="タグ初期候補の説明を表示"
+              >
+                ?
+              </summary>
+              <div class="help-toggle__body subnote">
+                アップロード/整備モードのタグ選択欄に最初から表示する候補タグを設定できます。
+              </div>
+            </details>
+          </div>
+          <div class="panel">
+            <div class="toolbar">
+              <div>
+                <div class="label">タグ親子関係の作品反映</div>
+                <div id="tools-tags-recalc-status" class="status">-</div>
+              </div>
+              <button
+                id="trigger-tags-recalc-apply"
+                class="btn btn--primary"
+                type="button"
+              >
+                タグ親子関係を作品へ反映
+              </button>
+            </div>
+            <details class="help-toggle">
+              <summary
+                class="help-toggle__summary"
+                aria-label="タグ親子関係反映の説明を表示"
+              >
+                ?
+              </summary>
+              <div class="help-toggle__body subnote">
+                タグDBの親子関係・統合（merged）を基準に、既存作品タグを再計算してNotionへ反映します。
+              </div>
+            </details>
+          </div>
+          <div class="panel">
+            <div class="toolbar">
+              <div>
+                <div class="label">タグインデックス</div>
+                <div id="tools-tags-generated-at" class="status">-</div>
+              </div>
+              <button id="trigger-tags-index-update" class="btn" type="button">
+                タグインデックス再生成
+              </button>
+            </div>
+            <details class="help-toggle">
+              <summary
+                class="help-toggle__summary"
+                aria-label="タグインデックスの説明を表示"
+              >
+                ?
+              </summary>
+              <div class="help-toggle__body subnote">
+                NotionのタグDBを読み直して `tags_index.json` を再生成します。
+              </div>
+            </details>
+          </div>
+        </section>
+      </main>
 
-			<div id="modal-root" class="modal-root" hidden aria-hidden="true"></div>
-			<div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="true"></div>
-		</div>
+      <div id="modal-root" class="modal-root" hidden aria-hidden="true"></div>
+      <div
+        id="toast-root"
+        class="toast-root"
+        aria-live="polite"
+        aria-atomic="true"
+      ></div>
+    </div>
 
-		<script type="module" src="./admin/admin.js?v=20260228-2"></script>
-	</body>
+    <script type="module" src="./admin/admin.js?v=20260228-2"></script>
+  </body>
 </html>
