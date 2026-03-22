@@ -176,6 +176,7 @@ function createServerState() {
 		],
 		tagCreateCallsByName: {},
 		patchCalls: [],
+		patchDelayMsByWorkId: {},
 		mergeCalls: [],
 		work2FailCount: 0,
 		createdTagIdsByName: {},
@@ -341,6 +342,11 @@ function startServer(state) {
 					const body = await parseJsonBody(req).catch(() => ({}));
 					const id = normalizeId(body.id);
 					state.patchCalls.push(clone(body));
+					const patchDelayMs = Number(state.patchDelayMsByWorkId[id] || 0);
+					if (patchDelayMs > 0) {
+						state.patchDelayMsByWorkId[id] = 0;
+						await delay(patchDelayMs);
+					}
 					if (id === "work-2" && state.work2FailCount === 0) {
 						state.work2FailCount += 1;
 						json(res, 500, { ok: false, error: "forced failure for retry test" });
@@ -460,6 +466,11 @@ function closeServer(server) {
 function buildResult({
 	ok,
 	saveNextOpenedNext,
+	noImmediatePatchBeforeCommit,
+	localDraftBadgeShown,
+	firstSaveAvoidedStaleImages,
+	editBlockedDuringCommit,
+	missingWorkDraftRetained,
 	backgroundSecondEditCaptured,
 	saveFailureBadgeShown,
 	saveRetryRecovered,
@@ -475,6 +486,11 @@ function buildResult({
 	return {
 		ok: Boolean(ok),
 		saveNextOpenedNext: Boolean(saveNextOpenedNext),
+		noImmediatePatchBeforeCommit: Boolean(noImmediatePatchBeforeCommit),
+		localDraftBadgeShown: Boolean(localDraftBadgeShown),
+		firstSaveAvoidedStaleImages: Boolean(firstSaveAvoidedStaleImages),
+		editBlockedDuringCommit: Boolean(editBlockedDuringCommit),
+		missingWorkDraftRetained: Boolean(missingWorkDraftRetained),
 		backgroundSecondEditCaptured: Boolean(backgroundSecondEditCaptured),
 		saveFailureBadgeShown: Boolean(saveFailureBadgeShown),
 		saveRetryRecovered: Boolean(saveRetryRecovered),
@@ -531,7 +547,7 @@ async function runSmoke(port, state) {
 		const secondClick = createSuggest.click();
 		await Promise.allSettled([firstClick, secondClick]);
 
-		await modal.getByRole("button", { name: "保存して次へ" }).click();
+		await modal.getByRole("button", { name: "ローカル保存して次へ", exact: true }).click();
 		await page.waitForFunction(() => {
 			const title = document.querySelector("#modal-root .modal .modal-title");
 			return Boolean(title && String(title.textContent || "").includes("work-2"));
@@ -540,10 +556,41 @@ async function runSmoke(port, state) {
 			const title = document.querySelector("#modal-root .modal .modal-title");
 			return Boolean(title && String(title.textContent || "").includes("work-2"));
 		});
+		const noImmediatePatchBeforeCommit = state.patchCalls.length === 0;
 
 		await modal.locator("input.input[type=\"text\"]").first().fill("作品2更新");
-		await modal.getByRole("button", { name: "保存のみ" }).click();
+		await modal.getByRole("button", { name: "ローカル保存", exact: true }).click();
 		await page.waitForFunction(() => document.querySelector("#modal-root")?.getAttribute("aria-hidden") === "true");
+		const localDraftBadgeShown = await page.evaluate(() =>
+			Array.from(document.querySelectorAll("#curation-grid .chip")).some((node) =>
+				String(node.textContent || "").includes("ローカル: 未反映"),
+			),
+		);
+		state.works[0].images.push({
+			url: "https://example.com/work-1-remote.jpg",
+			name: "work-1-remote.jpg",
+			type: "external",
+		});
+		state.patchDelayMsByWorkId["work-1"] = 700;
+
+		await page.locator("#curation-grid .work-card .work-card__actions .btn").filter({ hasText: "タグ編集" }).first().click();
+		await page.waitForSelector("#curation-inline-tag-panel:not([hidden])", { timeout: 10000 });
+		const inlineTagInput = page.locator("#curation-inline-tag-editor .tag-editor .tag-input input").first();
+		await inlineTagInput.fill("どう");
+		const inlineSuggest = page.locator("#curation-inline-tag-editor .tag-input .suggest .suggest-item").filter({ hasText: "どうぶつ" }).first();
+		await inlineSuggest.waitFor({ state: "visible", timeout: 10000 });
+		await inlineSuggest.click();
+		await page.click("#curation-inline-tag-save");
+		await page.click("#curation-inline-tag-cancel");
+		await page.waitForSelector("#curation-inline-tag-panel", { state: "hidden", timeout: 10000 });
+
+		await page.click("#curation-commit-local");
+		await page.waitForFunction(() => String(document.querySelector("#curation-local-status")?.textContent || "").includes("Notion反映中"));
+		await page.locator("#curation-grid .work-card").nth(2).click();
+		await delay(150);
+		const editBlockedDuringCommit = await page.evaluate(
+			() => document.querySelector("#modal-root")?.getAttribute("aria-hidden") === "true",
+		);
 
 		await page.waitForFunction(() =>
 			Array.from(document.querySelectorAll("#curation-grid .chip")).some((node) =>
@@ -572,14 +619,21 @@ async function runSmoke(port, state) {
 				),
 		);
 
-		await page.locator("#curation-grid .work-card .work-card__actions .btn").filter({ hasText: "タグ編集" }).first().click();
-		await page.waitForSelector("#curation-inline-tag-panel:not([hidden])", { timeout: 10000 });
-		const inlineTagInput = page.locator("#curation-inline-tag-editor .tag-editor .tag-input input").first();
-		await inlineTagInput.fill("どう");
-		const inlineSuggest = page.locator("#curation-inline-tag-editor .tag-input .suggest .suggest-item").filter({ hasText: "どうぶつ" }).first();
-		await inlineSuggest.waitFor({ state: "visible", timeout: 10000 });
-		await inlineSuggest.click();
-		await page.click("#curation-inline-tag-save");
+		await page.locator("#curation-grid .work-card").nth(2).click();
+		await modal.waitFor({ state: "visible", timeout: 15000 });
+		await modal.locator("input.input[type=\"text\"]").first().fill("作品3ローカル");
+		await modal.getByRole("button", { name: "ローカル保存", exact: true }).click();
+		await page.waitForFunction(() => document.querySelector("#modal-root")?.getAttribute("aria-hidden") === "true");
+		state.works = state.works.filter((work) => work.id !== "work-3");
+		await page.click("#curation-refresh");
+		await page.waitForFunction(() => {
+			const status = String(document.querySelector("#curation-local-status")?.textContent || "");
+			return status.includes("ローカル変更: 1件") && status.includes("一覧外: 1件");
+		});
+		const missingWorkDraftRetained = await page.evaluate(() => {
+			const status = String(document.querySelector("#curation-local-status")?.textContent || "");
+			return status.includes("ローカル変更: 1件") && status.includes("一覧外: 1件");
+		});
 
 		const cards = page.locator("#curation-grid .work-card");
 		await cards.nth(0).locator(".work-card__actions .checkbox input").check();
@@ -600,6 +654,9 @@ async function runSmoke(port, state) {
 				createdTagId &&
 				firstSavePatch.tagIds.map((value) => String(value || "")).includes(createdTagId),
 		);
+		const firstSaveAvoidedStaleImages = Boolean(
+			firstSavePatch && !Object.prototype.hasOwnProperty.call(firstSavePatch, "images"),
+		);
 		const backgroundSecondEditCaptured = state.patchCalls.some(
 			(payload) => String(payload?.id || "") === "work-2" && String(payload?.title || "") === "作品2更新",
 		);
@@ -618,6 +675,11 @@ async function runSmoke(port, state) {
 
 		const ok =
 			saveNextOpenedNext &&
+			noImmediatePatchBeforeCommit &&
+			localDraftBadgeShown &&
+			firstSaveAvoidedStaleImages &&
+			editBlockedDuringCommit &&
+			missingWorkDraftRetained &&
 			backgroundSecondEditCaptured &&
 			saveFailureBadgeShown &&
 			saveRetryRecovered &&
@@ -631,6 +693,11 @@ async function runSmoke(port, state) {
 		return buildResult({
 			ok,
 			saveNextOpenedNext,
+			noImmediatePatchBeforeCommit,
+			localDraftBadgeShown,
+			firstSaveAvoidedStaleImages,
+			editBlockedDuringCommit,
+			missingWorkDraftRetained,
 			backgroundSecondEditCaptured,
 			saveFailureBadgeShown,
 			saveRetryRecovered,
@@ -664,6 +731,11 @@ async function main() {
 		const result = buildResult({
 			ok: false,
 			saveNextOpenedNext: false,
+			noImmediatePatchBeforeCommit: false,
+			localDraftBadgeShown: false,
+			firstSaveAvoidedStaleImages: false,
+			editBlockedDuringCommit: false,
+			missingWorkDraftRetained: false,
 			backgroundSecondEditCaptured: false,
 			saveFailureBadgeShown: false,
 			saveRetryRecovered: false,

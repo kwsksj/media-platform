@@ -382,6 +382,21 @@
               </label>
             </div>
             <div class="toolbar toolbar--curation-ops">
+              <button
+                id="curation-commit-local"
+                class="btn btn--primary"
+                type="button"
+              >
+                ローカル変更を Notion へ反映
+              </button>
+              <button id="curation-discard-local" class="btn" type="button">
+                ローカル変更を破棄
+              </button>
+              <div id="curation-local-status" class="status">
+                ローカル変更: 0件
+              </div>
+            </div>
+            <div class="toolbar toolbar--curation-ops">
               <button id="curation-merge-clear" class="btn" type="button">
                 統合選択をクリア
               </button>
@@ -411,7 +426,7 @@
                 class="btn btn--primary"
                 type="button"
               >
-                タグを保存
+                タグをローカル保存
               </button>
               <button id="curation-inline-tag-cancel" class="btn" type="button">
                 閉じる
