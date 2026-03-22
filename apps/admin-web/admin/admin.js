@@ -1,6 +1,7 @@
 import { debounce, el, formatIso, normalizeSearch, qs, qsa, showToast } from "../shared/gallery-core.js";
 
 const ADMIN_API_TOKEN_STORAGE_KEY = "gallery.adminApiToken.v1";
+const CURATION_LOCAL_DRAFTS_STORAGE_KEY = "gallery.curationLocalDrafts.v1";
 const COMPACT_HEADER_MEDIA_QUERY = "(max-width: 760px)";
 const JST_TIME_ZONE = "Asia/Tokyo";
 const DEFAULT_INITIAL_TAG_CANDIDATE_NAMES = Object.freeze(["どうぶつ", "だるま", "たべもの", "グループショット"]);
@@ -39,14 +40,19 @@ const state = {
 		works: [],
 		filtered: [],
 		currentIndex: -1,
+		listLoaded: false,
 		syncSnapshotAt: "",
 		syncStatusLoaded: false,
+		commitRunning: false,
 		saveQueue: {
 			jobs: [],
 			running: false,
 			jobSeq: 1,
 		},
 		saveStatusByWorkId: new Map(),
+		localDraftsByWorkId: new Map(),
+		localDraftPersistenceWarning: "",
+		remoteSnapshotByWorkId: new Map(),
 		selectedMergeSourceIds: [],
 		mergeTargetWorkId: "",
 		inlineTagEditor: {
@@ -3174,57 +3180,6 @@ function setCurationSaveState(workIdRaw, { status = "idle", errorMessage = "", l
 	state.curation.saveStatusByWorkId.set(workId, next);
 }
 
-function updateCurationWorkInState(workIdRaw, patchRaw = {}) {
-	const workId = trimText(workIdRaw);
-	if (!workId || !patchRaw || typeof patchRaw !== "object") return null;
-	const patch = patchRaw;
-	const merge = (baseWork) => {
-		const next = { ...baseWork };
-		if (Object.prototype.hasOwnProperty.call(patch, "title")) next.title = trimText(patch.title);
-		if (Object.prototype.hasOwnProperty.call(patch, "completedDate")) next.completedDate = trimText(patch.completedDate);
-		if (Object.prototype.hasOwnProperty.call(patch, "classroom")) next.classroom = trimText(patch.classroom);
-		if (Object.prototype.hasOwnProperty.call(patch, "authorIds")) next.authorIds = Array.isArray(patch.authorIds) ? patch.authorIds.slice() : [];
-		if (Object.prototype.hasOwnProperty.call(patch, "caption")) next.caption = trimText(patch.caption);
-		if (Object.prototype.hasOwnProperty.call(patch, "tagIds")) next.tagIds = Array.isArray(patch.tagIds) ? patch.tagIds.slice() : [];
-		if (Object.prototype.hasOwnProperty.call(patch, "ready")) next.ready = Boolean(patch.ready);
-		if (Object.prototype.hasOwnProperty.call(patch, "images")) {
-			next.images = Array.isArray(patch.images)
-				? patch.images
-						.map((image) => {
-							const url = trimText(image?.url);
-							if (!url) return null;
-							const type = trimText(image?.type);
-							return {
-								url,
-								name: trimText(image?.name),
-								...(type ? { type } : {}),
-							};
-						})
-						.filter(Boolean)
-				: [];
-		}
-		if (Object.prototype.hasOwnProperty.call(patch, "notificationDisabled")) {
-			next.notificationDisabled = Boolean(patch.notificationDisabled);
-			next.notificationPending = patch.notificationDisabled ? false : Boolean(next.notificationPending);
-			next.notificationState = patch.notificationDisabled ? "disabled" : trimText(next.notificationState);
-			next.notificationReason = patch.notificationDisabled ? "work_notify_disabled" : trimText(next.notificationReason);
-		}
-		return next;
-	};
-
-	let nextWork = null;
-	const idxAll = state.curation.works.findIndex((work) => trimText(work?.id) === workId);
-	if (idxAll >= 0) {
-		nextWork = merge(state.curation.works[idxAll]);
-		state.curation.works[idxAll] = nextWork;
-	}
-	const idxFiltered = state.curation.filtered.findIndex((work) => trimText(work?.id) === workId);
-	if (idxFiltered >= 0) {
-		state.curation.filtered[idxFiltered] = nextWork || merge(state.curation.filtered[idxFiltered]);
-	}
-	return nextWork;
-}
-
 function getWorkImagePayload(imagesRaw) {
 	if (!Array.isArray(imagesRaw)) return [];
 	return imagesRaw.reduce((acc, image) => {
@@ -3240,10 +3195,415 @@ function getWorkImagePayload(imagesRaw) {
 	}, []);
 }
 
+function areTrimmedStringArraysEqual(leftRaw, rightRaw) {
+	const left = Array.isArray(leftRaw) ? leftRaw.map(trimText).filter(Boolean) : [];
+	const right = Array.isArray(rightRaw) ? rightRaw.map(trimText).filter(Boolean) : [];
+	return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function areCurationImagePayloadsEqual(leftRaw, rightRaw) {
+	return JSON.stringify(getWorkImagePayload(leftRaw)) === JSON.stringify(getWorkImagePayload(rightRaw));
+}
+
+function appendUniqueWorkImages(baseImagesRaw, extraImagesRaw) {
+	const next = getWorkImagePayload(baseImagesRaw);
+	const seen = new Set(next.map((image) => image.url));
+	for (const image of getWorkImagePayload(extraImagesRaw)) {
+		if (!image?.url || seen.has(image.url)) continue;
+		next.push(image);
+		seen.add(image.url);
+	}
+	return next;
+}
+
+function reconcileCurationDraftImages(remoteImagesRaw, draftImagesRaw) {
+	const remoteImages = getWorkImagePayload(remoteImagesRaw);
+	const draftImages = getWorkImagePayload(draftImagesRaw);
+	const remoteByUrl = new Map(remoteImages.map((image) => [image.url, image]));
+	const next = [];
+	const seen = new Set();
+	for (const image of draftImages) {
+		if (!image?.url || seen.has(image.url) || !remoteByUrl.has(image.url)) continue;
+		next.push(clonePlainData(remoteByUrl.get(image.url)));
+		seen.add(image.url);
+	}
+	for (const image of remoteImages) {
+		if (!image?.url || seen.has(image.url)) continue;
+		next.push(clonePlainData(image));
+		seen.add(image.url);
+	}
+	return next;
+}
+
+function mergeCurationWorkPatch(baseWork, patchRaw = {}) {
+	const patch = patchRaw && typeof patchRaw === "object" ? patchRaw : {};
+	const next = { ...(baseWork || {}) };
+	if (Object.prototype.hasOwnProperty.call(patch, "id")) next.id = trimText(patch.id);
+	if (Object.prototype.hasOwnProperty.call(patch, "title")) next.title = trimText(patch.title);
+	if (Object.prototype.hasOwnProperty.call(patch, "completedDate")) next.completedDate = trimText(patch.completedDate);
+	if (Object.prototype.hasOwnProperty.call(patch, "classroom")) next.classroom = trimText(patch.classroom);
+	if (Object.prototype.hasOwnProperty.call(patch, "authorIds")) {
+		next.authorIds = Array.isArray(patch.authorIds) ? patch.authorIds.map(trimText).filter(Boolean) : [];
+	}
+	if (Object.prototype.hasOwnProperty.call(patch, "caption")) next.caption = trimText(patch.caption);
+	if (Object.prototype.hasOwnProperty.call(patch, "tagIds")) {
+		next.tagIds = Array.isArray(patch.tagIds) ? patch.tagIds.map(trimText).filter(Boolean) : [];
+	}
+	if (Object.prototype.hasOwnProperty.call(patch, "ready")) next.ready = Boolean(patch.ready);
+	if (Object.prototype.hasOwnProperty.call(patch, "images")) {
+		next.images = Array.isArray(patch.images) ? getWorkImagePayload(patch.images) : [];
+	}
+	if (Object.prototype.hasOwnProperty.call(patch, "notificationDisabled")) {
+		next.notificationDisabled = Boolean(patch.notificationDisabled);
+		if (patch.notificationDisabled) {
+			next.notificationPending = false;
+			next.notificationState = "disabled";
+			next.notificationReason = "work_notify_disabled";
+		} else {
+			const prevState = normalizeNotificationSyncState(next.notificationState);
+			const prevReason = trimText(next.notificationReason);
+			if (prevState === "disabled" || prevReason === "work_notify_disabled") {
+				next.notificationPending = false;
+				next.notificationState = "";
+				next.notificationReason = "";
+			}
+		}
+	}
+	return next;
+}
+
+function updateCurationWorkInState(workIdRaw, patchRaw = {}) {
+	const workId = trimText(workIdRaw);
+	if (!workId || !patchRaw || typeof patchRaw !== "object") return null;
+
+	let nextWork = null;
+	const idxAll = state.curation.works.findIndex((work) => trimText(work?.id) === workId);
+	if (idxAll >= 0) {
+		nextWork = mergeCurationWorkPatch(state.curation.works[idxAll], patchRaw);
+		state.curation.works[idxAll] = nextWork;
+	}
+	const idxFiltered = state.curation.filtered.findIndex((work) => trimText(work?.id) === workId);
+	if (idxFiltered >= 0) {
+		state.curation.filtered[idxFiltered] = nextWork || mergeCurationWorkPatch(state.curation.filtered[idxFiltered], patchRaw);
+	}
+	return nextWork;
+}
+
+function readStoredCurationLocalDrafts() {
+	try {
+		const raw = window.localStorage.getItem(CURATION_LOCAL_DRAFTS_STORAGE_KEY);
+		if (!raw) return [];
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return [];
+	}
+}
+
+function persistCurationLocalDrafts() {
+	try {
+		const values = Array.from(state.curation.localDraftsByWorkId.values()).map((draft) => clonePlainData(draft));
+		if (values.length === 0) {
+			window.localStorage.removeItem(CURATION_LOCAL_DRAFTS_STORAGE_KEY);
+			state.curation.localDraftPersistenceWarning = "";
+			return { ok: true, warning: "" };
+		}
+		window.localStorage.setItem(CURATION_LOCAL_DRAFTS_STORAGE_KEY, JSON.stringify(values));
+		state.curation.localDraftPersistenceWarning = "";
+		return { ok: true, warning: "" };
+	} catch (err) {
+		const message =
+			err?.name === "QuotaExceededError"
+				? "ブラウザ保存容量が不足しています。このタブを閉じるとローカル変更は失われます"
+				: "ブラウザへの保存に失敗しました。このタブを閉じるとローカル変更は失われます";
+		state.curation.localDraftPersistenceWarning = message;
+		return { ok: false, warning: message };
+	}
+}
+
+function sanitizeCurationLocalDraft(payloadRaw = {}) {
+	if (!payloadRaw || typeof payloadRaw !== "object") return null;
+	const id = trimText(payloadRaw.id);
+	if (!id) return null;
+	const payload = { id };
+	if (Object.prototype.hasOwnProperty.call(payloadRaw, "title")) payload.title = trimText(payloadRaw.title);
+	if (Object.prototype.hasOwnProperty.call(payloadRaw, "completedDate")) payload.completedDate = trimText(payloadRaw.completedDate);
+	if (Object.prototype.hasOwnProperty.call(payloadRaw, "classroom")) payload.classroom = trimText(payloadRaw.classroom);
+	if (Object.prototype.hasOwnProperty.call(payloadRaw, "authorIds")) {
+		payload.authorIds = Array.isArray(payloadRaw.authorIds) ? payloadRaw.authorIds.map(trimText).filter(Boolean) : [];
+	}
+	if (Object.prototype.hasOwnProperty.call(payloadRaw, "caption")) payload.caption = trimText(payloadRaw.caption);
+	if (Object.prototype.hasOwnProperty.call(payloadRaw, "tagIds")) {
+		payload.tagIds = Array.isArray(payloadRaw.tagIds) ? payloadRaw.tagIds.map(trimText).filter(Boolean) : [];
+	}
+	if (Object.prototype.hasOwnProperty.call(payloadRaw, "ready")) payload.ready = Boolean(payloadRaw.ready);
+	if (Object.prototype.hasOwnProperty.call(payloadRaw, "images")) {
+		payload.images = Array.isArray(payloadRaw.images) ? getWorkImagePayload(payloadRaw.images) : [];
+	}
+	if (Object.prototype.hasOwnProperty.call(payloadRaw, "notificationDisabled")) {
+		payload.notificationDisabled = Boolean(payloadRaw.notificationDisabled);
+	}
+	return payload;
+}
+
+function pruneCurationLocalDraftAgainstRemote(draftRaw = {}) {
+	const draft = sanitizeCurationLocalDraft(draftRaw);
+	if (!draft) return null;
+	const remote = state.curation.remoteSnapshotByWorkId.get(draft.id);
+	if (!remote) return draft;
+	const next = { id: draft.id };
+	if (Object.prototype.hasOwnProperty.call(draft, "title") && trimText(draft.title) !== trimText(remote.title)) {
+		next.title = trimText(draft.title);
+	}
+	if (
+		Object.prototype.hasOwnProperty.call(draft, "completedDate") &&
+		trimText(draft.completedDate) !== trimText(remote.completedDate)
+	) {
+		next.completedDate = trimText(draft.completedDate);
+	}
+	if (Object.prototype.hasOwnProperty.call(draft, "classroom") && trimText(draft.classroom) !== trimText(remote.classroom)) {
+		next.classroom = trimText(draft.classroom);
+	}
+	if (
+		Object.prototype.hasOwnProperty.call(draft, "authorIds") &&
+		!areTrimmedStringArraysEqual(draft.authorIds, remote.authorIds)
+	) {
+		next.authorIds = Array.isArray(draft.authorIds) ? draft.authorIds.map(trimText).filter(Boolean) : [];
+	}
+	if (Object.prototype.hasOwnProperty.call(draft, "caption") && trimText(draft.caption) !== trimText(remote.caption)) {
+		next.caption = trimText(draft.caption);
+	}
+	if (Object.prototype.hasOwnProperty.call(draft, "tagIds") && !areTrimmedStringArraysEqual(draft.tagIds, remote.tagIds)) {
+		next.tagIds = Array.isArray(draft.tagIds) ? draft.tagIds.map(trimText).filter(Boolean) : [];
+	}
+	if (Object.prototype.hasOwnProperty.call(draft, "ready") && Boolean(draft.ready) !== Boolean(remote.ready)) {
+		next.ready = Boolean(draft.ready);
+	}
+	if (Object.prototype.hasOwnProperty.call(draft, "images")) {
+		const reconciledImages = reconcileCurationDraftImages(remote.images, draft.images);
+		if (!areCurationImagePayloadsEqual(reconciledImages, remote.images)) {
+			next.images = reconciledImages;
+		}
+	}
+	if (
+		Object.prototype.hasOwnProperty.call(draft, "notificationDisabled") &&
+		Boolean(draft.notificationDisabled) !== Boolean(remote.notificationDisabled)
+	) {
+		next.notificationDisabled = Boolean(draft.notificationDisabled);
+	}
+	return Object.keys(next).length > 1 ? next : null;
+}
+
+function loadPersistedCurationLocalDrafts() {
+	state.curation.localDraftsByWorkId.clear();
+	for (const rawDraft of readStoredCurationLocalDrafts()) {
+		const draft = sanitizeCurationLocalDraft(rawDraft);
+		if (!draft) continue;
+		state.curation.localDraftsByWorkId.set(draft.id, draft);
+	}
+}
+
+function syncCurationLocalDraftsWithRemoteSnapshots() {
+	let changed = false;
+	for (const [workId, draft] of Array.from(state.curation.localDraftsByWorkId.entries())) {
+		const nextDraft = pruneCurationLocalDraftAgainstRemote(draft);
+		if (!nextDraft) {
+			state.curation.localDraftsByWorkId.delete(workId);
+			changed = true;
+			continue;
+		}
+		if (JSON.stringify(draft) !== JSON.stringify(nextDraft)) {
+			state.curation.localDraftsByWorkId.set(workId, nextDraft);
+			changed = true;
+		}
+	}
+	if (changed) persistCurationLocalDrafts();
+}
+
+function updateCurationRemoteSnapshot(workIdRaw, patchRaw = {}) {
+	const workId = trimText(workIdRaw);
+	if (!workId) return null;
+	const base = state.curation.remoteSnapshotByWorkId.get(workId) || { id: workId };
+	const next = mergeCurationWorkPatch(base, patchRaw);
+	state.curation.remoteSnapshotByWorkId.set(workId, clonePlainData(next));
+	return next;
+}
+
+function applyCommittedCurationPayload(workIdRaw, payloadRaw = {}) {
+	const workId = trimText(workIdRaw);
+	const payload = sanitizeCurationLocalDraft(payloadRaw);
+	if (!workId || !payload) return;
+	updateCurationRemoteSnapshot(workId, payload);
+	const localDraft = state.curation.localDraftsByWorkId.get(workId) || null;
+	if (!localDraft) return;
+	const nextDraft = pruneCurationLocalDraftAgainstRemote(localDraft);
+	if (nextDraft) {
+		state.curation.localDraftsByWorkId.set(workId, nextDraft);
+	} else {
+		state.curation.localDraftsByWorkId.delete(workId);
+	}
+	persistCurationLocalDrafts();
+}
+
+function syncCurationWorkImagesAfterRemoteMutation(workIdRaw, imagesRaw) {
+	const workId = trimText(workIdRaw);
+	if (!workId) return [];
+	const remoteImages = getWorkImagePayload(imagesRaw);
+	updateCurationRemoteSnapshot(workId, { images: remoteImages });
+	const currentDraft = state.curation.localDraftsByWorkId.get(workId) || null;
+	let nextDraft = currentDraft;
+	if (currentDraft) {
+		const nextDraftSource = Object.prototype.hasOwnProperty.call(currentDraft, "images")
+			? {
+					...currentDraft,
+					images: reconcileCurationDraftImages(remoteImages, currentDraft.images),
+				}
+			: currentDraft;
+		nextDraft = pruneCurationLocalDraftAgainstRemote(nextDraftSource);
+		if (nextDraft) {
+			state.curation.localDraftsByWorkId.set(workId, nextDraft);
+		} else {
+			state.curation.localDraftsByWorkId.delete(workId);
+		}
+		persistCurationLocalDrafts();
+	}
+	const visibleImages =
+		nextDraft && Object.prototype.hasOwnProperty.call(nextDraft, "images") ? nextDraft.images : remoteImages;
+	updateCurationWorkInState(workId, { images: visibleImages });
+	applyCurationFilters();
+	return visibleImages;
+}
+
+function removeCurationWorksFromState(workIdsRaw = []) {
+	const workIds = Array.from(new Set((Array.isArray(workIdsRaw) ? workIdsRaw : []).map(trimText).filter(Boolean)));
+	if (workIds.length === 0) return;
+	const workIdSet = new Set(workIds);
+	state.curation.works = state.curation.works.filter((work) => !workIdSet.has(trimText(work?.id)));
+	state.curation.filtered = state.curation.filtered.filter((work) => !workIdSet.has(trimText(work?.id)));
+	for (const workId of workIds) {
+		state.curation.saveStatusByWorkId.delete(workId);
+		state.curation.localDraftsByWorkId.delete(workId);
+		state.curation.remoteSnapshotByWorkId.delete(workId);
+	}
+	persistCurationLocalDrafts();
+	state.curation.selectedMergeSourceIds = state.curation.selectedMergeSourceIds.filter((id) => !workIdSet.has(trimText(id)));
+	if (workIdSet.has(trimText(state.curation.mergeTargetWorkId))) {
+		state.curation.mergeTargetWorkId = "";
+	}
+	if (workIdSet.has(trimText(state.curation.inlineTagEditor.workId))) {
+		closeCurationInlineTagEditor();
+	}
+	if (state.curation.currentIndex >= state.curation.filtered.length) {
+		state.curation.currentIndex = Math.max(-1, state.curation.filtered.length - 1);
+	}
+}
+
+function isCurationRemoteWriteActive() {
+	return Boolean(state.curation.commitRunning || state.curation.saveQueue.running);
+}
+
+function hasOpenCurationEditors() {
+	const modalRoot = qs("#modal-root");
+	const inlinePanel = qs("#curation-inline-tag-panel");
+	const modalOpen = Boolean(modalRoot && !modalRoot.hidden && modalRoot.getAttribute("aria-hidden") !== "true");
+	const inlineOpen = Boolean(inlinePanel && !inlinePanel.hidden);
+	return modalOpen || inlineOpen;
+}
+
+function ensureCurationEditingUnlocked(actionLabel) {
+	if (!isCurationRemoteWriteActive()) return true;
+	showToast(`${actionLabel}は保存処理の完了後に実行してください`);
+	return false;
+}
+
+function applyCurationLocalDraftsToWorks(worksRaw = []) {
+	if (!Array.isArray(worksRaw) || state.curation.localDraftsByWorkId.size === 0) {
+		return Array.isArray(worksRaw) ? worksRaw.slice() : [];
+	}
+	return worksRaw.map((work) => {
+		const workId = trimText(work?.id);
+		const draft = state.curation.localDraftsByWorkId.get(workId);
+		return draft ? mergeCurationWorkPatch(work, draft) : work;
+	});
+}
+
+function stageCurationLocalDraft(payloadRaw, { toastMessage = "" } = {}) {
+	const workId = trimText(payloadRaw?.id);
+	if (!workId) throw new Error("保存対象の作品IDがありません");
+	const prevDraft = state.curation.localDraftsByWorkId.get(workId);
+	const mergedDraft = sanitizeCurationLocalDraft({
+		...(prevDraft || {}),
+		...(payloadRaw || {}),
+		id: workId,
+	});
+	if (!mergedDraft) throw new Error("保存データを作成できません");
+	const nextDraft = pruneCurationLocalDraftAgainstRemote(mergedDraft);
+	if (nextDraft) {
+		state.curation.localDraftsByWorkId.set(workId, nextDraft);
+	} else {
+		state.curation.localDraftsByWorkId.delete(workId);
+	}
+	const persistResult = persistCurationLocalDrafts();
+	setCurationSaveState(workId, { status: "idle", errorMessage: "", lastPayload: mergedDraft });
+	if (nextDraft) {
+		updateCurationWorkInState(workId, nextDraft);
+	} else {
+		updateCurationWorkInState(workId, state.curation.remoteSnapshotByWorkId.get(workId) || { id: workId });
+	}
+	applyCurationFilters();
+	if (persistResult.ok) {
+		if (toastMessage) showToast(toastMessage);
+	} else if (persistResult.warning) {
+		showToast(persistResult.warning);
+	}
+	return nextDraft;
+}
+
+function countFailedCurationSaves() {
+	let failed = 0;
+	for (const value of state.curation.saveStatusByWorkId.values()) {
+		if (value?.status === "failed") failed += 1;
+	}
+	return failed;
+}
+
+function countUnavailableCurationLocalDrafts() {
+	if (!state.curation.listLoaded) return 0;
+	const visibleWorkIds = new Set(state.curation.works.map((work) => trimText(work?.id)).filter(Boolean));
+	let unavailable = 0;
+	for (const workId of state.curation.localDraftsByWorkId.keys()) {
+		if (!visibleWorkIds.has(trimText(workId))) unavailable += 1;
+	}
+	return unavailable;
+}
+
+function renderCurationLocalDraftStatus() {
+	const commitBtn = qs("#curation-commit-local");
+	const discardBtn = qs("#curation-discard-local");
+	const statusEl = qs("#curation-local-status");
+	const localCount = state.curation.localDraftsByWorkId.size;
+	const failedCount = countFailedCurationSaves();
+	const unavailableCount = countUnavailableCurationLocalDrafts();
+	const persistenceWarning = trimText(state.curation.localDraftPersistenceWarning);
+	if (commitBtn) commitBtn.disabled = localCount === 0 || isCurationRemoteWriteActive();
+	if (discardBtn) discardBtn.disabled = localCount === 0 || isCurationRemoteWriteActive();
+	if (!statusEl) return;
+	const parts = [`ローカル変更: ${localCount}件`];
+	if (state.curation.commitRunning) parts.push("Notion反映中…");
+	else if (state.curation.saveQueue.running) parts.push("保存キュー実行中");
+	if (failedCount > 0) parts.push(`保存失敗: ${failedCount}件`);
+	if (unavailableCount > 0) parts.push(`一覧外: ${unavailableCount}件`);
+	if (persistenceWarning) parts.push("永続化失敗");
+	if (localCount > 0) parts.push("このブラウザに保持されます");
+	statusEl.textContent = parts.join(" / ");
+	statusEl.title = persistenceWarning;
+}
+
 async function runCurationSaveQueue() {
 	const queue = state.curation.saveQueue;
 	if (queue.running) return;
 	queue.running = true;
+	renderCurationLocalDraftStatus();
 	try {
 		while (queue.jobs.length > 0) {
 			const job = queue.jobs.shift();
@@ -3278,6 +3638,7 @@ async function runCurationSaveQueue() {
 					body: JSON.stringify(normalizedPayload),
 				});
 				setCurationSaveState(job.workId, { status: "idle", errorMessage: "", lastPayload: normalizedPayload });
+				applyCommittedCurationPayload(job.workId, normalizedPayload);
 				updateCurationWorkInState(job.workId, normalizedPayload);
 				job.onSuccess?.(normalizedPayload);
 				applyCurationFilters();
@@ -3294,11 +3655,16 @@ async function runCurationSaveQueue() {
 		}
 	} finally {
 		queue.running = false;
+		renderCurationLocalDraftStatus();
 		renderCurationGrid();
 	}
 }
 
-function enqueueCurationSaveJob(workIdRaw, buildPayload, { queuedMessage = "", onSuccess = null, onError = null } = {}) {
+function enqueueCurationSaveJob(
+	workIdRaw,
+	buildPayload,
+	{ queuedMessage = "", onSuccess = null, onError = null, autoStart = true } = {},
+) {
 	const workId = trimText(workIdRaw);
 	if (!workId || typeof buildPayload !== "function") return;
 	const queue = state.curation.saveQueue;
@@ -3311,13 +3677,15 @@ function enqueueCurationSaveJob(workIdRaw, buildPayload, { queuedMessage = "", o
 		onError,
 	});
 	setCurationSaveState(workId, { status: "queued", errorMessage: "" });
+	renderCurationLocalDraftStatus();
 	renderCurationGrid();
 	if (queuedMessage) showToast(queuedMessage);
-	void runCurationSaveQueue();
+	if (autoStart) void runCurationSaveQueue();
 }
 
 function retryCurationSave(workIdRaw) {
 	const workId = trimText(workIdRaw);
+	if (!ensureCurationEditingUnlocked("保存の再試行")) return;
 	const saveState = getCurationSaveState(workId);
 	const lastPayload = clonePlainData(saveState.lastPayload);
 	if (!workId || !lastPayload) {
@@ -3327,6 +3695,74 @@ function retryCurationSave(workIdRaw) {
 	enqueueCurationSaveJob(workId, async () => clonePlainData(lastPayload), {
 		queuedMessage: "再試行をキューに追加しました",
 	});
+}
+
+async function commitCurationLocalDrafts() {
+	if (isCurationRemoteWriteActive()) {
+		showToast("保存処理の完了を待ってください");
+		renderCurationLocalDraftStatus();
+		return;
+	}
+	if (hasOpenCurationEditors()) {
+		showToast("編集中の作品モーダルやタグ編集を閉じてから反映してください");
+		return;
+	}
+	const orderedWorkIds = state.curation.works.map((work) => trimText(work?.id)).filter(Boolean);
+	const draftIds = Array.from(state.curation.localDraftsByWorkId.keys());
+	const rank = new Map(orderedWorkIds.map((id, index) => [id, index]));
+	const orderedDrafts = draftIds
+		.sort((a, b) => (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER))
+		.map((id) => clonePlainData(state.curation.localDraftsByWorkId.get(id)))
+		.filter(Boolean);
+
+	if (orderedDrafts.length === 0) {
+		showToast("反映するローカル変更はありません");
+		renderCurationLocalDraftStatus();
+		return;
+	}
+
+	state.curation.commitRunning = true;
+	renderCurationLocalDraftStatus();
+	try {
+		for (const draft of orderedDrafts) {
+			const workId = trimText(draft?.id);
+			if (!workId) continue;
+			enqueueCurationSaveJob(workId, async () => clonePlainData(draft), { autoStart: false });
+		}
+		await runCurationSaveQueue();
+		const remaining = state.curation.localDraftsByWorkId.size;
+		const failed = countFailedCurationSaves();
+		if (remaining === 0 && failed === 0) {
+			showToast(`Notionへ反映しました（${orderedDrafts.length}件）`);
+		} else if (failed > 0) {
+			showToast(`一括反映を実行しました（未反映 ${remaining}件 / 失敗 ${failed}件）`);
+		} else {
+			showToast(`一括反映を実行しました（未反映 ${remaining}件）`);
+		}
+	} finally {
+		state.curation.commitRunning = false;
+		renderCurationLocalDraftStatus();
+	}
+}
+
+async function discardCurationLocalDrafts() {
+	if (isCurationRemoteWriteActive()) {
+		showToast("保存処理の完了を待ってください");
+		renderCurationLocalDraftStatus();
+		return;
+	}
+	const count = state.curation.localDraftsByWorkId.size;
+	if (count === 0) {
+		showToast("破棄するローカル変更はありません");
+		return;
+	}
+	if (!confirm(`ローカル変更 ${count}件を破棄しますか？`)) return;
+	state.curation.localDraftsByWorkId.clear();
+	state.curation.saveStatusByWorkId.clear();
+	persistCurationLocalDrafts();
+	renderCurationLocalDraftStatus();
+	await loadCurationQueue();
+	showToast("ローカル変更を破棄しました");
 }
 
 function getCurationWorkTagSummary(work) {
@@ -3346,6 +3782,12 @@ function getCurationSaveStatusBadge(workIdRaw) {
 	if (saveState.status === "saving") return { label: "保存: 実行中", tone: "pending" };
 	if (saveState.status === "failed") return { label: "保存: 失敗", tone: "warn" };
 	return null;
+}
+
+function getCurationLocalDraftBadge(workIdRaw) {
+	const workId = trimText(workIdRaw);
+	if (!workId || !state.curation.localDraftsByWorkId.has(workId)) return null;
+	return { label: "ローカル: 未反映", tone: "warn" };
 }
 
 function renderCurationMergeStatus() {
@@ -3447,6 +3889,7 @@ function closeCurationInlineTagEditor() {
 }
 
 function openCurationInlineTagEditor(workIdRaw) {
+	if (!ensureCurationEditingUnlocked("タグ編集")) return;
 	const workId = trimText(workIdRaw);
 	const work = findCurationWorkById(workId);
 	const panel = qs("#curation-inline-tag-panel");
@@ -3470,7 +3913,7 @@ function openCurationInlineTagEditor(workIdRaw) {
 	if (title) {
 		title.textContent = `${trimText(work.title) || "（無題）"} / ${trimText(work.completedDate) || "-"} / ${trimText(work.classroom) || "-"}`;
 	}
-	if (status) status.textContent = "編集内容を保存するとキューに投入されます。";
+	if (status) status.textContent = "編集内容はこのブラウザに保持され、後でまとめて反映できます。";
 	panel.hidden = false;
 }
 
@@ -3724,6 +4167,15 @@ function renderWorkCard(work, index) {
 			text: readyBadge.label,
 		}),
 	);
+	const localDraftBadge = getCurationLocalDraftBadge(workId);
+	if (localDraftBadge) {
+		syncFlags.appendChild(
+			el("span", {
+				class: `chip chip--sync ${toSyncToneClass(localDraftBadge.tone)}`,
+				text: localDraftBadge.label,
+			}),
+		);
+	}
 	const saveBadge = getCurationSaveStatusBadge(workId);
 	if (saveBadge) {
 		syncFlags.appendChild(
@@ -3843,6 +4295,7 @@ function renderCurationGrid() {
 		` / 反映済${reflectedCount}件 / 通知送信済${sentNotifyCount}件 / 通知待ち${pendingNotifyCount}件` +
 		syncSuffix +
 		syncWarn;
+	renderCurationLocalDraftStatus();
 	renderCurationMergeStatus();
 }
 
@@ -3862,25 +4315,32 @@ async function loadCurationQueue() {
 			works = works.map((work) => mergeCurationWorkSyncStatus(work, null));
 			showToast("同期状態の取得に失敗しました（作品一覧は表示しています）");
 		}
-			state.curation.works = works;
-			state.curation.filtered = [...state.curation.works];
-			const workIdSet = new Set(state.curation.works.map((work) => trimText(work?.id)).filter(Boolean));
-			for (const key of Array.from(state.curation.saveStatusByWorkId.keys())) {
-				if (!workIdSet.has(trimText(key))) {
-					state.curation.saveStatusByWorkId.delete(key);
-				}
+		const workIdSet = new Set(works.map((work) => trimText(work?.id)).filter(Boolean));
+		state.curation.remoteSnapshotByWorkId = new Map(
+			works.map((work) => [trimText(work?.id), clonePlainData(work)]).filter(([id]) => Boolean(id)),
+		);
+		syncCurationLocalDraftsWithRemoteSnapshots();
+		works = applyCurationLocalDraftsToWorks(works);
+		state.curation.works = works;
+		state.curation.filtered = [...state.curation.works];
+		state.curation.listLoaded = true;
+		for (const key of Array.from(state.curation.saveStatusByWorkId.keys())) {
+			const workId = trimText(key);
+			if (!workIdSet.has(workId) && !state.curation.localDraftsByWorkId.has(workId)) {
+				state.curation.saveStatusByWorkId.delete(key);
 			}
-			state.curation.selectedMergeSourceIds = state.curation.selectedMergeSourceIds
-				.map((id) => trimText(id))
-				.filter((id) => workIdSet.has(id));
-			if (!workIdSet.has(trimText(state.curation.mergeTargetWorkId))) {
-				state.curation.mergeTargetWorkId = "";
-			}
-			if (state.curation.inlineTagEditor.workId && !workIdSet.has(trimText(state.curation.inlineTagEditor.workId))) {
-				closeCurationInlineTagEditor();
-			}
+		}
+		state.curation.selectedMergeSourceIds = state.curation.selectedMergeSourceIds
+			.map((id) => trimText(id))
+			.filter((id) => workIdSet.has(id));
+		if (!workIdSet.has(trimText(state.curation.mergeTargetWorkId))) {
+			state.curation.mergeTargetWorkId = "";
+		}
+		if (state.curation.inlineTagEditor.workId && !workIdSet.has(trimText(state.curation.inlineTagEditor.workId))) {
+			closeCurationInlineTagEditor();
+		}
 
-			const classroomSelect = qs("#curation-classroom");
+		const classroomSelect = qs("#curation-classroom");
 		const currentClassroom = classroomSelect.value;
 		const classrooms = Array.from(new Set(state.curation.works.map((w) => w.classroom).filter(Boolean))).sort((a, b) => a.localeCompare(b, "ja"));
 		populateSelect(classroomSelect, { placeholder: "すべて", items: classrooms.map((v) => ({ value: v })) });
@@ -4146,6 +4606,7 @@ function renderWorkModal(work, index) {
 
 	const splitBtn = el("button", { type: "button", class: "btn", text: "選択画像で分割" });
 	splitBtn.addEventListener("click", async () => {
+		if (!ensureCurationEditingUnlocked("画像分割")) return;
 		const urls = getSelectedOrCurrentUrls();
 		if (urls.length === 0) return showToast("分割する画像が選択されていません");
 		if (!confirm(`選択画像 ${urls.length}枚で新規作品に分割しますか？（新規は整備済=false）`)) return;
@@ -4165,6 +4626,7 @@ function renderWorkModal(work, index) {
 				loadCurationQueue();
 				return;
 			}
+			work.images = syncCurationWorkImagesAfterRemoteMutation(work.id, work.images);
 			rebuildViewer();
 		} catch (err) {
 			showToast(`分割に失敗: ${err.message}`);
@@ -4209,6 +4671,7 @@ function renderWorkModal(work, index) {
 
 	const moveBtn = el("button", { type: "button", class: "btn", text: "選択画像を移動" });
 	moveBtn.addEventListener("click", async () => {
+		if (!ensureCurationEditingUnlocked("画像移動")) return;
 		const urls = getSelectedOrCurrentUrls();
 		if (urls.length === 0) return showToast("移動する画像が選択されていません");
 		if (!moveTargetId) return showToast("移動先の作品を選択してください");
@@ -4216,6 +4679,7 @@ function renderWorkModal(work, index) {
 
 		moveBtn.disabled = true;
 		try {
+			const movedImages = (work.images || []).filter((img) => urls.includes(img.url));
 			await apiFetch("/admin/image/move", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -4230,6 +4694,12 @@ function renderWorkModal(work, index) {
 				loadCurationQueue();
 				return;
 			}
+			work.images = syncCurationWorkImagesAfterRemoteMutation(work.id, work.images);
+			const targetImages = appendUniqueWorkImages(
+				findCurationWorkById(moveTargetId)?.images || state.curation.remoteSnapshotByWorkId.get(moveTargetId)?.images,
+				movedImages,
+			);
+			syncCurationWorkImagesAfterRemoteMutation(moveTargetId, targetImages);
 			rebuildViewer();
 			moveTargetId = "";
 			movePicked.textContent = "";
@@ -4280,6 +4750,7 @@ function renderWorkModal(work, index) {
 
 	const mergeBtn = el("button", { type: "button", class: "btn", text: "統合（統合元はアーカイブ）" });
 	mergeBtn.addEventListener("click", async () => {
+		if (!ensureCurationEditingUnlocked("作品統合")) return;
 		const sources = Array.from(mergeSources.keys());
 		if (sources.length === 0) return showToast("統合元を追加してください");
 		if (!confirm(`${sources.length}件の作品を統合しますか？（統合元はアーカイブ）`)) return;
@@ -4291,7 +4762,15 @@ function renderWorkModal(work, index) {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ targetWorkId: work.id, sourceWorkIds: sources, archiveSources: true }),
 			});
-			showToast("統合しました（反映は再読み込み後）");
+			const mergedImages = appendUniqueWorkImages(
+				work.images,
+				sources.flatMap((sourceId) => findCurationWorkById(sourceId)?.images || []),
+			);
+			work.images = syncCurationWorkImagesAfterRemoteMutation(work.id, mergedImages);
+			removeCurationWorksFromState(sources);
+			clearCurationMergeSelection();
+			applyCurationFilters();
+			showToast("統合しました");
 			mergeSources.clear();
 			renderMergeSources();
 		} catch (err) {
@@ -4301,27 +4780,9 @@ function renderWorkModal(work, index) {
 		}
 	});
 
-	const syncCurrentWorkImagesToState = () => {
-		const nextImages = Array.isArray(work.images) ? [...work.images] : [];
-		const idxAll = state.curation.works.findIndex((w) => w.id === work.id);
-		if (idxAll >= 0) {
-			state.curation.works[idxAll] = {
-				...state.curation.works[idxAll],
-				images: nextImages,
-			};
-		}
-		const idxFiltered = state.curation.filtered.findIndex((w) => w.id === work.id);
-		if (idxFiltered >= 0) {
-			state.curation.filtered[idxFiltered] = {
-				...state.curation.filtered[idxFiltered],
-				images: nextImages,
-			};
-		}
-		renderCurationGrid();
-	};
-
 	const deleteSelectedBtn = el("button", { type: "button", class: "btn", text: "選択画像を完全削除" });
 	deleteSelectedBtn.addEventListener("click", async () => {
+		if (!ensureCurationEditingUnlocked("画像削除")) return;
 		const urls = getSelectedOrCurrentUrls();
 		if (urls.length === 0) return showToast("削除する画像が選択されていません");
 		if (!confirm(`選択画像 ${urls.length}枚を削除しますか？（R2とNotionの参照を削除）`)) return;
@@ -4343,7 +4804,7 @@ function renderWorkModal(work, index) {
 			}
 			work.images = (work.images || []).filter((img) => !urls.includes(trimText(img?.url)));
 			urls.forEach((u) => selectedUrls.delete(u));
-			syncCurrentWorkImagesToState();
+			work.images = syncCurationWorkImagesAfterRemoteMutation(work.id, work.images);
 			rebuildViewer();
 		} catch (err) {
 			showToast(`画像削除に失敗: ${err.message}`);
@@ -4354,6 +4815,7 @@ function renderWorkModal(work, index) {
 
 	const deleteWorkBtn = el("button", { type: "button", class: "btn btn--danger", text: "この作品を完全削除" });
 	deleteWorkBtn.addEventListener("click", async () => {
+		if (!ensureCurationEditingUnlocked("作品削除")) return;
 		if (!confirm("この作品を削除しますか？（Notionアーカイブ / R2削除 / 通知キュー削除）")) return;
 
 		deleteWorkBtn.disabled = true;
@@ -4454,15 +4916,16 @@ function renderWorkModal(work, index) {
 
 	const footer = el("div", { class: "modal-footer" });
 
-	const saveOnly = el("button", { type: "button", class: "btn", text: "保存のみ" });
-	const saveNext = el("button", { type: "button", class: "btn btn--primary", text: "保存して次へ" });
+	const saveOnly = el("button", { type: "button", class: "btn", text: "ローカル保存" });
+	const saveNext = el("button", { type: "button", class: "btn btn--primary", text: "ローカル保存して次へ" });
 	const skip = el("button", { type: "button", class: "btn", text: "スキップ" });
 
 	footer.appendChild(skip);
 	footer.appendChild(saveOnly);
 	footer.appendChild(saveNext);
 
-	const doSave = ({ forceReady, goNext }) => {
+	const doSave = async ({ forceReady, goNext }) => {
+		if (!ensureCurationEditingUnlocked("ローカル保存")) return;
 		saveOnly.disabled = true;
 		saveNext.disabled = true;
 		skip.disabled = true;
@@ -4471,42 +4934,47 @@ function renderWorkModal(work, index) {
 		const nextWorkId = goNext ? resolveNextCurationWorkIdFromSnapshot(currentWorkId, snapshotIds) : "";
 		const editorRef = tagEditor;
 
-		enqueueCurationSaveJob(
-			currentWorkId,
-			async () => {
-				await editorRef?.awaitPendingTagMutations?.();
-				const latestExplicitTagIds = editorRef?.getExplicitTagIds?.() || explicitTagIds;
-				const derived = computeDerivedParentTagIds(latestExplicitTagIds);
-				const rawTagIds = Array.from(new Set([...(latestExplicitTagIds || []), ...derived]));
-				const tagIds = filterOutClassroomTagIds(rawTagIds, classroomSelect.value);
-				const payload = {
-					id: currentWorkId,
-					title: titleInput.value.trim(),
-					completedDate: completedDateInput.value.trim(),
-					classroom: classroomSelect.value,
-					authorIds: getSelectedAuthorIds(authorSelect),
-					caption: captionInput.value.trim(),
-					tagIds,
-					ready: forceReady ? true : readyCb.checked,
-					notificationDisabled: notifyDisabledCb.checked,
-				};
-				payload.images = getWorkImagePayload(work.images);
-				return payload;
-			},
-			{
-				queuedMessage: "保存をキューに追加しました",
-			},
-		);
-		close();
-		if (goNext) {
-			if (!nextWorkId || !openWorkModalById(nextWorkId)) {
-				showToast("次の作品はありません");
+		try {
+			await editorRef?.awaitPendingTagMutations?.();
+			const latestExplicitTagIds = editorRef?.getExplicitTagIds?.() || explicitTagIds;
+			const derived = computeDerivedParentTagIds(latestExplicitTagIds);
+			const rawTagIds = Array.from(new Set([...(latestExplicitTagIds || []), ...derived]));
+			const tagIds = filterOutClassroomTagIds(rawTagIds, classroomSelect.value);
+			const payload = {
+				id: currentWorkId,
+				title: titleInput.value.trim(),
+				completedDate: completedDateInput.value.trim(),
+				classroom: classroomSelect.value,
+				authorIds: getSelectedAuthorIds(authorSelect),
+				caption: captionInput.value.trim(),
+				tagIds,
+				ready: forceReady ? true : readyCb.checked,
+				notificationDisabled: notifyDisabledCb.checked,
+				images: getWorkImagePayload(work.images),
+			};
+			stageCurationLocalDraft(payload, {
+				toastMessage: goNext ? "ローカル保存しました" : "ローカル保存しました（まだ Notion には反映していません）",
+			});
+			close();
+			if (goNext) {
+				if (!nextWorkId || !openWorkModalById(nextWorkId)) {
+					showToast("次の作品はありません");
+				}
 			}
+		} catch (err) {
+			saveOnly.disabled = false;
+			saveNext.disabled = false;
+			skip.disabled = false;
+			showToast(`ローカル保存に失敗: ${trimText(err?.message) || "unknown error"}`);
 		}
 	};
 
-	saveOnly.addEventListener("click", () => doSave({ forceReady: false, goNext: false }));
-	saveNext.addEventListener("click", () => doSave({ forceReady: true, goNext: true }));
+	saveOnly.addEventListener("click", () => {
+		void doSave({ forceReady: false, goNext: false });
+	});
+	saveNext.addEventListener("click", () => {
+		void doSave({ forceReady: true, goNext: true });
+	});
 	skip.addEventListener("click", () => {
 		const currentWorkId = trimText(work.id);
 		const snapshotIds = state.curation.filtered.map((item) => trimText(item?.id)).filter(Boolean);
@@ -4530,6 +4998,7 @@ function renderWorkModal(work, index) {
 }
 
 function openWorkModal(index) {
+	if (!ensureCurationEditingUnlocked("作品編集")) return;
 	state.curation.currentIndex = index;
 	const work = state.curation.filtered[index];
 	if (!work) return;
@@ -4537,6 +5006,7 @@ function openWorkModal(index) {
 }
 
 function initCuration() {
+	loadPersistedCurationLocalDrafts();
 	qs("#curation-refresh").addEventListener("click", () => loadCurationQueue());
 	qsa(
 		"#curation-from,#curation-to,#curation-classroom,#curation-ready-filter,#curation-gallery-filter,#curation-notify-filter,#curation-missing-title,#curation-missing-author,#curation-missing-tags",
@@ -4553,12 +5023,25 @@ function initCuration() {
 			await runCurationMergeSelection();
 		});
 	}
+	const commitBtn = qs("#curation-commit-local");
+	if (commitBtn) {
+		commitBtn.addEventListener("click", async () => {
+			await commitCurationLocalDrafts();
+		});
+	}
+	const discardBtn = qs("#curation-discard-local");
+	if (discardBtn) {
+		discardBtn.addEventListener("click", async () => {
+			await discardCurationLocalDrafts();
+		});
+	}
 
 	const inlineSaveBtn = qs("#curation-inline-tag-save");
 	const inlineCancelBtn = qs("#curation-inline-tag-cancel");
 	const inlineStatusEl = qs("#curation-inline-tag-status");
 	if (inlineSaveBtn) {
-		inlineSaveBtn.addEventListener("click", () => {
+		inlineSaveBtn.addEventListener("click", async () => {
+			if (!ensureCurationEditingUnlocked("タグのローカル保存")) return;
 			const workId = trimText(state.curation.inlineTagEditor.workId);
 			const controller = state.curation.inlineTagEditor.controller;
 			const work = findCurationWorkById(workId);
@@ -4566,30 +5049,25 @@ function initCuration() {
 				showToast("タグ編集対象の作品が見つかりません");
 				return;
 			}
-			if (inlineStatusEl) inlineStatusEl.textContent = "保存キューへ追加中…";
-			enqueueCurationSaveJob(
-				workId,
-				async () => {
-					await controller.awaitPendingTagMutations?.();
-					const explicitIds = controller.getExplicitTagIds?.() || [];
-					const derived = computeDerivedParentTagIds(explicitIds);
-					const rawTagIds = Array.from(new Set([...(explicitIds || []), ...derived]));
-					const tagIds = filterOutClassroomTagIds(rawTagIds, trimText(work.classroom));
-					return {
+			if (inlineStatusEl) inlineStatusEl.textContent = "ローカル保存中…";
+			try {
+				await controller.awaitPendingTagMutations?.();
+				const explicitIds = controller.getExplicitTagIds?.() || [];
+				const derived = computeDerivedParentTagIds(explicitIds);
+				const rawTagIds = Array.from(new Set([...(explicitIds || []), ...derived]));
+				const tagIds = filterOutClassroomTagIds(rawTagIds, trimText(work.classroom));
+				stageCurationLocalDraft(
+					{
 						id: workId,
 						tagIds,
-					};
-				},
-				{
-					queuedMessage: "タグ保存をキューに追加しました",
-					onSuccess: () => {
-						if (inlineStatusEl) inlineStatusEl.textContent = "保存完了";
 					},
-					onError: () => {
-						if (inlineStatusEl) inlineStatusEl.textContent = "保存失敗";
-					},
-				},
-			);
+					{ toastMessage: "タグをローカル保存しました" },
+				);
+				if (inlineStatusEl) inlineStatusEl.textContent = "ローカル保存済み";
+			} catch (err) {
+				if (inlineStatusEl) inlineStatusEl.textContent = "ローカル保存失敗";
+				showToast(`タグのローカル保存に失敗: ${trimText(err?.message) || "unknown error"}`);
+			}
 		});
 	}
 	if (inlineCancelBtn) {
@@ -4598,6 +5076,7 @@ function initCuration() {
 		});
 	}
 	syncCurationClassroomBadge();
+	renderCurationLocalDraftStatus();
 	renderCurationMergeStatus();
 }
 
